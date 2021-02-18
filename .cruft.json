@@ -1,0 +1,20 @@
+{
+    "template": "https://github.com/nickderobertis/cookiecutter-pypi-sphinx",
+    "commit": "1fdefcda9765e34fd70a4757a2eecc42ea249561",
+    "context": {
+        "cookiecutter": {
+            "package_name": "github-secrets",
+            "package_directory": "github_secrets",
+            "full_name": "Github Secrets Manager",
+            "repo_name": "github-secrets",
+            "repo_username": "nickderobertis",
+            "short_description": "Python API and CLI for managing Github secrets",
+            "package_author": "Nick DeRobertis",
+            "author_email": "whoopnip@gmail.com",
+            "google_analytics_id": "",
+            "logo_url": "",
+            "_template": "https://github.com/nickderobertis/cookiecutter-pypi-sphinx"
+        }
+    },
+    "directory": null
+}
