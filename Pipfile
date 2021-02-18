@@ -21,6 +21,8 @@ pytest-cov = "*"
 mypy = "*"
 pypandoc = "*"
 cruft = "*"
+pygithub = {editable = true,git = "https://github.com/pdex/PyGithub.git",ref = "09171531d343fbdcef5f3a42ff97f343fec88a58"}
+py-app-conf = "*"
 
 [requires]
 python_version = "3.8"
