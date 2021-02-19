@@ -14,21 +14,19 @@ class HasStr(Protocol):
 
 class SecretsManager:
     def __init__(self, config_path: Optional[Union[str, Path]] = None):
-        config_class = SecretsConfig
-        if config_path is not None:
-
-            class CustomSecretsConfig(SecretsConfig):
-                _settings = AppConfig(
-                    app_name=APP_NAME,
-                    custom_config_path=config_path,
-                    default_format=ConfigFormats.YAML,
-                )
-
-            config_class = CustomSecretsConfig
-        if config_class._settings.config_location.exists():
-            self.config = config_class.load()
+        if config_path is None:
+            config_path = SecretsConfig._settings.config_location
         else:
-            self.config = config_class()
+            config_path = Path(config_path)
+        if config_path.exists():
+            self.config = SecretsConfig.load(config_path)
+        else:
+            config_format = ConfigFormats.from_path(config_path)
+            settings = SecretsConfig._settings_with_overrides(
+                custom_config_path=config_path.with_suffix(''),
+                default_format=config_format
+            )
+            self.config = SecretsConfig(settings=settings)
 
     def add_secret(self, name: str, value: HasStr, repository: Optional[str] = None):
         secret = Secret(name=name, value=str(value))

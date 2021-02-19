@@ -2,7 +2,8 @@ from pathlib import Path
 
 from github_secrets.config import Secret
 from github_secrets.manager import SecretsManager
-from tests.config import GENERATED_CONFIG_FILE_PATH, CONFIG_FILE_PATH
+from tests.config import GENERATED_CONFIG_FILE_PATH, CONFIG_FILE_PATH, GENERATED_CONFIG_FILE_PATH_YAML, \
+    CONFIG_FILE_PATH_YAML
 from tests.fixtures.model import secrets_manager, get_secrets_manager
 
 
@@ -37,6 +38,6 @@ def test_save(secrets_manager: SecretsManager):
     secrets_manager.set_token('')
     secrets_manager.save()
     assert (
-        Path(str(GENERATED_CONFIG_FILE_PATH) + ".yaml").read_text()
-        == Path(str(CONFIG_FILE_PATH) + ".yaml").read_text()
+        GENERATED_CONFIG_FILE_PATH_YAML.read_text()
+        == CONFIG_FILE_PATH_YAML.read_text()
     )

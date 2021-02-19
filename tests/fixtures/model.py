@@ -1,11 +1,11 @@
 import pytest
 
 from github_secrets.manager import SecretsManager
-from tests.config import CONFIG_FILE_PATH
+from tests.config import CONFIG_FILE_PATH_YAML
 
 
 def get_secrets_manager(**kwargs) -> SecretsManager:
-    manager = SecretsManager(config_path=CONFIG_FILE_PATH, **kwargs)
+    manager = SecretsManager(config_path=CONFIG_FILE_PATH_YAML, **kwargs)
     return manager
 
 
