@@ -1,7 +1,9 @@
-from typing import List, Dict
+from typing import List, Dict, Optional
 
-from pyappconf import BaseConfig, AppConfig
+from pyappconf import BaseConfig, AppConfig, ConfigFormats
 from pydantic import BaseModel, Field
+
+from github_secrets.git import get_repository_names
 
 APP_NAME = "GithubSecrets"
 
@@ -67,10 +69,31 @@ class GlobalSecrets(BaseModel):
 
 class SecretsConfig(BaseConfig):
     github_token: str = ''
+    include_repositories: Optional[List[str]] = None
+    exclude_repositories: Optional[List[str]] = None
     global_secrets: GlobalSecrets = Field(default_factory=lambda: [])
     repository_secrets: RepositorySecrets = Field(default_factory=lambda: {})
 
-    _settings = AppConfig(app_name=APP_NAME)
+    _settings = AppConfig(app_name=APP_NAME, default_format=ConfigFormats.YAML)
+
+    @property
+    def repositories(self) -> List[str]:
+        if self.include_repositories is not None:
+            return self.include_repositories
+        if not self.github_token:
+            raise ValueError('need to set github token')
+        repositories = get_repository_names(self.github_token)
+        if self.exclude_repositories is not None:
+            repositories = [repo for repo in repositories if repo not in self.exclude_repositories]
+        return repositories
+
+    def bootstrap_repositories(self):
+        if not self.github_token:
+            raise ValueError('need to set github token')
+        repositories = get_repository_names(self.github_token)
+        if self.exclude_repositories:
+            repositories = [repo for repo in repositories if repo not in self.exclude_repositories]
+        self.include_repositories = repositories
 
     class Config:
         env_prefix = 'GITHUB_SECRETS_'

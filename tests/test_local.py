@@ -37,6 +37,6 @@ def test_save(secrets_manager: SecretsManager):
     secrets_manager.set_token('')
     secrets_manager.save()
     assert (
-        Path(str(GENERATED_CONFIG_FILE_PATH) + ".toml").read_text()
-        == Path(str(CONFIG_FILE_PATH) + ".toml").read_text()
+        Path(str(GENERATED_CONFIG_FILE_PATH) + ".yaml").read_text()
+        == Path(str(CONFIG_FILE_PATH) + ".yaml").read_text()
     )
