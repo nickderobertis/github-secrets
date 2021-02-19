@@ -1,3 +1,5 @@
+github_token = ""
+
 [global_secrets]
 [[global_secrets.secrets]]
 name = "a"

@@ -34,6 +34,7 @@ def test_remove_repository_secret(secrets_manager: SecretsManager):
 
 def test_save(secrets_manager: SecretsManager):
     secrets_manager.config.settings.custom_config_path = GENERATED_CONFIG_FILE_PATH
+    secrets_manager.set_token('')
     secrets_manager.save()
     assert (
         Path(str(GENERATED_CONFIG_FILE_PATH) + ".toml").read_text()

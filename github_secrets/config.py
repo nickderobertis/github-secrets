@@ -66,7 +66,11 @@ class GlobalSecrets(BaseModel):
 
 
 class SecretsConfig(BaseConfig):
+    github_token: str = ''
     global_secrets: GlobalSecrets = Field(default_factory=lambda: [])
     repository_secrets: RepositorySecrets = Field(default_factory=lambda: {})
 
     _settings = AppConfig(app_name=APP_NAME)
+
+    class Config:
+        env_prefix = 'GITHUB_SECRETS_'

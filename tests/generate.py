@@ -9,4 +9,5 @@ if __name__ == '__main__':
     manager.add_secret('c', 'd', repository='this/that')
     manager.add_secret('e', 'f', repository='this/that')
     manager.add_secret('g', 'h', repository='this/who')
+    manager.set_token('')  # don't save private github token
     manager.save()

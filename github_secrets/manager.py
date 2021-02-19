@@ -37,5 +37,8 @@ class SecretsManager:
         else:
             self.config.global_secrets.remove_secret(name)
 
+    def set_token(self, token: str):
+        self.config.github_token = token
+
     def save(self):
         self.config.save()

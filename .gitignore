@@ -68,3 +68,4 @@ _examples
 .vscode
 
 tests/generated_data
+env.py
