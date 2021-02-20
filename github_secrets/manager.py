@@ -1,10 +1,9 @@
 from pathlib import Path
 from typing import Optional, Union, Protocol
 
-from pyappconf import AppConfig, ConfigFormats
+from pyappconf import ConfigFormats
 
-from github_secrets.config import SecretsConfig, APP_NAME, Secret
-from github_secrets.git import get_repository_names
+from github_secrets.config import SecretsConfig, Secret
 
 
 class HasStr(Protocol):
