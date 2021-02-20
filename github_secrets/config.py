@@ -43,7 +43,9 @@ class RepositorySecrets(BaseModel):
     def sync_configs(self) -> Set[SyncConfig]:
         all_configs: Set[SyncConfig] = set()
         for repo, secrets in self.secrets.items():
-            all_configs.update([SyncConfig(secret_name=sec.name, repository=repo) for sec in secrets])
+            all_configs.update(
+                [SyncConfig(secret_name=sec.name, repository=repo) for sec in secrets]
+            )
         return all_configs
 
     def add_secret(self, secret: Secret, repository: str) -> bool:
@@ -187,7 +189,9 @@ class SecretsConfig(BaseConfig):
 
     @property
     def sync_configs(self) -> Set[SyncConfig]:
-        return self.global_secrets.sync_configs.union(self.repository_secrets.sync_configs)
+        return self.global_secrets.sync_configs.union(
+            self.repository_secrets.sync_configs
+        )
 
     @property
     def repositories(self) -> List[str]:
@@ -203,6 +207,54 @@ class SecretsConfig(BaseConfig):
                 repo for repo in repositories if repo not in self.exclude_repositories
             ]
         return repositories
+
+    @property
+    def new_repositories(self) -> List[str]:
+        from github_secrets.git import get_repository_names
+
+        if not self.github_token:
+            raise ValueError("need to set github token")
+        repositories = get_repository_names(self.github_token)
+        if self.exclude_repositories:
+            repositories = [
+                repo for repo in repositories if repo not in self.exclude_repositories
+            ]
+        if not self.include_repositories:
+            new_repositories = repositories
+        else:
+            new_repositories = [
+                repo for repo in repositories if repo not in self.include_repositories
+            ]
+        return new_repositories
+
+    @property
+    def unsynced_secrets(self) -> List[SyncConfig]:
+        global_secrets = self.global_secrets.secrets
+        all_sync_configs: List[SyncConfig] = []
+        for repo in self.repositories:
+            if repo in self.repository_secrets.secrets:
+                repo_secrets = self.repository_secrets.secrets[repo]
+            else:
+                repo_secrets = []
+            all_secrets = global_secrets + repo_secrets
+            if repo not in self.repository_secrets_last_synced:
+                repo_unsync_secrets = all_secrets
+            else:
+                repo_unsync_secrets = [
+                    secret
+                    for secret in all_secrets
+                    if secret.name
+                    not in [
+                        sec.secret_name
+                        for sec in self.repository_secrets_last_synced[repo]
+                    ]
+                ]
+            sync_configs = [
+                SyncConfig(secret_name=sec.name, repository=repo)
+                for sec in repo_unsync_secrets
+            ]
+            all_sync_configs.extend(sync_configs)
+        return all_sync_configs
 
     def bootstrap_repositories(self):
         from github_secrets.git import get_repository_names

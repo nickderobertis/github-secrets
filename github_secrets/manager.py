@@ -4,11 +4,16 @@ from typing import Optional, Union, Protocol, List
 from rich import print
 
 from pyappconf import ConfigFormats
+from rich.markdown import Markdown
+from rich.table import Table
 
-from github_secrets.config import SecretsConfig, Secret
+from github_secrets.config import SecretsConfig, Secret, SyncConfig
 from github_secrets import git
 from github_secrets import console_styles as sty
-from github_secrets.exc import RepositoryNotInSecretsException, SecretHasNotBeenSyncedException
+from github_secrets.exc import (
+    RepositoryNotInSecretsException,
+    SecretHasNotBeenSyncedException,
+)
 from github_secrets import exc
 
 
@@ -85,8 +90,13 @@ class SecretsManager:
                 # Check if there is a local repo version, which would take
                 # precedence over the global version
                 try:
-                    use_secret = self.config.repository_secrets.get_secret(secret.name, repo)
-                except (exc.RepositoryNotInSecretsException, exc.RepositorySecretDoesNotExistException):
+                    use_secret = self.config.repository_secrets.get_secret(
+                        secret.name, repo
+                    )
+                except (
+                    exc.RepositoryNotInSecretsException,
+                    exc.RepositorySecretDoesNotExistException,
+                ):
                     use_secret = secret
                 self._sync_secret(use_secret, repo)
         else:
@@ -94,7 +104,9 @@ class SecretsManager:
             # Local secret, need to update only on repositories which include it
             for repo in repositories:
                 try:
-                    if not self.config.repository_secrets.repository_has_secret(name, repo):
+                    if not self.config.repository_secrets.repository_has_secret(
+                        name, repo
+                    ):
                         continue
                 except RepositoryNotInSecretsException:
                     continue
@@ -117,8 +129,7 @@ class SecretsManager:
             self.config.add_repository(name)
         except exc.RepositoryAlreadyExistsException:
             print(
-                f"Repository {sty.name_style(name)} "
-                f"already exists, will not update"
+                f"Repository {sty.name_style(name)} " f"already exists, will not update"
             )
             return False
         except exc.RepositoryIsExcludedException:
@@ -137,8 +148,7 @@ class SecretsManager:
             self.config.remove_repository(name)
         except exc.RepositoryDoesNotExistException:
             print(
-                f"Repository {sty.name_style(name)} "
-                f"does not exist, cannot remove"
+                f"Repository {sty.name_style(name)} " f"does not exist, cannot remove"
             )
             return False
         print(f"{sty.deleted()} repository {sty.name_style(name)}")
@@ -148,10 +158,7 @@ class SecretsManager:
         try:
             self.config.add_exclude_repository(name)
         except exc.RepositoryIsExcludedException:
-            print(
-                f"Repository {sty.name_style(name)} "
-                f"is already excluded"
-            )
+            print(f"Repository {sty.name_style(name)} " f"is already excluded")
             return False
         except exc.RepositoryIsIncludedException:
             print(
@@ -168,12 +175,43 @@ class SecretsManager:
             self.config.remove_exclude_repository(name)
         except exc.RepositoryDoesNotExistException:
             print(
-                f"Repository {sty.name_style(name)} "
-                f"is not in excluded repositories"
+                f"Repository {sty.name_style(name)} " f"is not in excluded repositories"
             )
             return False
         print(f"{sty.deleted()} exclude for repository {sty.name_style(name)}")
         return True
+
+    def check(self) -> bool:
+        if not self.config.github_token:
+            raise ValueError("need to set github token")
+
+        new_repos = self.config.new_repositories
+        unsync_secrets = self.config.unsynced_secrets
+
+        if not new_repos and not unsync_secrets:
+            print(f"{sty.sync_style('Everything is up to date')}")
+            return True
+
+        markdown_str = "# Github Secrets Check\n"
+        if new_repos:
+            markdown_str = "## New Repositories\n"
+            markdown_str += "\n".join(
+                [f"- {repo}\n" for repo in new_repos]
+            )
+            markdown_str += '\n'
+        if unsync_secrets:
+            markdown_str += "\n## Unsynced Secrets"
+            table = Table(show_header=True, header_style="bold")
+            table.add_column("Repository")
+            table.add_column("Secret")
+            for sync_config in unsync_secrets:
+                table.add_row(sync_config.repository, sync_config.secret_name)
+            print(Markdown(markdown_str))
+            print(table)
+        else:
+            print(Markdown(markdown_str))
+
+        return False
 
     def save(self):
         print(
