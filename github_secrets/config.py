@@ -1,3 +1,4 @@
+import datetime
 from typing import List, Dict, Optional
 
 from pyappconf import BaseConfig, AppConfig, ConfigFormats
@@ -9,6 +10,8 @@ APP_NAME = "GithubSecrets"
 class Secret(BaseModel):
     name: str
     value: str
+    created: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now())
+    updated: datetime.datetime = Field(default_factory=lambda: datetime.datetime.now())
 
 
 class RepositorySecrets(BaseModel):

@@ -3,16 +3,24 @@ exclude_repositories:
 github_token: ''
 global_secrets:
   secrets:
-  - name: a
+  - created: 2021-02-20 12:00:00
+    name: a
+    updated: 2021-02-20 12:00:00
     value: b
 include_repositories: null
 repository_secrets:
   secrets:
     this/that:
-    - name: c
+    - created: 2021-02-20 12:00:00
+      name: c
+      updated: 2021-02-20 12:00:00
       value: d
-    - name: e
+    - created: 2021-02-20 12:00:00
+      name: e
+      updated: 2021-02-20 12:00:00
       value: f
     this/who:
-    - name: g
+    - created: 2021-02-20 12:00:00
+      name: g
+      updated: 2021-02-20 12:00:00
       value: h
