@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from github_secrets.app import GithubSecretsApp
 from github_secrets.config import Profile
 from tests.config import (
@@ -53,6 +55,19 @@ def test_save_load(secrets_app: GithubSecretsApp):
     assert new_secrets_app.config == secrets_app.config
 
 
-def test_set_token(secrets_app: GithubSecretsApp):
-    secrets_app.set_token('abc')
-    assert secrets_app.manager.config.github_token == 'abc'
+
+def assert_wrapper_method(secrets_app: GithubSecretsApp, attr: str, *args, **kwargs):
+    with patch.object(secrets_app.manager, 'save') as save_mock:
+        with patch.object(secrets_app.manager, attr) as mock:
+            method = getattr(secrets_app, attr)
+            method(*args, **kwargs)
+            mock.assert_called_once_with(*args, **kwargs)
+            save_mock.assert_called_once()
+
+
+def test_wrapper_methods(secrets_app: GithubSecretsApp):
+    assert_wrapper_method(secrets_app, 'set_token', 'abc')
+    assert_wrapper_method(secrets_app, 'add_secret', 'woo', 'yeah', repository='this/that')
+    assert_wrapper_method(secrets_app, 'remove_secret', 'woo', repository='this/that')
+    assert_wrapper_method(secrets_app, 'sync_secret', 'woo', repository='this/that')
+    assert_wrapper_method(secrets_app, 'bootstrap_repositories')

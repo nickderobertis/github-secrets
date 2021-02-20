@@ -4,7 +4,7 @@ from typing import Optional, Union
 from rich import print
 
 from github_secrets.config import SecretsAppConfig
-from github_secrets.manager import SecretsManager
+from github_secrets.manager import SecretsManager, HasStr
 from github_secrets import console_styles as sty
 
 
@@ -78,3 +78,23 @@ class GithubSecretsApp:
 
     def set_token(self, value: str):
         self.manager.set_token(value)
+        self.manager.save()
+
+    def add_secret(
+            self, name: str, value: HasStr, repository: Optional[str] = None
+    ) -> bool:
+        success = self.manager.add_secret(name, value, repository=repository)
+        self.manager.save()
+        return success
+
+    def remove_secret(self, name: str, repository: Optional[str] = None):
+        self.manager.remove_secret(name, repository=repository)
+        self.manager.save()
+
+    def sync_secret(self, name: str, repository: Optional[str] = None):
+        self.manager.sync_secret(name, repository=repository)
+        self.manager.save()
+
+    def bootstrap_repositories(self):
+        self.manager.bootstrap_repositories()
+        self.manager.save()

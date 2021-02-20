@@ -96,7 +96,6 @@ class SecretsManager:
 
     def bootstrap_repositories(self):
         self.config.bootstrap_repositories()
-        self.save()
 
     def set_token(self, token: str):
         self.config.github_token = token
