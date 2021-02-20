@@ -95,6 +95,10 @@ class GithubSecretsApp:
         self.manager.sync_secret(name, repository=repository)
         self.manager.save()
 
+    def sync_secrets(self, repository: Optional[str] = None):
+        self.manager.sync_secrets(repository=repository)
+        self.manager.save()
+
     def bootstrap_repositories(self):
         self.manager.bootstrap_repositories()
         self.manager.save()

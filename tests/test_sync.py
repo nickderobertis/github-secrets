@@ -123,3 +123,37 @@ def test_sync_global_secret_overridden_by_local(mock: Mock, secrets_manager: Sec
         "testghuser/test-repo-2"
     ] == [expect_sync_record]
     FROZEN.move_to(TEST_TIME)
+
+
+@patch("github_secrets.manager.git.update_secret")
+def test_sync_all_secrets(mock: Mock, secrets_manager: SecretsManager):
+    secrets_manager.config.include_repositories = [
+        "testghuser/test-repo-1",
+        "testghuser/test-repo-2",
+    ]
+    secrets_manager.config.global_secrets.secrets = []
+    local_secret = Secret(name="temp", value="val")
+    secrets_manager.add_secret(local_secret.name, local_secret.value, "testghuser/test-repo-1")
+    global_secret = Secret(name='temp2', value='val2')
+    secrets_manager.add_secret(global_secret.name, global_secret.value)
+    FROZEN.tick()
+    secrets_manager.sync_secrets()
+    mock.assert_any_call(
+        local_secret, "testghuser/test-repo-1", secrets_manager.config.github_token
+    )
+    mock.assert_any_call(
+        global_secret, "testghuser/test-repo-1", secrets_manager.config.github_token
+    )
+    mock.assert_any_call(
+        global_secret, "testghuser/test-repo-2", secrets_manager.config.github_token
+    )
+    assert mock.call_count == 3
+    expect_local_sync_record = SyncRecord(secret_name="temp")
+    expect_global_sync_record = SyncRecord(secret_name="temp2")
+    assert sorted(secrets_manager.config.repository_secrets_last_synced[
+        "testghuser/test-repo-1"
+    ], key=lambda rec: rec.secret_name) == [expect_local_sync_record, expect_global_sync_record]
+    assert secrets_manager.config.repository_secrets_last_synced[
+               "testghuser/test-repo-2"
+           ] == [expect_global_sync_record]
+    FROZEN.move_to(TEST_TIME)

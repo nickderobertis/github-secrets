@@ -101,6 +101,11 @@ class SecretsManager:
                 secret = self.config.repository_secrets.get_secret(name, repo)
                 self._sync_secret(secret, repo)
 
+    def sync_secrets(self, repository: Optional[str] = None):
+        print(f"{sty.syncing()} all secrets")
+        for sync_config in self.config.sync_configs:
+            self.sync_secret(sync_config.secret_name, repository=repository)
+
     def bootstrap_repositories(self):
         self.config.bootstrap_repositories()
 

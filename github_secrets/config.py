@@ -1,6 +1,6 @@
 import datetime
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 
 from pyappconf import BaseConfig, AppConfig, ConfigFormats
 from pydantic import BaseModel, Field
@@ -28,8 +28,23 @@ class Secret(BaseModel):
         self.updated = datetime.datetime.now()
 
 
+class SyncConfig(BaseModel):
+    secret_name: str
+    repository: Optional[str] = None
+
+    def __hash__(self):
+        return hash((self.secret_name, self.repository))
+
+
 class RepositorySecrets(BaseModel):
     secrets: Dict[str, List[Secret]] = Field(default_factory=lambda: {})
+
+    @property
+    def sync_configs(self) -> Set[SyncConfig]:
+        all_configs: Set[SyncConfig] = set()
+        for repo, secrets in self.secrets.items():
+            all_configs.update([SyncConfig(secret_name=sec.name, repository=repo) for sec in secrets])
+        return all_configs
 
     def add_secret(self, secret: Secret, repository: str) -> bool:
         if repository not in self.secrets:
@@ -99,6 +114,10 @@ class RepositorySecrets(BaseModel):
 class GlobalSecrets(BaseModel):
     secrets: List[Secret] = Field(default_factory=lambda: [])
 
+    @property
+    def sync_configs(self) -> Set[SyncConfig]:
+        return {SyncConfig(secret_name=sec.name) for sec in self.secrets}
+
     def add_secret(self, secret: Secret):
         if self.has_secret(secret.name):
             self.update_secret(secret)
@@ -165,6 +184,10 @@ class SecretsConfig(BaseConfig):
     _settings = AppConfig(
         app_name=APP_NAME, default_format=ConfigFormats.YAML, config_name="default"
     )
+
+    @property
+    def sync_configs(self) -> Set[SyncConfig]:
+        return self.global_secrets.sync_configs.union(self.repository_secrets.sync_configs)
 
     @property
     def repositories(self) -> List[str]:
