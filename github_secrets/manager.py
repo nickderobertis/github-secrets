@@ -9,6 +9,7 @@ from github_secrets.config import SecretsConfig, Secret
 from github_secrets import git
 from github_secrets import console_styles as sty
 from github_secrets.exc import RepositoryNotInSecretsException, SecretHasNotBeenSyncedException
+from github_secrets import exc
 
 
 class HasStr(Protocol):
@@ -99,6 +100,68 @@ class SecretsManager:
 
     def set_token(self, token: str):
         self.config.github_token = token
+
+    def add_repository(self, name: str) -> bool:
+        try:
+            self.config.add_repository(name)
+        except exc.RepositoryAlreadyExistsException:
+            print(
+                f"Repository {sty.name_style(name)} "
+                f"already exists, will not update"
+            )
+            return False
+        except exc.RepositoryIsExcludedException:
+            print(
+                f"Repository {sty.name_style(name)} "
+                f"is in excluded repositories. "
+                f"Remove from excluded before adding to included."
+            )
+            return False
+
+        print(f"{sty.created()} repository {sty.name_style(name)}")
+        return True
+
+    def remove_repository(self, name: str) -> bool:
+        try:
+            self.config.remove_repository(name)
+        except exc.RepositoryDoesNotExistException:
+            print(
+                f"Repository {sty.name_style(name)} "
+                f"does not exist, cannot remove"
+            )
+            return False
+        print(f"{sty.deleted()} repository {sty.name_style(name)}")
+        return True
+
+    def add_exclude_repository(self, name: str) -> bool:
+        try:
+            self.config.add_exclude_repository(name)
+        except exc.RepositoryIsExcludedException:
+            print(
+                f"Repository {sty.name_style(name)} "
+                f"is already excluded"
+            )
+            return False
+        except exc.RepositoryIsIncludedException:
+            print(
+                f"Repository {sty.name_style(name)} "
+                f"is in included repositories, cannot add to "
+                f"excluded. Remove from included first"
+            )
+            return False
+        print(f"{sty.excluded()} repository {sty.name_style(name)}")
+        return True
+
+    def remove_exclude_repository(self, name: str) -> bool:
+        try:
+            self.config.remove_exclude_repository(name)
+        except exc.RepositoryDoesNotExistException:
+            print(
+                f"Repository {sty.name_style(name)} "
+                f"is not in excluded repositories"
+            )
+            return False
+        print(f"{sty.deleted()} exclude for repository {sty.name_style(name)}")
 
     def save(self):
         print(

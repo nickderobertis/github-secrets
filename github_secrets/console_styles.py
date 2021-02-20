@@ -14,6 +14,10 @@ def saved() -> str:
     return create_style("Saved")
 
 
+def excluded() -> str:
+    return create_style("Excluded")
+
+
 def delete_style(string: str) -> str:
     return f"[red]{string}[/red]"
 

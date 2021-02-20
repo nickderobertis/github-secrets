@@ -71,3 +71,7 @@ def test_wrapper_methods(secrets_app: GithubSecretsApp):
     assert_wrapper_method(secrets_app, 'remove_secret', 'woo', repository='this/that')
     assert_wrapper_method(secrets_app, 'sync_secret', 'woo', repository='this/that')
     assert_wrapper_method(secrets_app, 'bootstrap_repositories')
+    assert_wrapper_method(secrets_app, 'add_repository', 'woo')
+    assert_wrapper_method(secrets_app, 'remove_repository', 'woo')
+    assert_wrapper_method(secrets_app, 'add_exclude_repository', 'woo')
+    assert_wrapper_method(secrets_app, 'remove_exclude_repository', 'woo')

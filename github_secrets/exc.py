@@ -28,3 +28,23 @@ class ProfileException(GithubSecretsException):
 
 class ProfileDoesNotExistException(ProfileException):
     pass
+
+
+class RepositoryException(GithubSecretsException):
+    pass
+
+
+class RepositoryAlreadyExistsException(GithubSecretsException):
+    pass
+
+
+class RepositoryDoesNotExistException(GithubSecretsException):
+    pass
+
+
+class RepositoryIsExcludedException(GithubSecretsException):
+    pass
+
+
+class RepositoryIsIncludedException(GithubSecretsException):
+    pass

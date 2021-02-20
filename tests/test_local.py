@@ -1,7 +1,10 @@
 from pathlib import Path
 
+import pytest
+
 from github_secrets.config import Secret
 from github_secrets.manager import SecretsManager
+from github_secrets import exc
 from tests.config import GENERATED_CONFIG_FILE_PATH, CONFIG_FILE_PATH, GENERATED_CONFIG_FILE_PATH_YAML, \
     CONFIG_FILE_PATH_YAML, TEST_TIME
 from tests.conftest import FROZEN
@@ -60,3 +63,35 @@ def test_save(secrets_manager: SecretsManager):
         GENERATED_CONFIG_FILE_PATH_YAML.read_text()
         == CONFIG_FILE_PATH_YAML.read_text()
     )
+
+
+def test_add_repository(secrets_manager: SecretsManager):
+    secrets_manager.add_repository('woo/yeah')
+    assert secrets_manager.config.include_repositories == ['woo/yeah']
+    assert not secrets_manager.add_repository('woo/yeah')
+    secrets_manager.config.exclude_repositories = ['yeah/baby']
+    assert not secrets_manager.add_repository('yeah/baby')
+
+
+def test_remove_repository(secrets_manager: SecretsManager):
+    secrets_manager.add_repository('woo/yeah')
+    secrets_manager.remove_repository('woo/yeah')
+    assert secrets_manager.config.include_repositories == []
+    assert not secrets_manager.remove_repository('woo/yeah')
+
+
+def test_add_exclude_repository(secrets_manager: SecretsManager):
+    secrets_manager.config.exclude_repositories = []
+    secrets_manager.add_exclude_repository('woo/yeah')
+    assert secrets_manager.config.exclude_repositories == ['woo/yeah']
+    assert not secrets_manager.add_exclude_repository('woo/yeah')
+    secrets_manager.config.include_repositories = ['yeah/baby']
+    secrets_manager.config.exclude_repositories = []
+    assert not secrets_manager.add_exclude_repository('yeah/baby')
+
+
+def test_remove_exclude_repository(secrets_manager: SecretsManager):
+    secrets_manager.add_exclude_repository('woo/yeah')
+    secrets_manager.remove_exclude_repository('woo/yeah')
+    assert 'woo/yeah' not in secrets_manager.config.exclude_repositories
+    assert not secrets_manager.remove_exclude_repository('woo/yeah')

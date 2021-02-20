@@ -98,3 +98,19 @@ class GithubSecretsApp:
     def bootstrap_repositories(self):
         self.manager.bootstrap_repositories()
         self.manager.save()
+
+    def add_repository(self, name: str):
+        self.manager.add_repository(name)
+        self.manager.save()
+
+    def remove_repository(self, name: str):
+        self.manager.remove_repository(name)
+        self.manager.save()
+
+    def add_exclude_repository(self, name: str):
+        self.manager.add_exclude_repository(name)
+        self.manager.save()
+
+    def remove_exclude_repository(self, name: str):
+        self.manager.remove_exclude_repository(name)
+        self.manager.save()
