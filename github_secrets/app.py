@@ -118,3 +118,11 @@ class GithubSecretsApp:
     def remove_exclude_repository(self, name: str):
         self.manager.remove_exclude_repository(name)
         self.manager.save()
+
+    def record_sync_for_all_repos_and_secrets(self):
+        self.manager.record_sync_for_all_repos_and_secrets()
+        self.manager.save()
+
+    def reset_sync_for_all_repos_and_secrets(self):
+        self.manager.reset_sync_for_all_repos_and_secrets()
+        self.manager.save()

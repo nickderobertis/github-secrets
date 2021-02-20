@@ -35,6 +35,10 @@ class SyncConfig(BaseModel):
     def __hash__(self):
         return hash((self.secret_name, self.repository))
 
+    @property
+    def global_(self) -> bool:
+        return self.repository is None
+
 
 class RepositorySecrets(BaseModel):
     secrets: Dict[str, List[Secret]] = Field(default_factory=lambda: {})
@@ -294,6 +298,16 @@ class SecretsConfig(BaseConfig):
             # Create case
             self.repository_secrets_last_synced[repository].append(sync_record)
         return not updated
+
+    def record_sync_for_all_repos_and_secrets(self):
+        repos = self.repositories
+        for sync_config in self.sync_configs:
+            secret = Secret(name=sync_config.secret_name, value='does not matter')
+            if sync_config.global_:
+                for repo in repos:
+                    self.record_sync_for_repo(secret, repo)
+            else:
+                self.record_sync_for_repo(secret, sync_config.repository)
 
     def add_repository(self, name: str):
         if self.include_repositories and name in self.include_repositories:

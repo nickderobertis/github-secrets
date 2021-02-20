@@ -76,3 +76,5 @@ def test_wrapper_methods(secrets_app: GithubSecretsApp):
     assert_wrapper_method(secrets_app, 'remove_repository', 'woo')
     assert_wrapper_method(secrets_app, 'add_exclude_repository', 'woo')
     assert_wrapper_method(secrets_app, 'remove_exclude_repository', 'woo')
+    assert_wrapper_method(secrets_app, 'record_sync_for_all_repos_and_secrets')
+    assert_wrapper_method(secrets_app, 'reset_sync_for_all_repos_and_secrets')

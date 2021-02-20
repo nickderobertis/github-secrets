@@ -213,6 +213,12 @@ class SecretsManager:
 
         return False
 
+    def record_sync_for_all_repos_and_secrets(self):
+        self.config.record_sync_for_all_repos_and_secrets()
+
+    def reset_sync_for_all_repos_and_secrets(self):
+        self.config.repository_secrets_last_synced = {}
+
     def save(self):
         print(
             f"{sty.saved()} settings config at path {self.config.settings.config_location}"
