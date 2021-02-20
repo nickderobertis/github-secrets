@@ -16,3 +16,7 @@ class RepositorySecretDoesNotExistException(SecretDoesNotExistException):
 
 class GlobalSecretDoesNotExistException(SecretDoesNotExistException):
     pass
+
+
+class SecretHasNotBeenSyncedException(GithubSecretsException):
+    pass

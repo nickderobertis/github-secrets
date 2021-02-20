@@ -5,7 +5,7 @@ from pyappconf import BaseConfig, AppConfig, ConfigFormats
 from pydantic import BaseModel, Field
 
 from github_secrets.exc import RepositoryNotInSecretsException, RepositorySecretDoesNotExistException, \
-    GlobalSecretDoesNotExistException
+    GlobalSecretDoesNotExistException, SecretHasNotBeenSyncedException
 
 APP_NAME = "GithubSecrets"
 
@@ -158,11 +158,11 @@ class SecretsConfig(BaseConfig):
 
     def secret_last_synced(self, name: str, repository: str) -> datetime.datetime:
         if repository not in self.repository_secrets_last_synced:
-            raise ValueError(f'have not previously synced to repository {repository}')
+            raise SecretHasNotBeenSyncedException(f'have not previously synced to repository {repository}')
         for record in self.repository_secrets_last_synced[repository]:
             if record.secret_name == name:
                 return record.last_updated
-        raise ValueError(f'secret {name} has not been previously synced to repository {repository}')
+        raise SecretHasNotBeenSyncedException(f'secret {name} has not been previously synced to repository {repository}')
 
     def record_sync_for_repo(self, secret: Secret, repository: str) -> bool:
         sync_record = SyncRecord(secret_name=secret.name)

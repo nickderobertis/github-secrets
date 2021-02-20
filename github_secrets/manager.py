@@ -1,3 +1,4 @@
+import datetime
 from pathlib import Path
 from typing import Optional, Union, Protocol, List
 from rich import print
@@ -7,7 +8,7 @@ from pyappconf import ConfigFormats
 from github_secrets.config import SecretsConfig, Secret
 from github_secrets import git
 from github_secrets import console_styles as sty
-from github_secrets.exc import RepositoryNotInSecretsException
+from github_secrets.exc import RepositoryNotInSecretsException, SecretHasNotBeenSyncedException
 
 
 class HasStr(Protocol):
@@ -56,6 +57,20 @@ class SecretsManager:
             self.config.global_secrets.remove_secret(name)
 
     def _sync_secret(self, secret: Secret, repo: str):
+        try:
+            last_synced = self.config.secret_last_synced(secret.name, repo)
+        except SecretHasNotBeenSyncedException:
+            # Never synced, set to a time before the creation of this package
+            last_synced = datetime.datetime(1960, 1, 1)
+        if last_synced >= secret.updated:
+            print(
+                f"Secret {sty.name_style(secret.name)} "
+                f"in repository {sty.name_style(repo)} was previously "
+                f"synced on {last_synced}, will not update"
+            )
+            return
+
+        # Do sync
         created = git.update_secret(secret, repo, self.config.github_token)
         self.config.record_sync_for_repo(secret, repo)
         action_str = sty.created() if created else sty.updated()
