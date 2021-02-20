@@ -95,3 +95,31 @@ def test_local_secret_already_synced(mock: Mock, secrets_manager: SecretsManager
     secrets_manager.sync_secret("temp")
     mock.assert_not_called()
     FROZEN.move_to(TEST_TIME)
+
+
+@patch("github_secrets.manager.git.update_secret")
+def test_sync_global_secret_overridden_by_local(mock: Mock, secrets_manager: SecretsManager):
+    secrets_manager.config.include_repositories = [
+        "testghuser/test-repo-1",
+        "testghuser/test-repo-2",
+    ]
+    secret = secrets_manager.config.global_secrets.get_secret("a")
+    secrets_manager.add_secret(secret.name, 'local version', "testghuser/test-repo-1")
+    repo_secret = secrets_manager.config.repository_secrets.get_secret('a', "testghuser/test-repo-1")
+    FROZEN.tick()
+    secrets_manager.sync_secret("a")
+    mock.assert_any_call(
+        repo_secret, "testghuser/test-repo-1", secrets_manager.config.github_token
+    )
+    mock.assert_any_call(
+        secret, "testghuser/test-repo-2", secrets_manager.config.github_token
+    )
+    assert mock.call_count == 2
+    expect_sync_record = SyncRecord(secret_name="a")
+    assert secrets_manager.config.repository_secrets_last_synced[
+        "testghuser/test-repo-1"
+    ] == [expect_sync_record]
+    assert secrets_manager.config.repository_secrets_last_synced[
+        "testghuser/test-repo-2"
+    ] == [expect_sync_record]
+    FROZEN.move_to(TEST_TIME)

@@ -82,7 +82,13 @@ class SecretsManager:
             # Global secret, so should update on all repositories
             secret = self.config.global_secrets.get_secret(name)
             for repo in repositories:
-                self._sync_secret(secret, repo)
+                # Check if there is a local repo version, which would take
+                # precedence over the global version
+                try:
+                    use_secret = self.config.repository_secrets.get_secret(secret.name, repo)
+                except (exc.RepositoryNotInSecretsException, exc.RepositorySecretDoesNotExistException):
+                    use_secret = secret
+                self._sync_secret(use_secret, repo)
         else:
             print(f"{sty.syncing()} {sty.local()} secret {sty.name_style(name)}")
             # Local secret, need to update only on repositories which include it
@@ -162,6 +168,7 @@ class SecretsManager:
             )
             return False
         print(f"{sty.deleted()} exclude for repository {sty.name_style(name)}")
+        return True
 
     def save(self):
         print(
