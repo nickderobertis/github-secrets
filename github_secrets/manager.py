@@ -18,19 +18,7 @@ class HasStr(Protocol):
 
 class SecretsManager:
     def __init__(self, config_path: Optional[Union[str, Path]] = None):
-        if config_path is None:
-            config_path = SecretsConfig._settings.config_location
-        else:
-            config_path = Path(config_path)
-        if config_path.exists():
-            self.config = SecretsConfig.load(config_path)
-        else:
-            config_format = ConfigFormats.from_path(config_path)
-            settings = SecretsConfig._settings_with_overrides(
-                custom_config_path=config_path.with_suffix(""),
-                default_format=config_format,
-            )
-            self.config = SecretsConfig(settings=settings)
+        self.config: SecretsConfig = SecretsConfig.load_or_create(config_path)
 
     def add_secret(
         self, name: str, value: HasStr, repository: Optional[str] = None
@@ -114,4 +102,7 @@ class SecretsManager:
         self.config.github_token = token
 
     def save(self):
+        print(
+            f"{sty.saved()} settings config at path {self.config.settings.config_location}"
+        )
         self.config.save()

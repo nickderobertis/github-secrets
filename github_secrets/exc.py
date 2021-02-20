@@ -20,3 +20,11 @@ class GlobalSecretDoesNotExistException(SecretDoesNotExistException):
 
 class SecretHasNotBeenSyncedException(GithubSecretsException):
     pass
+
+
+class ProfileException(GithubSecretsException):
+    pass
+
+
+class ProfileDoesNotExistException(ProfileException):
+    pass

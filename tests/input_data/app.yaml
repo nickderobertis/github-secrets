@@ -1,0 +1,6 @@
+current_profile:
+  config_path: &id001 /home/nick/Dropbox/Python/github-secrets/tests/input_data/config.yaml
+  name: test
+profiles:
+- config_path: *id001
+  name: test

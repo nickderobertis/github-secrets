@@ -1,11 +1,12 @@
 import datetime
+from pathlib import Path
 from typing import List, Dict, Optional
 
 from pyappconf import BaseConfig, AppConfig, ConfigFormats
 from pydantic import BaseModel, Field
 
 from github_secrets.exc import RepositoryNotInSecretsException, RepositorySecretDoesNotExistException, \
-    GlobalSecretDoesNotExistException, SecretHasNotBeenSyncedException
+    GlobalSecretDoesNotExistException, SecretHasNotBeenSyncedException, ProfileDoesNotExistException
 
 APP_NAME = "GithubSecrets"
 
@@ -133,7 +134,7 @@ class SecretsConfig(BaseConfig):
     repository_secrets: RepositorySecrets = Field(default_factory=lambda: RepositorySecrets())
     repository_secrets_last_synced: Dict[str, List[SyncRecord]] = Field(default_factory=lambda: {})
 
-    _settings = AppConfig(app_name=APP_NAME, default_format=ConfigFormats.YAML)
+    _settings = AppConfig(app_name=APP_NAME, default_format=ConfigFormats.YAML, config_name='default')
 
     @property
     def repositories(self) -> List[str]:
@@ -181,3 +182,48 @@ class SecretsConfig(BaseConfig):
 
     class Config:
         env_prefix = 'GITHUB_SECRETS_'
+
+
+class Profile(BaseModel):
+    name: str
+    config_path: Path
+
+
+DEFAULT_SECRETS_CONFIG_PATH = SecretsConfig._settings_with_overrides(config_name='default').config_location
+DEFAULT_PROFILE = Profile(name='default', config_path=DEFAULT_SECRETS_CONFIG_PATH)
+
+
+class SecretsAppConfig(BaseConfig):
+    current_profile: Profile = DEFAULT_PROFILE
+    profiles: List[Profile] = Field(default_factory=lambda: [DEFAULT_PROFILE])
+
+    _settings = AppConfig(app_name=APP_NAME, default_format=ConfigFormats.YAML, config_name='app')
+
+    def profile_exists(self, name: str):
+        for profile in self.profiles:
+            if profile.name == name:
+                return True
+        return False
+
+    def get_profile(self, name: str) -> Profile:
+        for profile in self.profiles:
+            if profile.name == name:
+                return profile
+        raise ProfileDoesNotExistException(f'no profile with name {name}')
+
+    def add_profile(self, name: str, path: Optional[Path] = None):
+        if path is None:
+            path = SecretsConfig._settings_with_overrides(config_name=name).config_location
+        profile = Profile(name=name, config_path=path)
+        self.profiles.append(profile)
+
+    def set_profile(self, name: str):
+        profile = self.get_profile(name)
+        self.current_profile = profile
+
+    def delete_profile(self, name: str):
+        new_profiles: List[Profile] = []
+        for profile in self.profiles:
+            if profile.name != name:
+                new_profiles.append(profile)
+        self.profiles = new_profiles

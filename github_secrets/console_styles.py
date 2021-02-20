@@ -10,6 +10,10 @@ def updated() -> str:
     return create_style("Updated")
 
 
+def saved() -> str:
+    return create_style("Saved")
+
+
 def delete_style(string: str) -> str:
     return f"[red]{string}[/red]"
 
@@ -44,3 +48,7 @@ def syncing() -> str:
 
 def synced() -> str:
     return sync_style("Synced")
+
+
+def set_() -> str:
+    return sync_style("Set")
