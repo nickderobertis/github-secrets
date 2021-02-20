@@ -3,8 +3,6 @@ from typing import List, Dict, Optional
 from pyappconf import BaseConfig, AppConfig, ConfigFormats
 from pydantic import BaseModel, Field
 
-from github_secrets.git import get_repository_names
-
 APP_NAME = "GithubSecrets"
 
 
@@ -78,6 +76,7 @@ class SecretsConfig(BaseConfig):
 
     @property
     def repositories(self) -> List[str]:
+        from github_secrets.git import get_repository_names
         if self.include_repositories is not None:
             return self.include_repositories
         if not self.github_token:
@@ -88,6 +87,7 @@ class SecretsConfig(BaseConfig):
         return repositories
 
     def bootstrap_repositories(self):
+        from github_secrets.git import get_repository_names
         if not self.github_token:
             raise ValueError('need to set github token')
         repositories = get_repository_names(self.github_token)

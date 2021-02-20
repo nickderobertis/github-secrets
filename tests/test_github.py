@@ -1,6 +1,7 @@
 import os
 
 from github_secrets import git
+from github_secrets.config import Secret
 
 GH_TOKEN = os.environ["GITHUB_SECRETS_GITHUB_TOKEN"]
 
@@ -15,3 +16,9 @@ def test_get_repository():
     repo = git.get_repository(name, GH_TOKEN)
     assert repo.full_name == name
     assert repo.description == 'First test repo'
+
+
+def test_update_secret():
+    name = "testghuser/test-repo-1"
+    secret = Secret(name='TEST_UPDATE_SECRET', value='abc')
+    assert not git.update_secret(secret, name, GH_TOKEN)
