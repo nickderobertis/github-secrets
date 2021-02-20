@@ -27,12 +27,13 @@ class SecretsManager:
             )
             self.config = SecretsConfig(settings=settings)
 
-    def add_secret(self, name: str, value: HasStr, repository: Optional[str] = None):
+    def add_secret(self, name: str, value: HasStr, repository: Optional[str] = None) -> bool:
         secret = Secret(name=name, value=str(value))
         if repository is not None:
-            self.config.repository_secrets.add_secret(secret, repository)
+            created = self.config.repository_secrets.add_secret(secret, repository)
         else:
-            self.config.global_secrets.add_secret(secret)
+            created = self.config.global_secrets.add_secret(secret)
+        return created
 
     def remove_secret(self, name: str, repository: Optional[str] = None):
         if repository is not None:
