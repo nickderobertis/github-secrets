@@ -260,7 +260,7 @@ class SecretsConfig(BaseConfig):
             all_sync_configs.extend(sync_configs)
         return all_sync_configs
 
-    def bootstrap_repositories(self):
+    def bootstrap_repositories(self) -> Set[str]:
         from github_secrets.git import get_repository_names
 
         if not self.github_token:
@@ -270,7 +270,13 @@ class SecretsConfig(BaseConfig):
             repositories = [
                 repo for repo in repositories if repo not in self.exclude_repositories
             ]
+        if self.include_repositories:
+            include_repos = self.include_repositories
+        else:
+            include_repos = []
+        new_repositories = set(repositories).difference(include_repos)
         self.include_repositories = repositories
+        return new_repositories
 
     def secret_last_synced(self, name: str, repository: str) -> datetime.datetime:
         if repository not in self.repository_secrets_last_synced:

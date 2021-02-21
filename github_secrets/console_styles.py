@@ -14,6 +14,10 @@ def saved() -> str:
     return create_style("Saved")
 
 
+def included() -> str:
+    return create_style("Included")
+
+
 def excluded() -> str:
     return create_style("Excluded")
 

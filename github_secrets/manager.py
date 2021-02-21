@@ -119,7 +119,9 @@ class SecretsManager:
             self.sync_secret(sync_config.secret_name, repository=repository)
 
     def bootstrap_repositories(self):
-        self.config.bootstrap_repositories()
+        new_repos = self.config.bootstrap_repositories()
+        for repo in new_repos:
+            print(f"{sty.included()} repository {sty.name_style(repo)}")
 
     def set_token(self, token: str):
         self.config.github_token = token
@@ -140,7 +142,7 @@ class SecretsManager:
             )
             return False
 
-        print(f"{sty.created()} repository {sty.name_style(name)}")
+        print(f"{sty.included()} repository {sty.name_style(name)}")
         return True
 
     def remove_repository(self, name: str) -> bool:
