@@ -25,6 +25,7 @@ pygithub = {editable = true,git = "https://github.com/pdex/PyGithub.git",ref = "
 py-app-conf = "*"
 freezegun = "*"
 rich = "*"
+typer = "*"
 
 [requires]
 python_version = "3.8"

@@ -3,7 +3,7 @@ from typing import Optional, Union
 
 from rich import print
 
-from github_secrets.config import SecretsAppConfig
+from github_secrets.config import SecretsAppConfig, SecretsConfig
 from github_secrets.manager import SecretsManager, HasStr
 from github_secrets import console_styles as sty
 
@@ -37,9 +37,14 @@ class GithubSecretsApp:
             )
             return False
         self.config.add_profile(name, path)
+        if path is None:
+            path = SecretsConfig._settings_with_overrides(
+                config_name=name
+            ).config_location
         print(
             f"{sty.created()} profile {sty.name_style(name)} with path {path}"
         )
+        self.save()
         return True
 
     def set_profile(self, name: str) -> bool:
@@ -54,6 +59,7 @@ class GithubSecretsApp:
         print(
             f"{sty.set_()} profile {sty.name_style(name)} with path {self.config.current_profile.config_path}"
         )
+        self.save()
         return True
 
     def delete_profile(self, name: str) -> bool:
@@ -74,6 +80,7 @@ class GithubSecretsApp:
         print(
             f"{sty.deleted()} profile {sty.name_style(name)}"
         )
+        self.save()
         return True
 
     def set_token(self, value: str):
@@ -126,3 +133,6 @@ class GithubSecretsApp:
     def reset_sync_for_all_repos_and_secrets(self):
         self.manager.reset_sync_for_all_repos_and_secrets()
         self.manager.save()
+
+    def check(self):
+        self.manager.check()

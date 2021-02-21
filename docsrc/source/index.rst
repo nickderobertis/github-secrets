@@ -29,11 +29,11 @@ github-secrets
 -------------------------------------------------------
 
 
-This is a simple example:
+See how to use the CLI:
 
-.. code:: python
+.. code:: bash
 
-    import github_secrets
+    gh-secrets --help
 
 
 .. toctree:: api/modules

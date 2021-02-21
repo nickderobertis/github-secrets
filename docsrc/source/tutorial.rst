@@ -6,15 +6,13 @@ Install
 
 Install via::
 
-    pip install github-secrets
+    pip install git+https://github.com/nickderobertis/github-secrets.git
 
 Usage
 =========
 
-Some highlighted functionality.
+See how to use the CLI::
 
-This is a simple example::
-
-    import github_secrets
+    gh-secrets --help
 
 

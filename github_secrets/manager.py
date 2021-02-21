@@ -1,13 +1,13 @@
 import datetime
 from pathlib import Path
-from typing import Optional, Union, Protocol, List
+from typing import Optional, Union, List
+from typing_extensions import Protocol
 from rich import print
 
-from pyappconf import ConfigFormats
 from rich.markdown import Markdown
 from rich.table import Table
 
-from github_secrets.config import SecretsConfig, Secret, SyncConfig
+from github_secrets.config import SecretsConfig, Secret
 from github_secrets import git
 from github_secrets import console_styles as sty
 from github_secrets.exc import (
@@ -194,7 +194,7 @@ class SecretsManager:
 
         markdown_str = "# Github Secrets Check\n"
         if new_repos:
-            markdown_str = "## New Repositories\n"
+            markdown_str += "## New Repositories\n"
             markdown_str += "\n".join(
                 [f"- {repo}\n" for repo in new_repos]
             )
