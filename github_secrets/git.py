@@ -23,4 +23,4 @@ def update_secret(secret: Secret, repo_name: str, access_token: str) -> bool:
     repo = get_repository(repo_name, access_token)
     return repo.create_secret(secret.name, secret.value)
 
-# TODO [$6032aa8ba9ac480009934a62]: once pygithub supports get, delete secret, add functionality and complete tests
+# TODO [#1]: once pygithub supports get, delete secret, add functionality and complete tests
