@@ -31,13 +31,15 @@ class SecretsManager:
     ) -> bool:
         secret = Secret(name=name, value=str(value))
         if repository is not None:
-            print(
-                f"{sty.created()} secret {sty.name_style(name)} for repository {sty.name_style(repository)}"
-            )
             created = self.config.repository_secrets.add_secret(secret, repository)
+            created_str = sty.created() if created else sty.updated()
+            print(
+                f"{created_str} secret {sty.name_style(name)} for repository {sty.name_style(repository)}"
+            )
         else:
-            print(f"{sty.created()} {sty.global_()} secret {sty.name_style(name)}")
             created = self.config.global_secrets.add_secret(secret)
+            created_str = sty.created() if created else sty.updated()
+            print(f"{created_str} {sty.global_()} secret {sty.name_style(name)}")
         return created
 
     def remove_secret(self, name: str, repository: Optional[str] = None):
