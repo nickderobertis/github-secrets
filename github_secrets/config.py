@@ -346,7 +346,7 @@ class SecretsConfig(BaseConfig):
         self.exclude_repositories.remove(name)
 
     class Config:
-        env_prefix = "GITHUB_SECRETS_"
+        env_prefix = "GH_SECRETS_"
 
 
 class Profile(BaseModel):

@@ -3,7 +3,7 @@ import os
 from github_secrets import git
 from github_secrets.config import Secret
 
-GH_TOKEN = os.environ["GITHUB_SECRETS_GITHUB_TOKEN"]
+GH_TOKEN = os.environ["GH_SECRETS_GITHUB_TOKEN"]
 
 
 def test_get_repository_names():

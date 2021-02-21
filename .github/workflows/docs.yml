@@ -47,7 +47,7 @@ jobs:
       run: |
         pipenv run python -m pytest --cov=./ --cov-report=xml
       env:
-        GITHUB_SECRETS_GITHUB_TOKEN: ${{ secrets.GITHUB_SECRETS_GITHUB_TOKEN }}
+        GH_SECRETS_GITHUB_TOKEN: ${{ secrets.GH_SECRETS_GITHUB_TOKEN }}
     - name: Upload coverage to Codecov
       if: github.ref == 'refs/heads/master'
       uses: codecov/codecov-action@v1
