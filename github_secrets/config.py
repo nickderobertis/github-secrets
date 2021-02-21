@@ -241,18 +241,20 @@ class SecretsConfig(BaseConfig):
             else:
                 repo_secrets = []
             all_secrets = global_secrets + repo_secrets
+            repo_unsync_secrets: List[Secret]
             if repo not in self.repository_secrets_last_synced:
                 repo_unsync_secrets = all_secrets
             else:
-                repo_unsync_secrets = [
-                    secret
-                    for secret in all_secrets
-                    if secret.name
-                    not in [
-                        sec.secret_name
-                        for sec in self.repository_secrets_last_synced[repo]
-                    ]
+                repo_unsync_secrets = []
+                existing_secrets = [
+                    sec.secret_name for sec in self.repository_secrets_last_synced[repo]
                 ]
+                for secret in all_secrets:
+                    if secret.name not in existing_secrets:
+                        repo_unsync_secrets.append(secret)
+                    else:
+                        if secret.updated > self.secret_last_synced(secret.name, repo):
+                            repo_unsync_secrets.append(secret)
             sync_configs = [
                 SyncConfig(secret_name=sec.name, repository=repo)
                 for sec in repo_unsync_secrets
@@ -308,7 +310,7 @@ class SecretsConfig(BaseConfig):
     def record_sync_for_all_repos_and_secrets(self):
         repos = self.repositories
         for sync_config in self.sync_configs:
-            secret = Secret(name=sync_config.secret_name, value='does not matter')
+            secret = Secret(name=sync_config.secret_name, value="does not matter")
             if sync_config.global_:
                 for repo in repos:
                     self.record_sync_for_repo(secret, repo)
