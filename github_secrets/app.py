@@ -98,12 +98,12 @@ class GithubSecretsApp:
         self.manager.remove_secret(name, repository=repository)
         self.manager.save()
 
-    def sync_secret(self, name: str, repository: Optional[str] = None):
-        self.manager.sync_secret(name, repository=repository)
+    def sync_secret(self, name: str, repository: Optional[str] = None, verbose: bool = False):
+        self.manager.sync_secret(name, repository=repository, verbose=verbose)
         self.manager.save()
 
-    def sync_secrets(self, repository: Optional[str] = None):
-        self.manager.sync_secrets(repository=repository)
+    def sync_secrets(self, repository: Optional[str] = None, verbose: bool = False):
+        self.manager.sync_secrets(repository=repository, verbose=verbose)
         self.manager.save()
 
     def bootstrap_repositories(self):

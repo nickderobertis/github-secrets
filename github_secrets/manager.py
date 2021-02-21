@@ -50,18 +50,19 @@ class SecretsManager:
             print(f"{sty.deleted()} {sty.global_()} secret {sty.name_style(name)}")
             self.config.global_secrets.remove_secret(name)
 
-    def _sync_secret(self, secret: Secret, repo: str):
+    def _sync_secret(self, secret: Secret, repo: str, verbose: bool = False):
         try:
             last_synced = self.config.secret_last_synced(secret.name, repo)
         except SecretHasNotBeenSyncedException:
             # Never synced, set to a time before the creation of this package
             last_synced = datetime.datetime(1960, 1, 1)
         if last_synced >= secret.updated:
-            print(
-                f"Secret {sty.name_style(secret.name)} "
-                f"in repository {sty.name_style(repo)} was previously "
-                f"synced on {last_synced}, will not update"
-            )
+            if verbose:
+                print(
+                    f"Secret {sty.name_style(secret.name)} "
+                    f"in repository {sty.name_style(repo)} was previously "
+                    f"synced on {last_synced}, will not update"
+                )
             return
 
         # Do sync
@@ -73,7 +74,7 @@ class SecretsManager:
             f"in repository {sty.name_style(repo)}"
         )
 
-    def sync_secret(self, name: str, repository: Optional[str] = None):
+    def sync_secret(self, name: str, repository: Optional[str] = None, verbose: bool = False):
         if not self.config.github_token:
             raise ValueError("must set github token before sync")
 
@@ -98,7 +99,7 @@ class SecretsManager:
                     exc.RepositorySecretDoesNotExistException,
                 ):
                     use_secret = secret
-                self._sync_secret(use_secret, repo)
+                self._sync_secret(use_secret, repo, verbose=verbose)
         else:
             print(f"{sty.syncing()} {sty.local()} secret {sty.name_style(name)}")
             # Local secret, need to update only on repositories which include it
@@ -111,12 +112,12 @@ class SecretsManager:
                 except RepositoryNotInSecretsException:
                     continue
                 secret = self.config.repository_secrets.get_secret(name, repo)
-                self._sync_secret(secret, repo)
+                self._sync_secret(secret, repo, verbose=verbose)
 
-    def sync_secrets(self, repository: Optional[str] = None):
+    def sync_secrets(self, repository: Optional[str] = None, verbose: bool = False):
         print(f"{sty.syncing()} all secrets")
         for sync_config in self.config.sync_configs:
-            self.sync_secret(sync_config.secret_name, repository=repository)
+            self.sync_secret(sync_config.secret_name, repository=repository, verbose=verbose)
 
     def bootstrap_repositories(self):
         new_repos = self.config.bootstrap_repositories()

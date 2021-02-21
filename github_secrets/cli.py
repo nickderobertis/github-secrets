@@ -9,6 +9,9 @@ cli = typer.Typer()
 app: GithubSecretsApp
 
 
+VERBOSE_DOC = 'Show additional output useful for debugging'
+
+
 @cli.callback(invoke_without_command=True)
 def start_app(ctx: typer.Context):
     """
@@ -159,6 +162,7 @@ def remove_secret(
 def sync_secret(
     name: Optional[str] = typer.Argument(None, help=SECRET_NAME_DOC),
     repository: Optional[str] = typer.Argument(None, help=REPO_NAME_DOC),
+    verbose: bool = typer.Option(False, '--verbose', '-v', help=VERBOSE_DOC, show_default=False)
 ):
     """
     Sync one or all secrets to one or all repositories in profile.
@@ -168,9 +172,9 @@ def sync_secret(
     for a full sync.
     """
     if name is not None:
-        app.sync_secret(name, repository=repository)
+        app.sync_secret(name, repository=repository, verbose=verbose)
     else:
-        app.sync_secrets(repository=repository)
+        app.sync_secrets(repository=repository, verbose=verbose)
 
 
 cli.add_typer(secrets_cli)
