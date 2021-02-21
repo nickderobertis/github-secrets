@@ -1,3 +1,4 @@
+# Labels here will be synced to the repo
 - name: maintenance
   description: Changes which don't directly support a feature
   color: 4ec76e
