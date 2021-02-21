@@ -1,0 +1,6 @@
+github-secrets
+py-app-conf
+typer
+pygithub @ https://github.com/pdex/PyGithub/tarball/actions-secrets
+typing_extensions
+rich
