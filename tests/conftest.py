@@ -1,7 +1,11 @@
 from _pytest.main import Session
 import freezegun
 from freezegun.api import FrozenDateTimeFactory
+import os
+import shutil
 
+if not os.path.exists('env.py'):
+    shutil.copy('env.template.py', 'env.py')
 import env  # loads local environment variables
 from tests.config import TEST_TIME
 
