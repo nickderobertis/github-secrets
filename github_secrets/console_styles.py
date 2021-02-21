@@ -1,5 +1,5 @@
 def create_style(string: str) -> str:
-    return f"[green]{string}[/green]"
+    return f":white_check_mark: [green]{string}[/green]"
 
 
 def created() -> str:
@@ -23,7 +23,7 @@ def excluded() -> str:
 
 
 def delete_style(string: str) -> str:
-    return f"[red]{string}[/red]"
+    return f":x: [red]{string}[/red]"
 
 
 def deleted() -> str:
@@ -47,7 +47,7 @@ def local() -> str:
 
 
 def sync_style(string: str) -> str:
-    return f"[blue]{string}[/blue]"
+    return f":recycle: [blue]{string}[/blue]"
 
 
 def syncing() -> str:
