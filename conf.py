@@ -62,8 +62,8 @@ PACKAGE_INSTALL_REQUIRES = [
     # e.g.
     # 'package',
     # 'otherpackage>=1,<2'
-    'pygithub @ https://github.com/pdex/PyGithub/tarball/actions-secrets',
-    'py-app-conf',
+    'pygithub>=1.55',
+    'py-app-conf>=0.3.3',
     'rich',
     'typer',
     'typing_extensions',
