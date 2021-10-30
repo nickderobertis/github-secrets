@@ -27,5 +27,3 @@ freezegun = "*"
 rich = "*"
 typer = "*"
 
-[requires]
-python_version = "3.8"

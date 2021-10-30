@@ -1,6 +1,6 @@
 {
     "template": "https://github.com/nickderobertis/cookiecutter-pypi-sphinx",
-    "commit": "1fdefcda9765e34fd70a4757a2eecc42ea249561",
+    "commit": "091fcff1b2a425adc13a75fc587fbbb190b7ca3a",
     "context": {
         "cookiecutter": {
             "package_name": "github-secrets",
@@ -13,6 +13,7 @@
             "author_email": "whoopnip@gmail.com",
             "google_analytics_id": "",
             "logo_url": "",
+            "install_packages": "",
             "_template": "https://github.com/nickderobertis/cookiecutter-pypi-sphinx"
         }
     },
