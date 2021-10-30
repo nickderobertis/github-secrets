@@ -12,7 +12,7 @@ Python API and CLI for managing Github secrets
 Install `github-secrets`:
 
 ```
-pip install git+https://github.com/nickderobertis/github-secrets.git
+pip install github-secrets
 ```
 
 CLI Usage:
