@@ -1,6 +1,6 @@
-pygithub @ https://github.com/pdex/PyGithub/tarball/actions-secrets
-py-app-conf
+pygithub>=1.55
 rich
 typing_extensions
 github-secrets
+py-app-conf>=0.3.3
 typer
