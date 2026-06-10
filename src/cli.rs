@@ -1,11 +1,16 @@
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 use crate::config::{load_active_profile, ProfileConfig};
+use crate::destinations::DestinationReport;
 use crate::github::GitHubClient;
+use crate::manifest::{RepoManifest, DEFAULT_MANIFEST_FILE};
 use crate::paths::Paths;
 use crate::secrets::Upsert;
 use crate::sync::{self, SyncReport};
+use crate::sync_manifest::{self, ManifestSyncReport};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -47,6 +52,35 @@ enum Command {
     },
     /// Show which repositories aren't in the profile and which secrets are stale.
     Check,
+    /// Work with a repo-local `gh-secrets.json` manifest: pull from an external
+    /// source (Bitwarden) and push to one or more destinations (GitHub, env
+    /// file). Independent of the profile-based commands above.
+    Manifest {
+        #[command(subcommand)]
+        command: ManifestCmd,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ManifestCmd {
+    /// Write a starter `gh-secrets.json` next to which `gh-secrets manifest
+    /// sync` can be invoked.
+    Init {
+        /// Where to write the manifest. Defaults to `./gh-secrets.json`.
+        #[arg(long, short)]
+        path: Option<PathBuf>,
+    },
+    /// Pull every managed secret from the manifest's source and push to each
+    /// destination that doesn't already hold the current value.
+    Sync {
+        /// Path to the manifest file. Defaults to `./gh-secrets.json`.
+        #[arg(long, short)]
+        config: Option<PathBuf>,
+        /// Path to the sync-state file. Defaults to `.gh-secrets-state.json`
+        /// next to the manifest.
+        #[arg(long)]
+        state: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -280,6 +314,22 @@ pub fn run() -> Result<()> {
         Command::Check => {
             check(&profile)?;
         }
+
+        Command::Manifest { command } => match command {
+            ManifestCmd::Init { path } => {
+                let target = path.unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST_FILE));
+                if target.exists() {
+                    anyhow::bail!("{} already exists; refusing to overwrite", target.display());
+                }
+                RepoManifest::starter().save(&target)?;
+                println!("manifest: wrote starter to {}", target.display());
+            }
+            ManifestCmd::Sync { config, state } => {
+                let manifest_path = config.unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST_FILE));
+                let report = sync_manifest::sync_manifest(&manifest_path, state.as_deref())?;
+                print_manifest_report(&report);
+            }
+        },
     }
 
     if profile_dirty {
@@ -306,6 +356,31 @@ fn scope_label(repo: Option<&str>) -> String {
         Some(r) => format!("repo '{r}'"),
         None => "global".to_string(),
     }
+}
+
+fn print_manifest_report(report: &ManifestSyncReport) {
+    if report.is_noop() {
+        println!("manifest sync: nothing to do");
+        return;
+    }
+    for outcome in &report.destinations {
+        print_destination_report(&outcome.destination_key, &outcome.report);
+    }
+}
+
+fn print_destination_report(key: &str, report: &DestinationReport) {
+    for name in &report.created {
+        println!("{key}: created '{name}'");
+    }
+    for name in &report.updated {
+        println!("{key}: updated '{name}'");
+    }
+    println!(
+        "{key}: {} created, {} updated, {} unchanged",
+        report.created.len(),
+        report.updated.len(),
+        report.unchanged.len()
+    );
 }
 
 fn print_sync_report(report: &SyncReport) {

@@ -1,6 +1,8 @@
 // Shared helpers for the e2e tests. `mod common` in a sibling integration test
 // file (`tests/e2e.rs`) pulls these in; the `mod.rs` form keeps cargo from
-// building this file as a stand-alone test binary.
+// building this file as a stand-alone test binary. Not every consumer uses
+// every item — silence `dead_code` so partial use doesn't produce warnings.
+#![allow(dead_code)]
 
 use assert_cmd::Command;
 use base64::engine::general_purpose::STANDARD as B64;
