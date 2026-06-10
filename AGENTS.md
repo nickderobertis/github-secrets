@@ -174,6 +174,17 @@ For the manifest-driven flow:
   ```
   Without the secret, the `live-e2e` job in `.github/workflows/ci.yml` is a
   no-op. Rotate the PAT through the same command whenever needed.
+- `scripts/install.sh` is the cross-platform installer (Linux/macOS x86_64 +
+  arm64, Windows x86_64 under a POSIX shell): it detects the host target,
+  downloads the matching release archive, verifies its SHA-256, and installs
+  the binary. It must stay in lock-step with the release asset naming in
+  `release.yml` — the archive is `gh-secrets-<tag>-<target>.<ext>` and the
+  checksum asset is that name with `.sha256` *appended* (it keeps the
+  `.tar.gz`/`.zip`), and the binary sits under a leading
+  `gh-secrets-<tag>-<target>/` directory inside the archive. The live e2e
+  suite (`live_install_script_downloads_and_verifies_release`) runs the script
+  against the real release every CI run that has `GH_E2E_TOKEN`, so a drift in
+  asset naming fails the gate rather than only surfacing for a user.
 
 ## Keeping the allowlist current
 

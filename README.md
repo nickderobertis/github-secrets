@@ -8,10 +8,27 @@ that have changed since the last sync.
 
 ## Install
 
-From a clone:
+Download the latest prebuilt binary, verify its SHA-256 checksum, and drop it
+on your PATH (Linux/macOS, and Windows under Git Bash / MSYS / WSL):
 
 ```sh
-cargo install --path .
+curl -fsSL https://raw.githubusercontent.com/nickderobertis/github-secrets/master/scripts/install.sh | sh
+```
+
+Pin a version or pick the install directory:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/nickderobertis/github-secrets/master/scripts/install.sh \
+  | sh -s -- --version v0.1.0 --to ~/.local/bin
+```
+
+The script defaults to `~/.local/bin`; set `GITHUB_TOKEN` to avoid the GitHub
+API rate limit when resolving the latest release. For native Windows PowerShell,
+or from a clone:
+
+```sh
+cargo install gh-secrets --locked   # from crates.io
+cargo install --path .              # from a clone
 ```
 
 ## Usage
