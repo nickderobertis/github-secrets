@@ -222,8 +222,10 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   "release PR" carrying the next `Cargo.toml`/`Cargo.lock` version bump and the
   generated `CHANGELOG.md`. **Merging that release PR** is the release action:
   it tags `vX.Y.Z`, cuts the GitHub Release, and the same workflow run then
-  builds binaries for x86_64 + aarch64 Linux/macOS and x86_64 Windows, attaches
-  each archive with a SHA-256 checksum, and (if `CARGO_REGISTRY_TOKEN` is
+  builds binaries for x86_64 + aarch64 Linux, aarch64 macOS, and x86_64 Windows
+  (x86_64 macOS is intentionally omitted — see the matrix comment in
+  `release.yml`), attaches each archive with a SHA-256 checksum, and (if
+  `CARGO_REGISTRY_TOKEN` is
   configured) publishes to crates.io.
 - release-please opens its release PR from the branch
   `release-please--branches--master--components--gh-secrets`, *not* the plain
@@ -244,10 +246,12 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   ```
   Without the secret, the `live-e2e` job in `.github/workflows/ci.yml` is a
   no-op. Rotate the PAT through the same command whenever needed.
-- `scripts/install.sh` is the cross-platform installer (Linux/macOS x86_64 +
-  arm64, Windows x86_64 under a POSIX shell): it detects the host target,
+- `scripts/install.sh` is the cross-platform installer (Linux x86_64 + arm64,
+  macOS arm64, Windows x86_64 under a POSIX shell): it detects the host target,
   downloads the matching release archive, verifies its SHA-256, and installs
-  the binary. It must stay in lock-step with the release asset naming in
+  the binary. Hosts with no published asset (Intel macOS, non-x86_64 Windows)
+  abort with a `cargo install` suggestion rather than 404 on a missing archive,
+  so the installer's target set must track the `release.yml` matrix. It must stay in lock-step with the release asset naming in
   `release.yml` — the archive is `gh-secrets-<tag>-<target>.<ext>` and the
   checksum asset is that name with `.sha256` *appended* (it keeps the
   `.tar.gz`/`.zip`), and the binary sits under a leading
