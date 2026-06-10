@@ -11,8 +11,11 @@
 
 mod live_common;
 
+use std::process::Command as StdCommand;
+
 use live_common::{live_enabled, token, LiveSession, LIVE_ENV};
 use predicates::str::contains;
+use tempfile::TempDir;
 
 macro_rules! skip_if_no_live {
     () => {
@@ -184,6 +187,61 @@ fn live_repo_override_wins_during_sync() {
         .success()
         .stdout(contains(format!("created '{name}' in {}", s.repo)));
     assert!(s.remote_secret_names().contains(&name));
+}
+
+/// The cross-platform install script (`scripts/install.sh`) must download the
+/// real published release, verify its SHA-256 checksum, and drop a working
+/// binary onto the chosen PATH. This drives the canonical `curl ... | sh`
+/// experience end-to-end against GitHub: it resolves the latest release tag
+/// (passing `GITHUB_TOKEN` so the API call is not rate-limited), downloads and
+/// checksum-verifies the archive for this host platform, extracts it, and
+/// installs the binary, which we then run to prove it is functional.
+///
+/// Only meaningful on the platforms the script targets with a POSIX shell;
+/// `live-e2e` runs on Linux, where `sh`/`tar`/`sha256sum` are present.
+#[test]
+fn live_install_script_downloads_and_verifies_release() {
+    skip_if_no_live!();
+
+    let bindir = TempDir::new().expect("tempdir for install target");
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/install.sh");
+
+    let output = StdCommand::new("sh")
+        .arg(script)
+        .arg("--to")
+        .arg(bindir.path())
+        // The script reads GITHUB_TOKEN (not GH_TOKEN) to authenticate the
+        // "latest release" API call and lift the unauthenticated rate limit.
+        .env("GITHUB_TOKEN", token())
+        .output()
+        .expect("run scripts/install.sh");
+
+    assert!(
+        output.status.success(),
+        "install.sh failed (status {:?}):\nstdout: {}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+
+    // The installed binary must run. The script names it `gh-secrets` on every
+    // platform the live job exercises (no `.exe` on Linux/macOS).
+    let installed = bindir.path().join("gh-secrets");
+    assert!(
+        installed.is_file(),
+        "expected installed binary at {}",
+        installed.display()
+    );
+    let version = StdCommand::new(&installed)
+        .arg("--version")
+        .output()
+        .expect("run installed gh-secrets --version");
+    assert!(version.status.success(), "installed binary failed to run");
+    let stdout = String::from_utf8_lossy(&version.stdout);
+    assert!(
+        stdout.contains("gh-secrets"),
+        "unexpected --version output: {stdout}"
+    );
 }
 
 /// Local-only removal must NOT touch the remote secret. The CLI deliberately
