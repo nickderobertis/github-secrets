@@ -235,9 +235,26 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   name). Watch for that exact branch name if you poll for the release PR.
 - The release build is chained off release-please's `release_created` output in
   the **same** workflow on purpose: a tag pushed by the default `GITHUB_TOKEN`
-  does not trigger a separate `push: tags` workflow, so a single workflow with
-  no extra PAT is the robust design. `release-please-manifest.json` is the
-  source of truth for the current version — keep it equal to `Cargo.toml`.
+  does not trigger a separate `push: tags` workflow, so a single workflow is the
+  robust design — the build chaining itself needs no PAT (the `RELEASE_PLEASE_TOKEN`
+  below is a separate concern, only so the release *PR* gets CI).
+  `release-please-manifest.json` is the source of truth for the current version
+  — keep it equal to `Cargo.toml`.
+- The release PR opens under a PAT (`RELEASE_PLEASE_TOKEN`) when that repo secret
+  is set, falling back to `GITHUB_TOKEN` otherwise. This matters because a PR
+  opened by `GITHUB_TOKEN` does **not** trigger the `pull_request` CI/lint
+  workflows — GitHub suppresses that to avoid recursive runs — so its required
+  status checks never appear and **auto-merge can never fire**; the release PR
+  has to be merged by hand. A PAT-opened PR triggers CI like any human PR, so
+  branch protection is satisfied and auto-merge works. Set it with a PAT (a
+  fine-grained token with `contents: read/write` + `pull-requests: read/write`
+  on this repo, or a classic `repo` PAT):
+  ```
+  gh secret set RELEASE_PLEASE_TOKEN --repo <owner>/<repo>
+  # paste the token when prompted
+  ```
+  Without it nothing breaks — the workflow falls back to `GITHUB_TOKEN` and the
+  release PR is merged manually (squash, like any release PR).
 - Live e2e in CI is gated on a `GH_E2E_TOKEN` repo secret. Set it with a PAT
   that has `repo` scope on the account that should host the sandbox repo:
   ```
