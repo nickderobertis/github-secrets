@@ -1,0 +1,23 @@
+# Conventional Commits, enforced in CI (see .github/workflows/pr-lint.yml).
+#
+# The type list is kept in lockstep with the PR-title check
+# (amannn/action-semantic-pull-request) and the changelog sections in
+# release-please-config.json. `@commitlint/config-conventional` is bundled by
+# the wagoid commitlint action, so no local npm install is required.
+extends:
+  - "@commitlint/config-conventional"
+rules:
+  type-enum:
+    - 2
+    - always
+    - - build
+      - chore
+      - ci
+      - docs
+      - feat
+      - fix
+      - perf
+      - refactor
+      - revert
+      - style
+      - test
