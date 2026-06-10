@@ -72,10 +72,35 @@ impl SecretSource for StaticSource {
 
 // ---- Bitwarden ----
 
+/// Canonical env var names passed through to the `bw` subprocess. These match
+/// the Bitwarden CLI's own convention, so anything `bw` reads natively keeps
+/// working.
 pub const BW_CLIENTID_ENV: &str = "BW_CLIENTID";
 pub const BW_CLIENTSECRET_ENV: &str = "BW_CLIENTSECRET";
 pub const BW_PASSWORD_ENV: &str = "BW_PASSWORD";
 pub const BW_SESSION_ENV: &str = "BW_SESSION";
+
+/// Env var names we *read* credentials from, in priority order: the canonical
+/// `BW_*` name first, then the `BITWARDEN_*` alias many users prefer in a
+/// `.env`. The first non-empty match wins; whatever we read is handed to the
+/// `bw` subprocess under the canonical name above.
+pub const BW_CLIENTID_ENVS: &[&str] = &[BW_CLIENTID_ENV, "BITWARDEN_CLIENT_ID"];
+pub const BW_CLIENTSECRET_ENVS: &[&str] = &[BW_CLIENTSECRET_ENV, "BITWARDEN_CLIENT_SECRET"];
+pub const BW_PASSWORD_ENVS: &[&str] = &[
+    BW_PASSWORD_ENV,
+    "BITWARDEN_MASTER_PASSWORD",
+    "BITWARDEN_PASSWORD",
+];
+pub const BW_SESSION_ENVS: &[&str] = &[BW_SESSION_ENV, "BITWARDEN_SESSION"];
+
+/// First non-empty value among `names`. Treats an env var set to the empty
+/// string as unset so we never hand `bw` a blank password (which would make it
+/// fall back to an interactive prompt against a closed stdin).
+fn env_first(names: &[&str]) -> Option<String> {
+    names
+        .iter()
+        .find_map(|n| env::var(n).ok().filter(|v| !v.is_empty()))
+}
 
 /// Thin layer over the `bw` CLI. Exists so the field-extraction and error
 /// paths can be unit-tested without the binary on `$PATH`.
@@ -196,7 +221,7 @@ impl BitwardenSource<RealBwCli> {
         Self {
             config,
             cli: RealBwCli,
-            session_override: env::var(BW_SESSION_ENV).ok().filter(|s| !s.is_empty()),
+            session_override: env_first(BW_SESSION_ENVS),
         }
     }
 }
@@ -216,16 +241,23 @@ impl<C: BwCli> BitwardenSource<C> {
         }
         let status = self.cli.status().context("checking `bw status`")?;
         if status == BwStatus::Unauthenticated {
-            let client_id = env::var(BW_CLIENTID_ENV)
-                .map_err(|_| anyhow!("{BW_CLIENTID_ENV} must be set to log in to Bitwarden"))?;
-            let client_secret = env::var(BW_CLIENTSECRET_ENV)
-                .map_err(|_| anyhow!("{BW_CLIENTSECRET_ENV} must be set to log in to Bitwarden"))?;
+            let client_id = env_first(BW_CLIENTID_ENVS).ok_or_else(|| {
+                anyhow!("set {BW_CLIENTID_ENV} (or BITWARDEN_CLIENT_ID) to log in to Bitwarden")
+            })?;
+            let client_secret = env_first(BW_CLIENTSECRET_ENVS).ok_or_else(|| {
+                anyhow!(
+                    "set {BW_CLIENTSECRET_ENV} (or BITWARDEN_CLIENT_SECRET) to log in to Bitwarden"
+                )
+            })?;
             self.cli
                 .login_apikey(&client_id, &client_secret)
                 .context("`bw login --apikey` failed")?;
         }
-        let password = env::var(BW_PASSWORD_ENV)
-            .map_err(|_| anyhow!("{BW_PASSWORD_ENV} must be set to unlock the Bitwarden vault"))?;
+        let password = env_first(BW_PASSWORD_ENVS).ok_or_else(|| {
+            anyhow!(
+                "set {BW_PASSWORD_ENV} (or BITWARDEN_MASTER_PASSWORD) to unlock the Bitwarden vault"
+            )
+        })?;
         let session = self.cli.unlock(&password).context("`bw unlock` failed")?;
         self.cli.sync(&session).context("`bw sync` failed")?;
         Ok(session)
@@ -409,6 +441,58 @@ mod tests {
             calls,
             vec!["status", "login", "unlock", "sync", "get_item:stripe"]
         );
+    }
+
+    #[test]
+    fn env_first_prefers_canonical_then_alias_and_skips_empty() {
+        std::env::remove_var(BW_PASSWORD_ENV);
+        std::env::remove_var("BITWARDEN_MASTER_PASSWORD");
+        assert_eq!(env_first(BW_PASSWORD_ENVS), None);
+        std::env::set_var("BITWARDEN_MASTER_PASSWORD", "alias");
+        assert_eq!(env_first(BW_PASSWORD_ENVS).as_deref(), Some("alias"));
+        // An empty canonical var is treated as unset, so the alias still wins.
+        std::env::set_var(BW_PASSWORD_ENV, "");
+        assert_eq!(env_first(BW_PASSWORD_ENVS).as_deref(), Some("alias"));
+        // A non-empty canonical var takes priority over the alias.
+        std::env::set_var(BW_PASSWORD_ENV, "canonical");
+        assert_eq!(env_first(BW_PASSWORD_ENVS).as_deref(), Some("canonical"));
+        std::env::remove_var(BW_PASSWORD_ENV);
+        std::env::remove_var("BITWARDEN_MASTER_PASSWORD");
+    }
+
+    #[test]
+    fn bitwarden_source_accepts_bitwarden_prefixed_aliases() {
+        let mut items = HashMap::new();
+        items.insert("foo".to_string(), json!({"login": {"password": "v"}}));
+        let mock = MockBw {
+            status: BwStatus::Unauthenticated,
+            items,
+            calls: RefCell::new(Vec::new()),
+        };
+        // Only the BITWARDEN_* aliases are set; the native BW_* names are unset.
+        std::env::remove_var(BW_CLIENTID_ENV);
+        std::env::remove_var(BW_CLIENTSECRET_ENV);
+        std::env::remove_var(BW_PASSWORD_ENV);
+        std::env::remove_var(BW_SESSION_ENV);
+        std::env::set_var("BITWARDEN_CLIENT_ID", "id");
+        std::env::set_var("BITWARDEN_CLIENT_SECRET", "sec");
+        std::env::set_var("BITWARDEN_MASTER_PASSWORD", "pw");
+        let src = BitwardenSource::with_cli(BitwardenSourceConfig::default(), mock, None);
+        let secrets = vec![ManifestSecret {
+            name: "FOO".into(),
+            item: Some("foo".into()),
+            field: None,
+        }];
+        let got = src.fetch(&secrets).unwrap();
+        assert_eq!(got[0].value, "v");
+        let calls = src.cli.calls.borrow().clone();
+        assert_eq!(
+            calls,
+            vec!["status", "login", "unlock", "sync", "get_item:foo"]
+        );
+        std::env::remove_var("BITWARDEN_CLIENT_ID");
+        std::env::remove_var("BITWARDEN_CLIENT_SECRET");
+        std::env::remove_var("BITWARDEN_MASTER_PASSWORD");
     }
 
     #[test]

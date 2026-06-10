@@ -102,11 +102,21 @@ For the manifest-driven flow:
 - The GitHub destination reads its token from `GH_TOKEN` (preferred) or
   `GITHUB_TOKEN`. There is no per-manifest token field by design — the
   manifest is checked in, the token is not.
-- The Bitwarden source shells out to the `bw` CLI. In a fresh environment
-  (CI) it expects `BW_CLIENTID`, `BW_CLIENTSECRET` (personal API key) and
-  `BW_PASSWORD` (master password) so it can `bw login --apikey` and
-  `bw unlock --raw --passwordenv BW_PASSWORD`. If `BW_SESSION` is already
-  set (e.g. local dev where the user is already unlocked), it's used as-is.
+- The Bitwarden source shells out to the `bw` (password-manager) CLI, which
+  must be on `$PATH` (`npm install -g @bitwarden/cli` or
+  `brew install bitwarden-cli`). In a fresh environment (CI) it expects
+  `BW_CLIENTID`, `BW_CLIENTSECRET` (personal API key) and `BW_PASSWORD`
+  (master password) so it can `bw login --apikey` and `bw unlock --raw
+  --passwordenv BW_PASSWORD`. The personal API key only *authenticates* — the
+  master password is still required to unlock the vault, so all three are
+  needed for a fresh login. If `BW_SESSION` is already set (e.g. local dev
+  where the user is already unlocked), it's used as-is and the other three are
+  ignored. Each credential is also read from a `BITWARDEN_*` alias when the
+  canonical `BW_*` name is unset: `BITWARDEN_CLIENT_ID`,
+  `BITWARDEN_CLIENT_SECRET`, `BITWARDEN_MASTER_PASSWORD` (or
+  `BITWARDEN_PASSWORD`), and `BITWARDEN_SESSION`. The canonical name wins when
+  both are set; an empty value counts as unset. The tool does **not** auto-load
+  a `.env` — export the vars first (e.g. `set -a; . .env; set +a`).
 - A second test-only override, `GH_SECRETS_TEST_SOURCE_FILE`, points the
   manifest's source resolver at a JSON file `{ "NAME": "value", ... }`
   instead of contacting Bitwarden. Used exclusively by `tests/e2e_manifest.rs`
