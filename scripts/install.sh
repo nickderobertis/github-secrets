@@ -13,7 +13,7 @@
 # Equivalent environment variables: GH_SECRETS_VERSION, GH_SECRETS_INSTALL_DIR.
 # Set GITHUB_TOKEN to lift the GitHub API rate limit when resolving "latest".
 #
-# Covers Linux and macOS (x86_64, arm64) and Windows x86_64 under a POSIX shell
+# Covers Linux (x86_64, arm64), macOS (arm64), and Windows x86_64 under a POSIX shell
 # (Git Bash / MSYS / WSL). For native Windows PowerShell or unpublished targets,
 # use `cargo install gh-secrets --locked`.
 #
@@ -68,6 +68,12 @@ detect_target() {
     # The release matrix publishes Windows for x86_64 only.
     if [ "$ext" = "zip" ] && [ "$arch_part" != "x86_64" ]; then
         err "no prebuilt Windows binary for $arch; install with 'cargo install $BIN --locked'"
+    fi
+
+    # The release matrix publishes macOS for aarch64 only: Apple Silicon runs
+    # it natively, and there is no prebuilt Intel binary (see release.yml).
+    if [ "$os_part" = "apple-darwin" ] && [ "$arch_part" != "aarch64" ]; then
+        err "no prebuilt macOS binary for $arch; install with 'cargo install $BIN --locked'"
     fi
 
     TARGET="${arch_part}-${os_part}"
