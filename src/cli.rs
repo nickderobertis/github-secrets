@@ -1,14 +1,18 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 use crate::config::{load_active_profile, ProfileConfig};
-use crate::destinations::DestinationReport;
+use crate::credentials::StoredCredentials;
+use crate::destinations::{DestinationReport, GITHUB_TOKEN_ENVS};
+use crate::envfile;
 use crate::github::GitHubClient;
 use crate::manifest::{RepoManifest, DEFAULT_MANIFEST_FILE};
 use crate::paths::Paths;
 use crate::secrets::Upsert;
+use crate::sources::{BW_CLIENTID_ENVS, BW_CLIENTSECRET_ENVS, BW_PASSWORD_ENVS, BW_SESSION_ENVS};
 use crate::sync::{self, SyncReport};
 use crate::sync_manifest::{self, ManifestSyncReport};
 
@@ -58,6 +62,49 @@ enum Command {
     Manifest {
         #[command(subcommand)]
         command: ManifestCmd,
+    },
+    /// Store credentials for the manifest flow (GitHub token, Bitwarden login)
+    /// as the lowest-priority fallback. Resolution order is: shell env > .env >
+    /// .env.local > this stored config.
+    Auth {
+        #[command(subcommand)]
+        command: AuthCmd,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AuthCmd {
+    /// Store a GitHub token used by manifest `github` destinations.
+    Github {
+        /// Personal access token with `repo` scope (or fine-grained
+        /// `secrets:write`).
+        token: String,
+    },
+    /// Store Bitwarden login material (personal API key + master password).
+    /// Each flag is optional; only the ones you pass are updated.
+    Bitwarden {
+        /// Bitwarden personal API key client id (the `user.<uuid>` value).
+        #[arg(long)]
+        client_id: Option<String>,
+        /// Bitwarden personal API key client secret.
+        #[arg(long)]
+        client_secret: Option<String>,
+        /// Bitwarden master password (still required to unlock the vault even
+        /// with an API key).
+        #[arg(long)]
+        master_password: Option<String>,
+    },
+    /// Show where each credential resolves from (env, .env, .env.local, or
+    /// stored config) without ever printing its value.
+    Status,
+    /// Remove stored credentials. With no flag, clears everything.
+    Clear {
+        /// Only clear the stored GitHub token.
+        #[arg(long)]
+        github: bool,
+        /// Only clear the stored Bitwarden login.
+        #[arg(long)]
+        bitwarden: bool,
     },
 }
 
@@ -325,11 +372,76 @@ pub fn run() -> Result<()> {
                 println!("manifest: wrote starter to {}", target.display());
             }
             ManifestCmd::Sync { config, state } => {
+                // Make `.env`/`.env.local` in the working directory available as
+                // credentials before resolving the source/destinations.
+                envfile::load_dotenv_cwd();
                 let manifest_path = config.unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST_FILE));
                 let report = sync_manifest::sync_manifest(&manifest_path, state.as_deref())?;
                 print_manifest_report(&report);
             }
         },
+
+        Command::Auth { command } => {
+            let creds_path = paths.credentials_file();
+            let mut stored = StoredCredentials::load(&creds_path)?;
+            match command {
+                AuthCmd::Github { token } => {
+                    if token.is_empty() {
+                        anyhow::bail!("token cannot be empty");
+                    }
+                    stored.github_token = Some(token);
+                    stored.save(&creds_path)?;
+                    println!("auth: stored GitHub token");
+                }
+                AuthCmd::Bitwarden {
+                    client_id,
+                    client_secret,
+                    master_password,
+                } => {
+                    if client_id.is_none() && client_secret.is_none() && master_password.is_none() {
+                        anyhow::bail!(
+                            "provide at least one of --client-id, --client-secret, --master-password"
+                        );
+                    }
+                    let mut set = Vec::new();
+                    if let Some(v) = client_id {
+                        stored.bitwarden.client_id = Some(v);
+                        set.push("client id");
+                    }
+                    if let Some(v) = client_secret {
+                        stored.bitwarden.client_secret = Some(v);
+                        set.push("client secret");
+                    }
+                    if let Some(v) = master_password {
+                        stored.bitwarden.master_password = Some(v);
+                        set.push("master password");
+                    }
+                    stored.save(&creds_path)?;
+                    println!("auth: stored Bitwarden {}", set.join(", "));
+                }
+                AuthCmd::Status => {
+                    let origins = envfile::load_dotenv_cwd();
+                    print_auth_status(&origins, &stored);
+                }
+                AuthCmd::Clear { github, bitwarden } => {
+                    // No flag means clear everything.
+                    let clear_all = !github && !bitwarden;
+                    if github || clear_all {
+                        stored.github_token = None;
+                    }
+                    if bitwarden || clear_all {
+                        stored.bitwarden = Default::default();
+                    }
+                    if stored.is_empty() && creds_path.exists() {
+                        std::fs::remove_file(&creds_path)
+                            .with_context(|| format!("removing {}", creds_path.display()))?;
+                    } else {
+                        stored.save(&creds_path)?;
+                    }
+                    println!("auth: cleared stored credentials");
+                }
+            }
+        }
     }
 
     if profile_dirty {
@@ -355,6 +467,66 @@ fn scope_label(repo: Option<&str>) -> String {
     match repo {
         Some(r) => format!("repo '{r}'"),
         None => "global".to_string(),
+    }
+}
+
+/// Report where each manifest credential resolves from, without ever printing
+/// a value (honoring the "never print a secret" invariant — tokens and the
+/// master password are secrets too).
+fn print_auth_status(origins: &BTreeMap<String, &'static str>, stored: &StoredCredentials) {
+    println!("auth status (priority: shell env > .env > .env.local > stored config):");
+    let rows: [(&str, &[&str], Option<&str>); 5] = [
+        (
+            "GitHub token",
+            GITHUB_TOKEN_ENVS,
+            stored.github_token.as_deref(),
+        ),
+        (
+            "Bitwarden client id",
+            BW_CLIENTID_ENVS,
+            stored.bitwarden.client_id.as_deref(),
+        ),
+        (
+            "Bitwarden client secret",
+            BW_CLIENTSECRET_ENVS,
+            stored.bitwarden.client_secret.as_deref(),
+        ),
+        (
+            "Bitwarden master password",
+            BW_PASSWORD_ENVS,
+            stored.bitwarden.master_password.as_deref(),
+        ),
+        // The unlock session is read from the environment only, never stored.
+        ("Bitwarden session", BW_SESSION_ENVS, None),
+    ];
+    for (label, names, stored_value) in rows {
+        println!(
+            "  {label}: {}",
+            describe_source(names, origins, stored_value)
+        );
+    }
+}
+
+fn describe_source(
+    names: &[&str],
+    origins: &BTreeMap<String, &'static str>,
+    stored: Option<&str>,
+) -> String {
+    for name in names {
+        match std::env::var_os(name) {
+            Some(v) if !v.is_empty() => {
+                return match origins.get(*name) {
+                    Some(file) => format!("set (from {file})"),
+                    None => "set (from your shell environment)".to_string(),
+                };
+            }
+            _ => {}
+        }
+    }
+    if stored.is_some_and(|s| !s.is_empty()) {
+        "set (from stored config)".to_string()
+    } else {
+        "not set".to_string()
     }
 }
 

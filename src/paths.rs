@@ -35,6 +35,13 @@ impl Paths {
         self.root.join("app.json")
     }
 
+    /// Profile-independent credential store for the manifest flow (GitHub token
+    /// and Bitwarden login). Lives at the config root, not under `profiles/`,
+    /// since `manifest sync` is independent of the active profile.
+    pub fn credentials_file(&self) -> PathBuf {
+        self.root.join("credentials.json")
+    }
+
     pub fn profiles_dir(&self) -> PathBuf {
         self.root.join("profiles")
     }

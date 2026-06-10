@@ -96,10 +96,54 @@ pub const BW_SESSION_ENVS: &[&str] = &[BW_SESSION_ENV, "BITWARDEN_SESSION"];
 /// First non-empty value among `names`. Treats an env var set to the empty
 /// string as unset so we never hand `bw` a blank password (which would make it
 /// fall back to an interactive prompt against a closed stdin).
-fn env_first(names: &[&str]) -> Option<String> {
+pub fn env_first(names: &[&str]) -> Option<String> {
     names
         .iter()
         .find_map(|n| env::var(n).ok().filter(|v| !v.is_empty()))
+}
+
+/// Resolved Bitwarden login material handed to a `BitwardenSource`. Each field
+/// is optional so the caller can fill it from the environment, fall back to
+/// stored config, or leave it unset (and let `ensure_session` produce a precise
+/// error). `session`, when present, short-circuits login/unlock entirely.
+#[derive(Debug, Clone, Default)]
+pub struct BitwardenCredentials {
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub password: Option<String>,
+    pub session: Option<String>,
+}
+
+impl BitwardenCredentials {
+    /// Read every field from the process environment (which includes any
+    /// `.env`/`.env.local` already loaded), honoring the canonical `BW_*` names
+    /// and their `BITWARDEN_*` aliases.
+    pub fn from_env() -> Self {
+        Self {
+            client_id: env_first(BW_CLIENTID_ENVS),
+            client_secret: env_first(BW_CLIENTSECRET_ENVS),
+            password: env_first(BW_PASSWORD_ENVS),
+            session: env_first(BW_SESSION_ENVS),
+        }
+    }
+
+    /// Fill any field still unset from stored config. `session` is deliberately
+    /// never sourced from config — it's an ephemeral unlock token, not a
+    /// durable credential.
+    pub fn or_stored(
+        mut self,
+        client_id: Option<&str>,
+        client_secret: Option<&str>,
+        password: Option<&str>,
+    ) -> Self {
+        fn nonempty(v: Option<&str>) -> Option<String> {
+            v.filter(|s| !s.is_empty()).map(String::from)
+        }
+        self.client_id = self.client_id.or_else(|| nonempty(client_id));
+        self.client_secret = self.client_secret.or_else(|| nonempty(client_secret));
+        self.password = self.password.or_else(|| nonempty(password));
+        self
+    }
 }
 
 /// Thin layer over the `bw` CLI. Exists so the field-extraction and error
@@ -211,54 +255,69 @@ impl BwCli for RealBwCli {
 pub struct BitwardenSource<C: BwCli = RealBwCli> {
     config: BitwardenSourceConfig,
     cli: C,
-    /// If set, used instead of running login/unlock. Useful when the caller
-    /// already has an unlocked session.
-    session_override: Option<String>,
+    /// Resolved login material. A present `session` short-circuits login/unlock.
+    credentials: BitwardenCredentials,
 }
 
 impl BitwardenSource<RealBwCli> {
+    /// Build a source whose credentials come from the environment only. The
+    /// manifest orchestrator instead uses [`with_credentials`] so it can layer
+    /// stored config under the environment.
     pub fn new(config: BitwardenSourceConfig) -> Self {
+        Self::with_credentials(config, BitwardenCredentials::from_env())
+    }
+
+    pub fn with_credentials(
+        config: BitwardenSourceConfig,
+        credentials: BitwardenCredentials,
+    ) -> Self {
         Self {
             config,
             cli: RealBwCli,
-            session_override: env_first(BW_SESSION_ENVS),
+            credentials,
         }
     }
 }
 
 impl<C: BwCli> BitwardenSource<C> {
-    pub fn with_cli(config: BitwardenSourceConfig, cli: C, session: Option<String>) -> Self {
+    pub fn with_cli(
+        config: BitwardenSourceConfig,
+        cli: C,
+        credentials: BitwardenCredentials,
+    ) -> Self {
         Self {
             config,
             cli,
-            session_override: session,
+            credentials,
         }
     }
 
     fn ensure_session(&self) -> Result<String> {
-        if let Some(s) = &self.session_override {
+        if let Some(s) = &self.credentials.session {
             return Ok(s.clone());
         }
         let status = self.cli.status().context("checking `bw status`")?;
         if status == BwStatus::Unauthenticated {
-            let client_id = env_first(BW_CLIENTID_ENVS).ok_or_else(|| {
-                anyhow!("set {BW_CLIENTID_ENV} (or BITWARDEN_CLIENT_ID) to log in to Bitwarden")
-            })?;
-            let client_secret = env_first(BW_CLIENTSECRET_ENVS).ok_or_else(|| {
+            let client_id = self.credentials.client_id.as_deref().ok_or_else(|| {
                 anyhow!(
-                    "set {BW_CLIENTSECRET_ENV} (or BITWARDEN_CLIENT_SECRET) to log in to Bitwarden"
+                    "no Bitwarden client id: set {BW_CLIENTID_ENV} (or BITWARDEN_CLIENT_ID, e.g. in .env) or run `gh-secrets auth bitwarden --client-id <id>`"
+                )
+            })?;
+            let client_secret = self.credentials.client_secret.as_deref().ok_or_else(|| {
+                anyhow!(
+                    "no Bitwarden client secret: set {BW_CLIENTSECRET_ENV} (or BITWARDEN_CLIENT_SECRET, e.g. in .env) or run `gh-secrets auth bitwarden --client-secret <secret>`"
                 )
             })?;
             self.cli
-                .login_apikey(&client_id, &client_secret)
+                .login_apikey(client_id, client_secret)
                 .context("`bw login --apikey` failed")?;
         }
-        let password = env_first(BW_PASSWORD_ENVS).ok_or_else(|| {
+        let password = self.credentials.password.as_deref().ok_or_else(|| {
             anyhow!(
-                "set {BW_PASSWORD_ENV} (or BITWARDEN_MASTER_PASSWORD) to unlock the Bitwarden vault"
+                "no Bitwarden master password: set {BW_PASSWORD_ENV} (or BITWARDEN_MASTER_PASSWORD, e.g. in .env) or run `gh-secrets auth bitwarden --master-password <pw>`"
             )
         })?;
-        let session = self.cli.unlock(&password).context("`bw unlock` failed")?;
+        let session = self.cli.unlock(password).context("`bw unlock` failed")?;
         self.cli.sync(&session).context("`bw sync` failed")?;
         Ok(session)
     }
@@ -426,7 +485,8 @@ mod tests {
         std::env::set_var(BW_CLIENTSECRET_ENV, "sec");
         std::env::set_var(BW_PASSWORD_ENV, "pw");
         std::env::remove_var(BW_SESSION_ENV);
-        let src = BitwardenSource::with_cli(BitwardenSourceConfig::default(), mock, None);
+        let creds = BitwardenCredentials::from_env();
+        let src = BitwardenSource::with_cli(BitwardenSourceConfig::default(), mock, creds);
         let secrets = vec![ManifestSecret {
             name: "STRIPE".into(),
             item: Some("stripe".into()),
@@ -461,6 +521,28 @@ mod tests {
     }
 
     #[test]
+    fn or_stored_fills_only_missing_fields_and_never_session() {
+        // Env provided only the client id; stored config provides the rest.
+        let from_env = BitwardenCredentials {
+            client_id: Some("env-id".into()),
+            session: Some("env-session".into()),
+            ..Default::default()
+        };
+        let merged =
+            from_env.or_stored(Some("stored-id"), Some("stored-secret"), Some("stored-pw"));
+        // Env wins for client id...
+        assert_eq!(merged.client_id.as_deref(), Some("env-id"));
+        // ...stored fills the gaps...
+        assert_eq!(merged.client_secret.as_deref(), Some("stored-secret"));
+        assert_eq!(merged.password.as_deref(), Some("stored-pw"));
+        // ...and session is left exactly as the env had it (never from stored).
+        assert_eq!(merged.session.as_deref(), Some("env-session"));
+        // An empty stored value counts as unset.
+        let empty = BitwardenCredentials::default().or_stored(Some(""), None, None);
+        assert_eq!(empty.client_id, None);
+    }
+
+    #[test]
     fn bitwarden_source_accepts_bitwarden_prefixed_aliases() {
         let mut items = HashMap::new();
         items.insert("foo".to_string(), json!({"login": {"password": "v"}}));
@@ -477,7 +559,8 @@ mod tests {
         std::env::set_var("BITWARDEN_CLIENT_ID", "id");
         std::env::set_var("BITWARDEN_CLIENT_SECRET", "sec");
         std::env::set_var("BITWARDEN_MASTER_PASSWORD", "pw");
-        let src = BitwardenSource::with_cli(BitwardenSourceConfig::default(), mock, None);
+        let creds = BitwardenCredentials::from_env();
+        let src = BitwardenSource::with_cli(BitwardenSourceConfig::default(), mock, creds);
         let secrets = vec![ManifestSecret {
             name: "FOO".into(),
             item: Some("foo".into()),
@@ -507,7 +590,10 @@ mod tests {
         let src = BitwardenSource::with_cli(
             BitwardenSourceConfig::default(),
             mock,
-            Some("ABCDEF".into()),
+            BitwardenCredentials {
+                session: Some("ABCDEF".into()),
+                ..Default::default()
+            },
         );
         let secrets = vec![ManifestSecret {
             name: "FOO".into(),

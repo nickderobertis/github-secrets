@@ -11,7 +11,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 
 use crate::github::GitHubClient;
 use crate::manifest::{EnvFileDestinationConfig, GithubDestinationConfig};
@@ -62,9 +62,12 @@ pub struct GitHubDestination {
 }
 
 impl GitHubDestination {
-    pub fn from_config(config: &GithubDestinationConfig) -> Result<Self> {
-        let token = github_token_from_env()?;
-        let client = GitHubClient::new(&token).context("building GitHub client")?;
+    /// Build from a manifest github destination and an already-resolved token.
+    /// Token resolution (env → stored config) lives in `crate::credentials` so
+    /// every credential follows the same precedence; this just consumes the
+    /// result.
+    pub fn from_config(config: &GithubDestinationConfig, token: &str) -> Result<Self> {
+        let client = GitHubClient::new(token).context("building GitHub client")?;
         Ok(Self {
             repository: config.repository.clone(),
             client,
@@ -76,18 +79,18 @@ impl GitHubDestination {
     }
 }
 
-pub fn github_token_from_env() -> Result<String> {
+/// First non-empty GitHub token among the canonical env vars (`GH_TOKEN`,
+/// `GITHUB_TOKEN`), including any value loaded from `.env`/`.env.local`. Returns
+/// `None` so the caller can fall back to stored config before erroring.
+pub fn github_token_from_env() -> Option<String> {
     for name in GITHUB_TOKEN_ENVS {
         if let Ok(v) = env::var(name) {
             if !v.is_empty() {
-                return Ok(v);
+                return Some(v);
             }
         }
     }
-    Err(anyhow!(
-        "no GitHub token in environment; set one of: {}",
-        GITHUB_TOKEN_ENVS.join(", ")
-    ))
+    None
 }
 
 impl Destination for GitHubDestination {
