@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(just bootstrap)",
+      "Bash(just check)",
+      "Bash(just test)",
+      "Bash(just test-e2e)",
+      "Bash(just lint)",
+      "Bash(just format)",
+      "Bash(just format-check)",
+      "Bash(just upgrade)",
+      "Bash(just release)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo nextest:*)",
+      "Bash(cargo run:*)",
+      "Bash(cargo update:*)",
+      "Bash(cargo fetch:*)",
+      "Bash(cargo check:*)",
+      "Bash(rustup component add:*)",
+      "Bash(uv run:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ],
+    "deny": []
+  }
+}

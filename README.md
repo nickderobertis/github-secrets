@@ -1,33 +1,52 @@
+# gh-secrets
 
-[![](https://codecov.io/gh/nickderobertis/github-secrets/branch/master/graph/badge.svg)](https://codecov.io/gh/nickderobertis/github-secrets)
+A small Rust CLI for managing GitHub Actions repository secrets in bulk.
 
-#  github-secrets
+You keep a local config of profiles, included/excluded repositories, and global
++ per-repository secret values. `gh-secrets sync` then pushes only the secrets
+that have changed since the last sync.
 
-## Overview
+## Install
 
-Python API and CLI for managing Github secrets
+From a clone:
 
-## Getting Started
-
-Install `github-secrets`:
-
+```sh
+cargo install --path .
 ```
-pip install github-secrets
-```
 
-CLI Usage:
+## Usage
 
-```
+```sh
 gh-secrets --help
+
+# Tell it about your GitHub token.
+gh-secrets token <ghp_xxx>
+
+# Add repositories to the profile (or discover all of yours).
+gh-secrets repo add owner/repo
+gh-secrets repo bootstrap
+
+# Add a secret (global to the profile, or scoped to one repo).
+gh-secrets secrets add MY_KEY "value"
+gh-secrets secrets add MY_KEY "override-for-this-repo" owner/repo
+
+# Push changed secrets to GitHub.
+gh-secrets secrets sync
+
+# See what would change.
+gh-secrets check
 ```
 
-## Links
+Config lives under `$XDG_CONFIG_HOME/gh-secrets` (Linux), `~/Library/Application
+Support/gh-secrets` (macOS), or `%APPDATA%\gh-secrets` (Windows). Override with
+`GH_SECRETS_HOME`.
 
-See the
-[documentation here.](
-https://nickderobertis.github.io/github-secrets/
-)
+## Develop
 
-## Author
+```sh
+just bootstrap
+just check
+```
 
-Created by Nick DeRobertis. MIT License.
+See [AGENTS.md](./AGENTS.md) for the invariants and conventions this repo holds
+itself to.

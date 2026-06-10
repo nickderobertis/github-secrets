@@ -1,0 +1,43 @@
+[package]
+name = "gh-secrets"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "A CLI for managing GitHub Actions repository secrets in bulk"
+license = "MIT"
+repository = "https://github.com/nickderobertis/github-secrets"
+readme = "README.md"
+keywords = ["github", "secrets", "cli", "actions"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "gh-secrets"
+path = "src/main.rs"
+
+[lib]
+name = "gh_secrets"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+crypto_box = { version = "0.9", features = ["seal"] }
+dirs = "5.0"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.13"
+wiremock = "0.6"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
