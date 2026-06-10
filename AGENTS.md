@@ -225,6 +225,12 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   builds binaries for x86_64 + aarch64 Linux/macOS and x86_64 Windows, attaches
   each archive with a SHA-256 checksum, and (if `CARGO_REGISTRY_TOKEN` is
   configured) publishes to crates.io.
+- release-please opens its release PR from the branch
+  `release-please--branches--master--components--gh-secrets`, *not* the plain
+  `release-please--branches--master`: the rust release-type appends the crate
+  name as a component even though `include-component-in-tag` is `false` (that
+  setting only strips the component from the `vX.Y.Z` tag, not the branch
+  name). Watch for that exact branch name if you poll for the release PR.
 - The release build is chained off release-please's `release_created` output in
   the **same** workflow on purpose: a tag pushed by the default `GITHUB_TOKEN`
   does not trigger a separate `push: tags` workflow, so a single workflow with
