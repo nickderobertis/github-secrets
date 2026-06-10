@@ -161,22 +161,24 @@ For the manifest-driven flow:
 
 ## Conventional Commits
 
-Every commit that reaches `master` must be a [Conventional
-Commit](https://www.conventionalcommits.org/) — that is what drives the
-automated release (below). The type list is defined once and kept in lockstep
-across three places; change all three together:
+This repo **squash-merges**, so the PR title is the single commit message that
+lands on `master` and the only thing release-please (below) parses. It must be
+a [Conventional Commit](https://www.conventionalcommits.org/);
+`.github/workflows/pr-lint.yml` enforces that on every PR (a required check).
 
-- `.commitlintrc.yml` — the `type-enum` rule (lints PR commits in CI).
-- `.github/workflows/pr-lint.yml` — the `types` of the PR-title check.
+The allowed type list is defined once and kept in lockstep across three places;
+change all three together:
+
+- `.github/workflows/pr-lint.yml` — the `types` of the PR-title check (the
+  enforced gate).
 - `release-please-config.json` — the `changelog-sections`.
+- `.commitlintrc.yml` — the canonical `type-enum`, for local use (`npx
+  commitlint`) and as the config a per-commit lint job would consume if the
+  merge strategy ever changes to rebase/merge-commit. Not wired into CI today.
 
 Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 `refactor`, `revert`, `style`, `test`. `feat` triggers a minor bump, `fix`/
 `perf` a patch bump, and a `!` or `BREAKING CHANGE:` footer a major bump.
-
-`pr-lint.yml` enforces this on every PR two ways: the **PR title** (what lands
-on `master` under squash merges, so it must parse) and each **commit** (for
-rebase/merge-commit strategies). Both are required checks.
 
 ## Releases and CI secrets
 

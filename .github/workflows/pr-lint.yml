@@ -1,12 +1,11 @@
 # Enforce Conventional Commits on every pull request so release-please can
 # derive the next version and changelog automatically (see release.yml).
 #
-# Two complementary checks:
-#   * pr-title  — the PR title is what lands on `master` when the PR is
-#     squash-merged, so it must parse as a conventional commit. This is the
-#     check that actually feeds release-please under squash merges.
-#   * commits   — lints each commit in the PR for teams/merges that keep
-#     individual commits (rebase / merge-commit strategies).
+# This repo squash-merges, so the PR title is the single commit that lands on
+# `master` and the only message release-please parses. We lint exactly that.
+# (Individual PR commits are intentionally not linted — they're throwaway under
+# squash merges. Switch back to per-commit linting if the merge strategy ever
+# changes to rebase/merge-commit.)
 
 name: pr-lint
 
@@ -48,19 +47,9 @@ jobs:
             test
           requireScope: false
           # Subject must not start with an uppercase letter (config-conventional
-          # `subject-case`), matching the commitlint rule below.
+          # `subject-case`), matching the commitlint rule.
           subjectPattern: ^(?![A-Z]).+$
           subjectPatternError: |
             The subject "{subject}" of the PR title "{title}" must start with a
             lowercase letter (e.g. "fix: handle empty config", not
             "fix: Handle empty config").
-
-  commits:
-    name: lint commits
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Lint PR commits with commitlint
-        uses: wagoid/commitlint-github-action@v6
