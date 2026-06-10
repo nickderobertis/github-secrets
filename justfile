@@ -24,7 +24,7 @@ test:
 # early-returns as a no-op when `GH_SECRETS_LIVE_TEST` is unset, so the gate
 # catches breakage in the live test code without paying for network calls.
 test-e2e:
-    cargo nextest run --test e2e --test e2e_manifest --test e2e_live
+    cargo nextest run --test e2e --test e2e_manifest --test e2e_auth --test e2e_live
 
 # Live end-to-end tests against the real GitHub API. Requires `GH_TOKEN` with
 # `repo` scope (covers `secrets:write`); creates and reuses a private sandbox

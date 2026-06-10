@@ -75,11 +75,15 @@ they exercise it the way a user does.
 
 ## Config and paths
 
-The CLI reads two config files under a single root:
+The CLI reads these config files under a single root:
 
 - `<root>/app.json` — global app config (current profile, profile list).
 - `<root>/profiles/<name>.json` — per-profile state (GitHub token,
-  include/exclude lists, secrets, sync records).
+  include/exclude lists, secrets, sync records). Used by the profile flow.
+- `<root>/credentials.json` — profile-independent credential store for the
+  **manifest** flow (GitHub token + Bitwarden login), written by `gh-secrets
+  auth`. `0600` on Unix; treat as sensitive. It is the lowest-priority
+  credential layer (see the precedence below).
 
 The root is resolved as `$GH_SECRETS_HOME` if set, otherwise the platform
 config directory (`$XDG_CONFIG_HOME/gh-secrets` on Linux,
@@ -99,9 +103,25 @@ For the manifest-driven flow:
   destination) SHA-256 hashes that drive the "push only when changed" check.
   **Always gitignore this file** — losing it forces a re-push but leaks
   nothing.
-- The GitHub destination reads its token from `GH_TOKEN` (preferred) or
-  `GITHUB_TOKEN`. There is no per-manifest token field by design — the
-  manifest is checked in, the token is not.
+- Credential resolution for the manifest flow (the GitHub token *and* the
+  Bitwarden login) follows a single precedence: **shell env > `.env` >
+  `.env.local` > stored config**. `manifest sync` and `auth status` auto-load
+  `.env` then `.env.local` from the current directory into the process
+  environment, setting only keys that aren't already present — so a real shell
+  variable wins, then `.env`, then `.env.local`. The lowest layer is
+  `<root>/credentials.json`, written by `gh-secrets auth github <token>` and
+  `gh-secrets auth bitwarden --client-id/--client-secret/--master-password`;
+  `gh-secrets auth status` reports where each credential resolves from without
+  ever printing a value, and `gh-secrets auth clear [--github|--bitwarden]`
+  removes it. Dotenv auto-load is deliberately scoped to these
+  credential-consuming commands, not every invocation: the profile flow keeps
+  its token in its own config and never reads these vars, and a global load
+  would pull a developer's real `.env` into unrelated subprocesses (the test
+  suites run with the repo root as CWD, where a real `.env` lives).
+- The GitHub destination has no per-manifest token field by design — the
+  manifest is checked in, the token is not. The token resolves via the
+  precedence above (`GH_TOKEN` preferred, then `GITHUB_TOKEN`, then stored
+  config).
 - The Bitwarden source shells out to the `bw` (password-manager) CLI, which
   must be on `$PATH` (`npm install -g @bitwarden/cli` or
   `brew install bitwarden-cli`). In a fresh environment (CI) it expects
@@ -115,8 +135,13 @@ For the manifest-driven flow:
   canonical `BW_*` name is unset: `BITWARDEN_CLIENT_ID`,
   `BITWARDEN_CLIENT_SECRET`, `BITWARDEN_MASTER_PASSWORD` (or
   `BITWARDEN_PASSWORD`), and `BITWARDEN_SESSION`. The canonical name wins when
-  both are set; an empty value counts as unset. The tool does **not** auto-load
-  a `.env` — export the vars first (e.g. `set -a; . .env; set +a`).
+  both are set; an empty value counts as unset. These vars follow the
+  precedence above: `manifest sync` auto-loads `.env`/`.env.local`, and any
+  field still unset then falls back to the `gh-secrets auth bitwarden` stored
+  config. Whatever layer supplies a value, the `bw` subprocess always receives
+  it under the canonical `BW_*` name. `BW_SESSION`/`BITWARDEN_SESSION` is the
+  one credential never read from stored config — it's an ephemeral unlock
+  token, not a durable credential.
 - A second test-only override, `GH_SECRETS_TEST_SOURCE_FILE`, points the
   manifest's source resolver at a JSON file `{ "NAME": "value", ... }`
   instead of contacting Bitwarden. Used exclusively by `tests/e2e_manifest.rs`
@@ -158,6 +183,15 @@ For the manifest-driven flow:
   re-sync of unchanged values produces zero new PUTs and zero env-file
   writes; verifies a source-side value change repushes only the affected
   secret. Bitwarden itself is unit-tested against a mock `BwCli`.
+- The auth e2e suite (`tests/e2e_auth.rs`) drives the `gh-secrets auth` command
+  group and proves the credential precedence end-to-end: `auth status` reports
+  provenance without printing values; storing/clearing round-trips through
+  `credentials.json` (and the file is `0600`); and — the key assertion — a real
+  `manifest sync` against a wiremock GitHub records the exact `Authorization`
+  bearer, so each test can confirm the token that *won* (shell env, `.env`,
+  `.env.local`, or stored config) is the one that actually reached the API. The
+  dotenv parser/precedence planner is also unit-tested in `src/envfile.rs`, and
+  the env→stored merge in `src/credentials.rs`.
 
 ## Conventional Commits
 

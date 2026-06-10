@@ -7,8 +7,9 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 
+use crate::credentials::{ResolvedCredentials, StoredCredentials};
 use crate::destinations::{
     Destination, DestinationEntry, DestinationReport, DestinationRequest, EnvFileDestination,
     GitHubDestination,
@@ -16,7 +17,8 @@ use crate::destinations::{
 use crate::manifest::{
     value_hash, ManifestDestination, ManifestSource, RepoManifest, SyncState, DEFAULT_STATE_FILE,
 };
-use crate::sources::{BitwardenSource, SecretSource, StaticSource};
+use crate::paths::Paths;
+use crate::sources::{BitwardenCredentials, BitwardenSource, SecretSource, StaticSource};
 
 /// Test-only override: if set, points at a JSON file `{ "NAME": "value", ... }`
 /// that is used as a static source in place of the manifest's configured one.
@@ -55,13 +57,33 @@ pub fn sync_manifest(
         None => default_state_path(manifest_path),
     };
     let mut state = SyncState::load_or_default(&state_path)?;
-    let source = resolve_source(&manifest.source)?;
-    let report = run(&manifest, &mut state, source.as_ref(), manifest_path)?;
+    // Resolve credentials once: process env (which the caller has already
+    // populated from `.env`/`.env.local`) layered over the stored config file.
+    let stored = load_stored_credentials()?;
+    let resolved = ResolvedCredentials::resolve(&stored);
+    let source = resolve_source(&manifest.source, &resolved.bitwarden)?;
+    let report = run(
+        &manifest,
+        &mut state,
+        source.as_ref(),
+        &resolved,
+        manifest_path,
+    )?;
     state.save(&state_path)?;
     Ok(report)
 }
 
-fn resolve_source(source: &ManifestSource) -> Result<Box<dyn SecretSource>> {
+/// Load the stored credential config from the resolved config root. Honors
+/// `GH_SECRETS_HOME` (so tests stay isolated) just like the profile config.
+fn load_stored_credentials() -> Result<StoredCredentials> {
+    let paths = Paths::resolve()?;
+    StoredCredentials::load(&paths.credentials_file())
+}
+
+fn resolve_source(
+    source: &ManifestSource,
+    bitwarden: &BitwardenCredentials,
+) -> Result<Box<dyn SecretSource>> {
     if let Ok(path) = env::var(TEST_SOURCE_FILE_ENV) {
         let bytes = fs::read(&path).with_context(|| format!("reading test source file {path}"))?;
         let values: HashMap<String, String> = serde_json::from_slice(&bytes)
@@ -69,7 +91,10 @@ fn resolve_source(source: &ManifestSource) -> Result<Box<dyn SecretSource>> {
         return Ok(Box::new(StaticSource { values }));
     }
     match source {
-        ManifestSource::Bitwarden(cfg) => Ok(Box::new(BitwardenSource::new(cfg.clone()))),
+        ManifestSource::Bitwarden(cfg) => Ok(Box::new(BitwardenSource::with_credentials(
+            cfg.clone(),
+            bitwarden.clone(),
+        ))),
     }
 }
 
@@ -87,7 +112,12 @@ pub fn sync_manifest_with_source(
         None => default_state_path(manifest_path),
     };
     let mut state = SyncState::load_or_default(&state_path)?;
-    let report = run(&manifest, &mut state, source, manifest_path)?;
+    // A caller-supplied source still pushes to manifest destinations, so the
+    // GitHub destination needs a resolved token. This helper exists for tests,
+    // so resolve from the environment only (no config-file read) to stay
+    // hermetic; Bitwarden creds are unused because the source is provided.
+    let resolved = ResolvedCredentials::resolve(&StoredCredentials::default());
+    let report = run(&manifest, &mut state, source, &resolved, manifest_path)?;
     state.save(&state_path)?;
     Ok(report)
 }
@@ -96,6 +126,7 @@ fn run(
     manifest: &RepoManifest,
     state: &mut SyncState,
     source: &dyn SecretSource,
+    resolved: &ResolvedCredentials,
     manifest_path: &Path,
 ) -> Result<ManifestSyncReport> {
     let base_dir = manifest_path
@@ -123,7 +154,15 @@ fn run(
     let mut report = ManifestSyncReport::default();
     for dest_cfg in &manifest.destinations {
         let mut destination: Box<dyn Destination> = match dest_cfg {
-            ManifestDestination::Github(c) => Box::new(GitHubDestination::from_config(c)?),
+            ManifestDestination::Github(c) => {
+                let token = resolved.github_token.as_deref().ok_or_else(|| {
+                    anyhow!(
+                        "no GitHub token for destination github:{}: set GH_TOKEN/GITHUB_TOKEN (e.g. in .env) or run `gh-secrets auth github <token>`",
+                        c.repository
+                    )
+                })?;
+                Box::new(GitHubDestination::from_config(c, token)?)
+            }
             ManifestDestination::EnvFile(c) => {
                 Box::new(EnvFileDestination::from_config(c, base_dir))
             }

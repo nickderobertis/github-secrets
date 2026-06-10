@@ -2,7 +2,9 @@
 
 pub mod cli;
 pub mod config;
+pub mod credentials;
 pub mod destinations;
+pub mod envfile;
 pub mod github;
 pub mod manifest;
 pub mod paths;
