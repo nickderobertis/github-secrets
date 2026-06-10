@@ -159,13 +159,43 @@ For the manifest-driven flow:
   writes; verifies a source-side value change repushes only the affected
   secret. Bitwarden itself is unit-tested against a mock `BwCli`.
 
+## Conventional Commits
+
+This repo **squash-merges**, so the PR title is the single commit message that
+lands on `master` and the only thing release-please (below) parses. It must be
+a [Conventional Commit](https://www.conventionalcommits.org/);
+`.github/workflows/pr-lint.yml` enforces that on every PR (a required check).
+
+The allowed type list is defined once and kept in lockstep across three places;
+change all three together:
+
+- `.github/workflows/pr-lint.yml` — the `types` of the PR-title check (the
+  enforced gate).
+- `release-please-config.json` — the `changelog-sections`.
+- `.commitlintrc.yml` — the canonical `type-enum`, for local use (`npx
+  commitlint`) and as the config a per-commit lint job would consume if the
+  merge strategy ever changes to rebase/merge-commit. Not wired into CI today.
+
+Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
+`refactor`, `revert`, `style`, `test`. `feat` triggers a minor bump, `fix`/
+`perf` a patch bump, and a `!` or `BREAKING CHANGE:` footer a major bump.
+
 ## Releases and CI secrets
 
-- Releases are tag-driven. Bump `version` in `Cargo.toml`, commit, then push a
-  `vX.Y.Z` tag. `.github/workflows/release.yml` builds binaries for x86_64 +
-  aarch64 Linux/macOS and x86_64 Windows, attaches each archive with a
-  SHA-256 checksum to a GitHub Release, and (if `CARGO_REGISTRY_TOKEN` is
+- Releases are **automated from conventional commits** via release-please; do
+  not hand-bump `version` or push tags. On every push to `master`,
+  `.github/workflows/release.yml` runs release-please, which maintains an open
+  "release PR" carrying the next `Cargo.toml`/`Cargo.lock` version bump and the
+  generated `CHANGELOG.md`. **Merging that release PR** is the release action:
+  it tags `vX.Y.Z`, cuts the GitHub Release, and the same workflow run then
+  builds binaries for x86_64 + aarch64 Linux/macOS and x86_64 Windows, attaches
+  each archive with a SHA-256 checksum, and (if `CARGO_REGISTRY_TOKEN` is
   configured) publishes to crates.io.
+- The release build is chained off release-please's `release_created` output in
+  the **same** workflow on purpose: a tag pushed by the default `GITHUB_TOKEN`
+  does not trigger a separate `push: tags` workflow, so a single workflow with
+  no extra PAT is the robust design. `release-please-manifest.json` is the
+  source of truth for the current version — keep it equal to `Cargo.toml`.
 - Live e2e in CI is gated on a `GH_E2E_TOKEN` repo secret. Set it with a PAT
   that has `repo` scope on the account that should host the sandbox repo:
   ```

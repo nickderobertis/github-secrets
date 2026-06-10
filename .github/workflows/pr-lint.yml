@@ -1,0 +1,55 @@
+# Enforce Conventional Commits on every pull request so release-please can
+# derive the next version and changelog automatically (see release.yml).
+#
+# This repo squash-merges, so the PR title is the single commit that lands on
+# `master` and the only message release-please parses. We lint exactly that.
+# (Individual PR commits are intentionally not linted — they're throwaway under
+# squash merges. Switch back to per-commit linting if the merge strategy ever
+# changes to rebase/merge-commit.)
+
+name: pr-lint
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  pr-title:
+    name: lint PR title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title is a conventional commit
+        uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Keep in lockstep with .commitlintrc.yml and the changelog sections
+          # in release-please-config.json.
+          types: |
+            build
+            chore
+            ci
+            docs
+            feat
+            fix
+            perf
+            refactor
+            revert
+            style
+            test
+          requireScope: false
+          # Subject must not start with an uppercase letter (config-conventional
+          # `subject-case`), matching the commitlint rule.
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The subject "{subject}" of the PR title "{title}" must start with a
+            lowercase letter (e.g. "fix: handle empty config", not
+            "fix: Handle empty config").

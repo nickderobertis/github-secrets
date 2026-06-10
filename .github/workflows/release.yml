@@ -1,28 +1,50 @@
-# Release: build the `gh-secrets` binary for every supported target, package
-# it with the README + LICENSE, attach a SHA-256 checksum, and upload to a
-# GitHub Release. Optionally publishes to crates.io when CARGO_REGISTRY_TOKEN
-# is configured on the repo.
+# Automated, conventional-commit-driven releases.
 #
-# Trigger: push a tag matching `v*.*.*`. The tag IS the version — bump
-# `version` in `Cargo.toml` to match, commit, then `git tag vX.Y.Z && git
-# push --tags`.
+# Flow: every push to `master` runs release-please. It keeps an open "release
+# PR" that accumulates the pending changelog and the next `Cargo.toml` version
+# derived from the conventional commits since the last release. Merging that PR
+# bumps the version, tags `vX.Y.Z`, and cuts the GitHub Release. The same run
+# then builds the per-target binaries and attaches them (plus SHA-256 sums) to
+# that release, and publishes to crates.io when configured.
+#
+# This is deliberately a single workflow: a tag pushed by the default
+# GITHUB_TOKEN does NOT trigger a separate tag-listening workflow, so the build
+# is chained off the release-please job's `release_created` output instead of a
+# `push: tags` trigger.
 
 name: release
 
 on:
   push:
-    tags: ['v*.*.*']
+    branches: [master]
 
 permissions:
   contents: write
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - name: Run release-please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
   build:
     name: build (${{ matrix.target }})
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -45,7 +67,10 @@ jobs:
             target: x86_64-pc-windows-msvc
             archive: zip
     steps:
+      # Build the exact tagged commit rather than master's HEAD.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -63,8 +88,10 @@ jobs:
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
         shell: bash
+        env:
+          VERSION: ${{ needs.release-please.outputs.tag_name }}
         run: |
-          dist="gh-secrets-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          dist="gh-secrets-${VERSION}-${{ matrix.target }}"
           mkdir "$dist"
           cp "target/${{ matrix.target }}/release/gh-secrets" "$dist/"
           cp README.md LICENSE "$dist/"
@@ -75,61 +102,42 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $dist = "gh-secrets-$($env:GITHUB_REF_NAME)-${{ matrix.target }}"
+          $dist = "gh-secrets-$($env:VERSION)-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $dist | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/gh-secrets.exe" "$dist/"
           Copy-Item README.md, LICENSE "$dist/"
           Compress-Archive -Path $dist -DestinationPath "${dist}.zip"
           $hash = (Get-FileHash "${dist}.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  ${dist}.zip" | Out-File -Encoding ascii "${dist}.zip.sha256"
+        env:
+          VERSION: ${{ needs.release-please.outputs.tag_name }}
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.target }}
-          path: |
-            gh-secrets-*.tar.gz
-            gh-secrets-*.tar.gz.sha256
-            gh-secrets-*.zip
-            gh-secrets-*.zip.sha256
-          if-no-files-found: error
-
-  release:
-    name: publish release
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: List artifacts
-        run: ls -la artifacts/
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: |
-            artifacts/gh-secrets-*.tar.gz
-            artifacts/gh-secrets-*.tar.gz.sha256
-            artifacts/gh-secrets-*.zip
-            artifacts/gh-secrets-*.zip.sha256
+      - name: Attach assets to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          # nullglob so the archive kind this matrix leg didn't produce expands
+          # to nothing instead of a literal pattern `gh` would reject.
+          shopt -s nullglob
+          assets=(gh-secrets-*.tar.gz gh-secrets-*.tar.gz.sha256 \
+                  gh-secrets-*.zip gh-secrets-*.zip.sha256)
+          gh release upload "$TAG" "${assets[@]}" \
+            --clobber --repo "$GITHUB_REPOSITORY"
 
   # Optional: publishes to crates.io when a CARGO_REGISTRY_TOKEN secret exists.
   # No-op (with an explanatory log line) when the secret is absent, so this job
   # never blocks a release.
   crates-io:
     name: publish to crates.io
-    needs: build
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

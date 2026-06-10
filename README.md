@@ -65,5 +65,9 @@ just bootstrap
 just check
 ```
 
+Commits and PR titles must follow [Conventional
+Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, …) — CI
+enforces it and releases are cut automatically from these messages.
+
 See [AGENTS.md](./AGENTS.md) for the invariants and conventions this repo holds
 itself to.
