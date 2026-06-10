@@ -10,9 +10,21 @@ keep this file for constraints, tradeoffs, and judgment.
 ## What this repo is
 
 `gh-secrets` is a single-binary Rust CLI for managing GitHub Actions repository
-secrets in bulk. A user keeps a local config of profiles, included/excluded
-repositories, and global + per-repository secret values; `gh-secrets sync` then
-pushes only the secrets that have changed since the last sync.
+secrets in bulk. It has two distinct workflows:
+
+1. **Profile-based** (`gh-secrets token | repo | secrets | record | check`):
+   the user keeps a local config of profiles, included/excluded repositories,
+   and global + per-repository secret values; `gh-secrets secrets sync` then
+   pushes only the secrets that have changed since the last sync.
+
+2. **Manifest-based** (`gh-secrets manifest init|sync`): a repo-local
+   `gh-secrets.json` declares an external `source` (today: Bitwarden) and one
+   or more `destinations` (today: GitHub Actions secrets, dotenv file).
+   `gh-secrets manifest sync` pulls every managed secret from the source and
+   pushes to each destination that doesn't already hold the current value.
+   Idempotent across runs via a co-located `.gh-secrets-state.json`
+   (gitignore it) that stores per-(secret, destination) SHA-256 hashes — the
+   plaintext value is never persisted there.
 
 ## Command surface
 
@@ -79,6 +91,27 @@ The GitHub API base is `https://api.github.com` and is overridable for tests
 via `GH_SECRETS_API_BASE`. That override exists *only* so the e2e suite can
 point at `wiremock`; it is intentionally undocumented in `--help`.
 
+For the manifest-driven flow:
+
+- `gh-secrets.json` lives at the repo root (or wherever the user invokes
+  `gh-secrets manifest sync` against). It is checked into source control.
+- `.gh-secrets-state.json` sits next to it and stores per-(secret,
+  destination) SHA-256 hashes that drive the "push only when changed" check.
+  **Always gitignore this file** — losing it forces a re-push but leaks
+  nothing.
+- The GitHub destination reads its token from `GH_TOKEN` (preferred) or
+  `GITHUB_TOKEN`. There is no per-manifest token field by design — the
+  manifest is checked in, the token is not.
+- The Bitwarden source shells out to the `bw` CLI. In a fresh environment
+  (CI) it expects `BW_CLIENTID`, `BW_CLIENTSECRET` (personal API key) and
+  `BW_PASSWORD` (master password) so it can `bw login --apikey` and
+  `bw unlock --raw --passwordenv BW_PASSWORD`. If `BW_SESSION` is already
+  set (e.g. local dev where the user is already unlocked), it's used as-is.
+- A second test-only override, `GH_SECRETS_TEST_SOURCE_FILE`, points the
+  manifest's source resolver at a JSON file `{ "NAME": "value", ... }`
+  instead of contacting Bitwarden. Used exclusively by `tests/e2e_manifest.rs`
+  and intentionally undocumented in `--help`, mirroring `GH_SECRETS_API_BASE`.
+
 ## Scripts and output are context
 
 - Scripts and the CLI itself are quiet on success — a single line, or nothing.
@@ -108,6 +141,13 @@ point at `wiremock`; it is intentionally undocumented in `--help`.
   path runs end-to-end, and a local `secrets remove` does not delete the
   remote secret. The sandbox repo is shared across tests; isolation comes
   from a per-test secret-name prefix and a `Drop` cleanup.
+- The manifest-flow e2e suite (`tests/e2e_manifest.rs`) drives the binary
+  through `manifest init` and `manifest sync` end-to-end: pushes to GitHub
+  (wiremock) and a `.env` destination simultaneously; verifies the PUT body
+  is sealed-box shaped and the plaintext never appears in it; verifies a
+  re-sync of unchanged values produces zero new PUTs and zero env-file
+  writes; verifies a source-side value change repushes only the affected
+  secret. Bitwarden itself is unit-tested against a mock `BwCli`.
 
 ## Releases and CI secrets
 
