@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/nickderobertis/github-secrets/compare/v0.1.1...v0.1.2) (2026-06-10)
+
+
+### Bug Fixes
+
+* **install:** abort on Intel macOS instead of 404 on a missing asset ([#20](https://github.com/nickderobertis/github-secrets/issues/20)) ([171b117](https://github.com/nickderobertis/github-secrets/commit/171b1178a0ac856dffa204aaadc7a13b39f189f3))
+
 ## [0.1.1](https://github.com/nickderobertis/github-secrets/compare/v0.1.0...v0.1.1) (2026-06-10)
 
 
