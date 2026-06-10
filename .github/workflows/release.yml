@@ -34,9 +34,10 @@ jobs:
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             archive: tar.gz
-          - os: macos-13
-            target: x86_64-apple-darwin
-            archive: tar.gz
+          # x86_64-apple-darwin is omitted: macos-13 runner allocation has been
+          # unreliable since GitHub announced its deprecation, and Apple Silicon
+          # Macs can run the aarch64 binary natively. Add this target back once
+          # we have a stable Intel build path (or cross from arm64 via Zig/cc).
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
