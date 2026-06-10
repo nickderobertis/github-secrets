@@ -1,0 +1,8 @@
+# Changelog
+
+## [0.1.1](https://github.com/nickderobertis/github-secrets/compare/v0.1.0...v0.1.1) (2026-06-10)
+
+
+### Chores
+
+* trigger initial automated release ([#17](https://github.com/nickderobertis/github-secrets/issues/17)) ([e5cee39](https://github.com/nickderobertis/github-secrets/commit/e5cee3975c163f84a6f396535bc7c0a65b864393))
