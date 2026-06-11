@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/nickderobertis/github-secrets/compare/v1.0.2...v1.0.3) (2026-06-11)
+
+
+### Performance
+
+* cut allocations, clones, and quadratic work in the engine hot paths ([#44](https://github.com/nickderobertis/github-secrets/issues/44)) ([56b184e](https://github.com/nickderobertis/github-secrets/commit/56b184e08c59c87e9822f1974edc94118ae2b711))
+
 ## [1.0.2](https://github.com/nickderobertis/github-secrets/compare/v1.0.1...v1.0.2) (2026-06-11)
 
 
