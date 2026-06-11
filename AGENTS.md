@@ -9,33 +9,42 @@ keep this file for constraints, tradeoffs, and judgment.
 
 ## What this repo is
 
-`gh-secrets` is a single-binary Rust CLI for managing GitHub Actions repository
-secrets in bulk. It has two distinct workflows:
+`gh-secrets` is a single-binary Rust CLI that syncs secrets from a **source**
+to one or more **destinations**, pushing only what changed since the last
+sync. There is one workflow built on one internal model: a set of *stores*,
+each declaring a read/write capability —
 
-1. **Profile-based** (`gh-secrets token | repo | secrets | record | check`):
-   the user keeps a local config of profiles, included/excluded repositories,
-   and global + per-repository secret values; `gh-secrets secrets sync` then
-   pushes only the secrets that have changed since the last sync.
-   `gh-secrets secrets list [repo]` reports stored secret names (global +
-   per-repo), never values.
+- `github:<owner>/<repo>` — GitHub Actions repository secrets. **Write-only**
+  (the API never returns a secret's value), so it is destination-only and the
+  CLI rejects `--from github:...` with that explanation.
+- `bitwarden` — the Bitwarden vault via the `bw` CLI. Readable today;
+  conceptually read/write, but writes are unimplemented and rejected with a
+  clear error.
+- `env:<path>` — a dotenv-style file. Read/write (`EnvFileSource` /
+  `EnvFileDestination` share the same format).
+- `local` — the global encrypted store inside the vault (see "Config and
+  paths"). Read/write; managed directly with `gh-secrets store
+  set|remove|list`.
 
-2. **Manifest-based** (`gh-secrets manifest init|list|sync`,
-   `gh-secrets source list`): a repo-local `gh-secrets.json` declares an
-   external `source` (today: Bitwarden) and one or more `destinations` (today:
-   GitHub Actions secrets, dotenv file). `gh-secrets manifest sync` pulls every
-   managed secret from the source and pushes to each destination that doesn't
-   already hold the current value. Idempotent across runs via a co-located
-   `.gh-secrets-state.json` (gitignore it) that stores per-(secret,
-   destination) SHA-256 hashes — the plaintext value is never persisted there.
-   `gh-secrets manifest list` reports the secrets the manifest *declares* (each
-   name plus its resolved source item/field), reading only the checked-in file.
-   `gh-secrets source list` instead *enumerates the source itself* — it unlocks
-   the configured source (e.g. the Bitwarden vault, scoped by the manifest's
-   collection/organization) and prints every available item's name and id, so a
-   user can discover which item names exist to wire into the manifest. Both
-   honor the never-print-a-value invariant: `manifest list` reads only mapping
-   metadata, and `source list` requests item *identity* only, never field
-   values.
+The pipeline (source → declared secrets → destinations) resolves from a config
+file or CLI arguments — `--from`/`--to`/`--secret` each *replace* the
+corresponding section of the resolved config (and `--only` filters the
+declared set), so any config is reproducible as plain arguments and no config
+file is ever required. Config resolution, first hit wins: explicit `--config`
+> `--global` > `./gh-secrets.json` (checked in; holds mappings, never values)
+> the global config under the config root. That makes `sync`/`check`
+project-local inside a project and global elsewhere.
+
+Sync is idempotent across runs via a `.gh-secrets-state.json` co-located with
+the resolved config (gitignore the project-local one) holding per-(secret,
+destination) SHA-256 hashes — the plaintext value is never persisted there.
+`check` is the read-only complement: it fetches current source values and
+reports what a `sync` would push, judging destinations purely from recorded
+state (no GitHub token needed, nothing written — not even the state file).
+`list` reports what the config *declares* (name + source item/field) from the
+file alone; `source list` instead *enumerates the source itself* (unlocking it
+if needed) and prints item names/ids so a user can discover what to wire in.
+All of these honor the never-print-a-value invariant.
 
 ## Command surface
 
@@ -79,22 +88,31 @@ they exercise it the way a user does.
   helpers without making any network call).
 - The CLI never prints the value of a secret to stdout, stderr, log lines, or
   error messages. Secret values are also never written into the configured
-  `GH_SECRETS_HOME` path other than in the encrypted-at-rest-by-the-user JSON
-  config that the user explicitly opted into.
+  `GH_SECRETS_HOME` path other than inside the encrypted vault (`vault.json`),
+  and never in plaintext: the vault's ciphertext envelope is the only at-rest
+  form for stored credentials and the `local` store.
 - Cross-platform: build and test on Linux, macOS, and Windows in CI.
 - Do not commit secrets, credentials, PII, or customer data.
 
 ## Config and paths
 
-The CLI reads these config files under a single root:
+The CLI keeps these files under a single root:
 
-- `<root>/app.json` — global app config (current profile, profile list).
-- `<root>/profiles/<name>.json` — per-profile state (GitHub token,
-  include/exclude lists, secrets, sync records). Used by the profile flow.
-- `<root>/credentials.json` — profile-independent credential store for the
-  **manifest** flow (GitHub token + Bitwarden login), written by `gh-secrets
-  auth`. `0600` on Unix; treat as sensitive. It is the lowest-priority
-  credential layer (see the precedence below).
+- `<root>/vault.json` — the **encrypted vault**: stored credentials
+  (`gh-secrets auth`) plus the `local` store's secret values (`gh-secrets
+  store`). XChaCha20-Poly1305 with an Argon2id-derived key; the file carries
+  only KDF parameters, salt, nonce, and ciphertext. The passphrase resolves
+  from `GH_SECRETS_PASSPHRASE` (shell env or auto-loaded `.env`/`.env.local`)
+  and otherwise an interactive prompt; non-interactive runs without it get a
+  precise error, never a hang. The passphrase is cached per process so one
+  invocation never prompts twice, and a *missing* vault never asks for a
+  passphrase at all — the engine decrypts lazily, only when something actually
+  needs a stored value (so CI with `GH_TOKEN` in env never touches it). `0600`
+  on Unix.
+- `<root>/gh-secrets.json` + `<root>/.gh-secrets-state.json` — the global
+  config and its sync state, used when the working directory has no
+  project-local config (or `--global` forces it). Same schema as the
+  project-local file; scaffold with `gh-secrets init --global`.
 
 The root is resolved as `$GH_SECRETS_HOME` if set, otherwise the platform
 config directory (`$XDG_CONFIG_HOME/gh-secrets` on Linux,
@@ -106,33 +124,32 @@ The GitHub API base is `https://api.github.com` and is overridable for tests
 via `GH_SECRETS_API_BASE`. That override exists *only* so the e2e suite can
 point at `wiremock`; it is intentionally undocumented in `--help`.
 
-For the manifest-driven flow:
+Project-local layout and credentials:
 
 - `gh-secrets.json` lives at the repo root (or wherever the user invokes
-  `gh-secrets manifest sync` against). It is checked into source control.
+  `gh-secrets sync` against). It is checked into source control.
 - `.gh-secrets-state.json` sits next to it and stores per-(secret,
   destination) SHA-256 hashes that drive the "push only when changed" check.
   **Always gitignore this file** — losing it forces a re-push but leaks
   nothing.
-- Credential resolution for the manifest flow (the GitHub token *and* the
-  Bitwarden login) follows a single precedence: **shell env > `.env` >
-  `.env.local` > stored config**. `manifest sync` and `auth status` auto-load
-  `.env` then `.env.local` from the current directory into the process
-  environment, setting only keys that aren't already present — so a real shell
-  variable wins, then `.env`, then `.env.local`. The lowest layer is
-  `<root>/credentials.json`, written by `gh-secrets auth github <token>` and
-  `gh-secrets auth bitwarden --client-id/--client-secret/--master-password`;
-  `gh-secrets auth status` reports where each credential resolves from without
-  ever printing a value, and `gh-secrets auth clear [--github|--bitwarden]`
-  removes it. Dotenv auto-load is deliberately scoped to these
-  credential-consuming commands, not every invocation: the profile flow keeps
-  its token in its own config and never reads these vars, and a global load
-  would pull a developer's real `.env` into unrelated subprocesses (the test
-  suites run with the repo root as CWD, where a real `.env` lives).
-- The GitHub destination has no per-manifest token field by design — the
-  manifest is checked in, the token is not. The token resolves via the
-  precedence above (`GH_TOKEN` preferred, then `GITHUB_TOKEN`, then stored
-  config).
+- Credential resolution (the GitHub token, the Bitwarden login, and the vault
+  passphrase) follows a single precedence: **shell env > `.env` >
+  `.env.local` > stored config**. The credential-consuming commands (`sync`,
+  `check`, `source list`, `store`, `auth`) auto-load `.env` then `.env.local`
+  from the current directory into the process environment, setting only keys
+  that aren't already present — so a real shell variable wins, then `.env`,
+  then `.env.local`. The lowest layer is the vault's stored credentials,
+  written by `gh-secrets auth github <token>` and `gh-secrets auth bitwarden
+  --client-id/--client-secret/--master-password`; `gh-secrets auth status`
+  reports where each credential resolves from without ever printing a value,
+  and `gh-secrets auth clear [--github|--bitwarden]` removes it. Dotenv
+  auto-load is deliberately scoped to those commands, not every invocation
+  (`init`/`list` read no credentials): a global load would pull a developer's
+  real `.env` into unrelated subprocesses (the test suites run with the repo
+  root as CWD, where a real `.env` lives).
+- The GitHub destination has no per-config token field by design — the config
+  is checked in, the token is not. The token resolves via the precedence
+  above (`GH_TOKEN` preferred, then `GITHUB_TOKEN`, then stored config).
 - The Bitwarden source shells out to the `bw` (password-manager) CLI, which
   must be on `$PATH` (`npm install -g @bitwarden/cli` or
   `brew install bitwarden-cli`). In a fresh environment (CI) it expects
@@ -147,16 +164,17 @@ For the manifest-driven flow:
   `BITWARDEN_CLIENT_SECRET`, `BITWARDEN_MASTER_PASSWORD` (or
   `BITWARDEN_PASSWORD`), and `BITWARDEN_SESSION`. The canonical name wins when
   both are set; an empty value counts as unset. These vars follow the
-  precedence above: `manifest sync` auto-loads `.env`/`.env.local`, and any
-  field still unset then falls back to the `gh-secrets auth bitwarden` stored
-  config. Whatever layer supplies a value, the `bw` subprocess always receives
-  it under the canonical `BW_*` name. `BW_SESSION`/`BITWARDEN_SESSION` is the
-  one credential never read from stored config — it's an ephemeral unlock
-  token, not a durable credential.
+  precedence above: `sync` auto-loads `.env`/`.env.local`, and any field still
+  unset then falls back to the `gh-secrets auth bitwarden` stored config.
+  Whatever layer supplies a value, the `bw` subprocess always receives it
+  under the canonical `BW_*` name. `BW_SESSION`/`BITWARDEN_SESSION` is the one
+  credential never read from stored config — it's an ephemeral unlock token,
+  not a durable credential.
 - A second test-only override, `GH_SECRETS_TEST_SOURCE_FILE`, points the
-  manifest's source resolver at a JSON file `{ "NAME": "value", ... }`
-  instead of contacting Bitwarden. Used exclusively by `tests/e2e_manifest.rs`
-  and intentionally undocumented in `--help`, mirroring `GH_SECRETS_API_BASE`.
+  engine's source resolver at a JSON file `{ "NAME": "value", ... }` instead
+  of the configured source. Used by `tests/e2e_manifest.rs` and
+  `tests/e2e_auth.rs`, and intentionally undocumented in `--help`, mirroring
+  `GH_SECRETS_API_BASE`.
 
 ## Scripts and output are context
 
@@ -170,39 +188,46 @@ For the manifest-driven flow:
 
 - Tests are how you and future agents actually see this system behave. Invest
   in them deliberately.
-- The default coverage strategy is: a thin layer of unit tests for the secret
-  bookkeeping in `secrets.rs` / `sync.rs`, and end-to-end tests in
-  `tests/e2e*.rs` that invoke `gh-secrets` as a subprocess. When you touch a
-  feature, prefer extending the e2e suite — it sees the same thing the user
-  sees.
-- The wiremock e2e suite covers the happy path (configure profile, add
-  secrets, sync to a repo, observe a no-op re-sync), failure/recovery (auth
-  error → `gh-secrets token <new>` → success), every subcommand on the local
-  state surface, `record fill`/`reset` semantics, and a structural assertion
-  on the PUT body shape so a broken seal step can't slip through.
-- The live e2e suite (`tests/e2e_live.rs`) round-trips a small handful of
-  flows against the real GitHub API: a secret becomes visible via the API
-  after sync, a resync is a no-op, an updated value advances `updated_at`,
-  an invalid token surfaces a 401 the user can act on, the per-repo override
-  path runs end-to-end, and a local `secrets remove` does not delete the
-  remote secret. The sandbox repo is shared across tests; isolation comes
-  from a per-test secret-name prefix and a `Drop` cleanup.
-- The manifest-flow e2e suite (`tests/e2e_manifest.rs`) drives the binary
-  through `manifest init` and `manifest sync` end-to-end: pushes to GitHub
-  (wiremock) and a `.env` destination simultaneously; verifies the PUT body
-  is sealed-box shaped and the plaintext never appears in it; verifies a
-  re-sync of unchanged values produces zero new PUTs and zero env-file
-  writes; verifies a source-side value change repushes only the affected
-  secret. Bitwarden itself is unit-tested against a mock `BwCli`.
+- The default coverage strategy is: unit tests for the pure pieces (the vault
+  crypto in `vault.rs`, pipeline resolution and lazy credentials in
+  `engine.rs`, spec parsing in `cli.rs`, the per-store logic in `sources.rs` /
+  `destinations.rs`), and end-to-end tests in `tests/e2e*.rs` that invoke
+  `gh-secrets` as a subprocess. When you touch a feature, prefer extending the
+  e2e suite — it sees the same thing the user sees.
+- The main wiremock e2e suite (`tests/e2e.rs`) covers the unified surface: a
+  pure-argument pipeline (`--from env:… --to github:… --secret …`) with a
+  no-op re-sync and single-secret repush on change; `--to` replacing a
+  config's destinations; `--only` filtering; the `--from github:` write-only
+  rejection; the `store` group round-tripping through the encrypted vault
+  (and asserting the file leaks neither names nor values); the local store as
+  both source and destination; `check` reporting pending-then-clean without a
+  GitHub token or a single PUT; global-config fallback and `--global`;
+  `init`/`init --global`; and the structural sealed-box assertion on the PUT
+  body so a broken seal step can't slip through.
+- The live e2e suite (`tests/e2e_live.rs`) round-trips the same `sync`
+  pipeline (env-file source → real `github:` destination) against the real
+  GitHub API: a secret becomes visible via the API after sync, a resync is a
+  no-op, an updated source value advances `updated_at`, an invalid token
+  surfaces a 401 the user can act on, and undeclaring a secret does not delete
+  it remotely. The sandbox repo is shared across tests; isolation comes from a
+  per-test secret-name prefix and a `Drop` cleanup.
+- The config-driven e2e suite (`tests/e2e_manifest.rs`) drives the binary
+  through `init`, `list`, and `sync` against a checked-in `gh-secrets.json`:
+  pushes to GitHub (wiremock) and a `.env` destination simultaneously;
+  verifies the PUT body is sealed-box shaped and the plaintext never appears
+  in it; verifies a re-sync of unchanged values produces zero new PUTs and
+  zero env-file writes; verifies a source-side value change repushes only the
+  affected secret. Bitwarden itself is unit-tested against a mock `BwCli`.
 - The auth e2e suite (`tests/e2e_auth.rs`) drives the `gh-secrets auth` command
   group and proves the credential precedence end-to-end: `auth status` reports
-  provenance without printing values; storing/clearing round-trips through
-  `credentials.json` (and the file is `0600`); and — the key assertion — a real
-  `manifest sync` against a wiremock GitHub records the exact `Authorization`
-  bearer, so each test can confirm the token that *won* (shell env, `.env`,
-  `.env.local`, or stored config) is the one that actually reached the API. The
-  dotenv parser/precedence planner is also unit-tested in `src/envfile.rs`, and
-  the env→stored merge in `src/credentials.rs`.
+  provenance without printing values; storing/clearing round-trips through the
+  encrypted vault (the file is `0600`, contains no plaintext token, fails fast
+  without a passphrase in a non-interactive run, and rejects a wrong
+  passphrase with a decryption error); and — the key assertion — a real `sync`
+  against a wiremock GitHub records the exact `Authorization` bearer, so each
+  test can confirm the token that *won* (shell env, `.env`, `.env.local`, or
+  stored config) is the one that actually reached the API. The dotenv
+  parser/precedence planner is also unit-tested in `src/envfile.rs`.
 
 ## Conventional Commits
 
@@ -302,10 +327,14 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   the integration tests need. Production code never depends on the test-only
   `GH_SECRETS_API_BASE` env var being unset — the default value lives in
   `github.rs`.
-- Errors use `thiserror` for library errors and `anyhow` only at the CLI
-  boundary (`main.rs` / `cli.rs`).
-- Time is `chrono::DateTime<Utc>`; serialize as RFC3339. Sync comparisons use
-  `>=` so a no-op re-sync of an unchanged secret is genuinely a no-op.
+- Errors use `anyhow` with `.context(...)` throughout — every failure the CLI
+  surfaces should name the file/operation involved and a concrete next action.
+  Introduce `thiserror` only if a typed library error becomes necessary.
+- Change detection is content-addressed: a secret is pushed when the SHA-256
+  of `name \0 value` differs from the destination's recorded hash, so a no-op
+  re-sync of an unchanged secret is genuinely a no-op. Readable destinations
+  (env file, local store) additionally compare actual content so out-of-band
+  edits are healed rather than trusted.
 - Do **not** add a `#[ignore]` marker as a way to keep a test out of the
   default gate. If a test is genuinely too expensive to run every time, split
   it into its own recipe that CI still runs (e.g. nightly) and document why

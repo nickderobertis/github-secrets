@@ -1,28 +1,30 @@
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
-use crate::config::{load_active_profile, ProfileConfig};
 use crate::credentials::StoredCredentials;
 use crate::destinations::{DestinationReport, GITHUB_TOKEN_ENVS};
+use crate::engine::{self, ConfigOrigin, ConfigSelector, Pipeline, PipelineOverrides};
 use crate::envfile;
-use crate::github::GitHubClient;
-use crate::manifest::{ManifestSource, RepoManifest, DEFAULT_MANIFEST_FILE};
+use crate::manifest::{
+    BitwardenSourceConfig, EnvFileDestinationConfig, EnvFileSourceConfig, GithubDestinationConfig,
+    Manifest, ManifestDestination, ManifestSecret, ManifestSource, DEFAULT_MANIFEST_FILE,
+};
 use crate::paths::Paths;
-use crate::secrets::Upsert;
 use crate::sources::{
     SourceItem, BW_CLIENTID_ENVS, BW_CLIENTSECRET_ENVS, BW_PASSWORD_ENVS, BW_SESSION_ENVS,
 };
-use crate::sync::{self, SyncReport};
-use crate::sync_manifest::{self, ManifestSyncReport};
+use crate::vault;
 
 #[derive(Debug, Parser)]
 #[command(
     name = "gh-secrets",
     version,
-    about = "Manage GitHub Actions secrets in bulk"
+    about = "Sync secrets from a source (Bitwarden, env file, local store) to destinations \
+             (GitHub Actions, env file, local store)"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -31,59 +33,194 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Set the GitHub personal access token used for the active profile.
-    Token {
-        /// Personal access token (or fine-grained token) with `secrets:write`.
-        token: String,
+    /// Write a starter config: `./gh-secrets.json` for this project, or the
+    /// global config with `--global`.
+    Init {
+        /// Write the global config (under the config root) instead of a
+        /// project-local one.
+        #[arg(long)]
+        global: bool,
+        /// Where to write the project-local config. Defaults to
+        /// `./gh-secrets.json`. Incompatible with `--global`.
+        #[arg(long, short, conflicts_with = "global")]
+        path: Option<PathBuf>,
     },
-    /// Manage profiles (independent stores of secrets and auth).
-    Profile {
-        #[command(subcommand)]
-        command: ProfileCmd,
+    /// List the secrets the resolved config declares (names and their source
+    /// mapping), without contacting the source or printing any value.
+    List {
+        #[command(flatten)]
+        config: ConfigOpts,
     },
-    /// Manage which repositories the active profile syncs to.
-    Repo {
-        #[command(subcommand)]
-        command: RepoCmd,
+    /// Pull every managed secret from the source and push to each destination
+    /// that doesn't already hold the current value. Uses `./gh-secrets.json`
+    /// (falling back to the global config) unless `--from`/`--to`/`--secret`
+    /// override it.
+    Sync {
+        #[command(flatten)]
+        config: ConfigOpts,
+        #[command(flatten)]
+        pipeline: PipelineOpts,
     },
-    /// Manage secret values stored in the active profile.
-    Secrets {
-        #[command(subcommand)]
-        command: SecretCmd,
+    /// Read-only dry run: report which secrets a `sync` would push, per
+    /// destination. Contacts only the source; needs no GitHub token and
+    /// writes nothing.
+    Check {
+        #[command(flatten)]
+        config: ConfigOpts,
+        #[command(flatten)]
+        pipeline: PipelineOpts,
     },
-    /// Manage sync records (the "last pushed at" log).
-    Record {
-        #[command(subcommand)]
-        command: RecordCmd,
-    },
-    /// Show which repositories aren't in the profile and which secrets are stale.
-    Check,
-    /// Work with a repo-local `gh-secrets.json` manifest: pull from an external
-    /// source (Bitwarden) and push to one or more destinations (GitHub, env
-    /// file). Independent of the profile-based commands above.
-    Manifest {
-        #[command(subcommand)]
-        command: ManifestCmd,
-    },
-    /// Inspect the external source a manifest pulls from (e.g. the Bitwarden
-    /// vault): discover which item names are available to reference. Reads the
-    /// manifest's source config and unlocks the source; never prints a value.
+    /// Inspect the source the config pulls from (e.g. the Bitwarden vault):
+    /// discover which item names are available to reference. Never prints a
+    /// value.
     Source {
         #[command(subcommand)]
         command: SourceCmd,
     },
-    /// Store credentials for the manifest flow (GitHub token, Bitwarden login)
-    /// as the lowest-priority fallback. Resolution order is: shell env > .env >
-    /// .env.local > this stored config.
+    /// Manage the global encrypted local store — a read/write store usable as
+    /// `--from local` / `--to local`. Values are encrypted at rest in the
+    /// vault; names are never printed alongside values.
+    Store {
+        #[command(subcommand)]
+        command: StoreCmd,
+    },
+    /// Store credentials (GitHub token, Bitwarden login), encrypted at rest,
+    /// as the lowest-priority fallback. Resolution order is: shell env > .env
+    /// > .env.local > this stored config.
     Auth {
         #[command(subcommand)]
         command: AuthCmd,
     },
 }
 
+/// Which config to operate on, shared by `list`/`sync`/`check`/`source list`.
+#[derive(Debug, Args)]
+struct ConfigOpts {
+    /// Path to a config file. Defaults to `./gh-secrets.json`, falling back to
+    /// the global config.
+    #[arg(long, short)]
+    config: Option<PathBuf>,
+    /// Use the global config (under the config root) even when the working
+    /// directory has its own `gh-secrets.json`.
+    #[arg(long, conflicts_with = "config")]
+    global: bool,
+    /// Path to the sync-state file. Defaults to `.gh-secrets-state.json` next
+    /// to the resolved config.
+    #[arg(long)]
+    state: Option<PathBuf>,
+}
+
+impl ConfigOpts {
+    fn selector(&self) -> ConfigSelector {
+        ConfigSelector {
+            config: self.config.clone(),
+            global: self.global,
+            state: self.state.clone(),
+        }
+    }
+}
+
+/// Arg-level pipeline overrides: each provided section replaces the
+/// corresponding section of the resolved config, so a config file is never
+/// required.
+#[derive(Debug, Args)]
+struct PipelineOpts {
+    /// Source to pull from: `bitwarden`, `env:<path>`, or `local`.
+    /// (`github:...` is write-only and cannot be a source.)
+    #[arg(long)]
+    from: Option<String>,
+    /// Destination to push to (repeatable): `github:<owner>/<repo>`,
+    /// `env:<path>`, or `local`.
+    #[arg(long)]
+    to: Vec<String>,
+    /// Secret to manage (repeatable): `NAME`, `NAME=ITEM`, or
+    /// `NAME=ITEM#FIELD` (e.g. `API_KEY=my-bw-item#fields.API_KEY`).
+    #[arg(long = "secret")]
+    secrets: Vec<String>,
+    /// Limit this run to the named secret(s) among those declared
+    /// (repeatable).
+    #[arg(long)]
+    only: Vec<String>,
+    /// Bitwarden collection id to scope lookups to (with `--from bitwarden`).
+    #[arg(long, requires = "from")]
+    collection_id: Option<String>,
+    /// Bitwarden organization id to scope lookups to (with `--from
+    /// bitwarden`).
+    #[arg(long, requires = "from")]
+    organization_id: Option<String>,
+    /// Default field to extract when a secret doesn't specify one (with
+    /// `--from bitwarden`). Defaults to `password`.
+    #[arg(long, requires = "from")]
+    default_field: Option<String>,
+}
+
+impl PipelineOpts {
+    fn overrides(&self) -> Result<PipelineOverrides> {
+        let source = match &self.from {
+            Some(spec) => Some(parse_source_spec(
+                spec,
+                self.collection_id.clone(),
+                self.organization_id.clone(),
+                self.default_field.clone(),
+            )?),
+            None => {
+                if self.collection_id.is_some()
+                    || self.organization_id.is_some()
+                    || self.default_field.is_some()
+                {
+                    bail!("--collection-id/--organization-id/--default-field require `--from bitwarden`");
+                }
+                None
+            }
+        };
+        let destinations = self
+            .to
+            .iter()
+            .map(|s| parse_destination_spec(s))
+            .collect::<Result<Vec<_>>>()?;
+        let secrets = self
+            .secrets
+            .iter()
+            .map(|s| parse_secret_spec(s))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(PipelineOverrides {
+            source,
+            destinations,
+            secrets,
+            only: self.only.clone(),
+        })
+    }
+}
+
+#[derive(Debug, Subcommand)]
+enum SourceCmd {
+    /// List the items available in the source (e.g. every entry in the
+    /// Bitwarden vault, scoped by the config's collection/organization).
+    /// Prints each item's name and id — never a value.
+    List {
+        #[command(flatten)]
+        config: ConfigOpts,
+        /// Source to enumerate instead of the config's: `bitwarden`,
+        /// `env:<path>`, or `local`.
+        #[arg(long)]
+        from: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum StoreCmd {
+    /// Set a value in the local store. Reads the value from stdin when not
+    /// given as an argument (preferred: keeps it out of shell history).
+    Set { name: String, value: Option<String> },
+    /// Remove a value from the local store.
+    Remove { name: String },
+    /// List the names in the local store (never values).
+    List,
+}
+
 #[derive(Debug, Subcommand)]
 enum AuthCmd {
-    /// Store a GitHub token used by manifest `github` destinations.
+    /// Store a GitHub token used by `github` destinations.
     Github {
         /// Personal access token with `repo` scope (or fine-grained
         /// `secrets:write`).
@@ -117,334 +254,140 @@ enum AuthCmd {
     },
 }
 
-#[derive(Debug, Subcommand)]
-enum ManifestCmd {
-    /// Write a starter `gh-secrets.json` next to which `gh-secrets manifest
-    /// sync` can be invoked.
-    Init {
-        /// Where to write the manifest. Defaults to `./gh-secrets.json`.
-        #[arg(long, short)]
-        path: Option<PathBuf>,
-    },
-    /// List the secrets the manifest manages (names and their source mapping),
-    /// without contacting the source or printing any value.
-    List {
-        /// Path to the manifest file. Defaults to `./gh-secrets.json`.
-        #[arg(long, short)]
-        config: Option<PathBuf>,
-    },
-    /// Pull every managed secret from the manifest's source and push to each
-    /// destination that doesn't already hold the current value.
-    Sync {
-        /// Path to the manifest file. Defaults to `./gh-secrets.json`.
-        #[arg(long, short)]
-        config: Option<PathBuf>,
-        /// Path to the sync-state file. Defaults to `.gh-secrets-state.json`
-        /// next to the manifest.
-        #[arg(long)]
-        state: Option<PathBuf>,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum SourceCmd {
-    /// List the items available in the manifest's source (e.g. every entry in
-    /// the Bitwarden vault, scoped by the manifest's collection/organization).
-    /// Prints each item's name and id — never a value.
-    List {
-        /// Path to the manifest file. Defaults to `./gh-secrets.json`.
-        #[arg(long, short)]
-        config: Option<PathBuf>,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum ProfileCmd {
-    /// Create a new profile.
-    Create { name: String },
-    /// Delete a profile (cannot be undone).
-    Delete { name: String },
-    /// Set the active profile.
-    Set { name: String },
-}
-
-#[derive(Debug, Subcommand)]
-enum RepoCmd {
-    /// Add a repository to the included list.
-    Add(RepoArg),
-    /// Remove a repository from the included list.
-    Remove(RepoArg),
-    /// Add a repository to the excluded list.
-    AddExclude(RepoArg),
-    /// Remove a repository from the excluded list.
-    RemoveExclude(RepoArg),
-    /// Discover repositories on GitHub and add them to the included list.
-    Bootstrap,
-}
-
-#[derive(Debug, Args)]
-struct RepoArg {
-    /// Full name including the owner, e.g. `nickderobertis/github-secrets`.
-    name: String,
-}
-
-#[derive(Debug, Subcommand)]
-enum SecretCmd {
-    /// Add (or update) a secret globally, or scoped to a single repository.
-    Add {
-        name: String,
-        value: String,
-        /// Optional repository for a per-repo override.
-        repository: Option<String>,
-    },
-    /// Remove a secret globally, or for a single repository.
-    Remove {
-        name: String,
-        repository: Option<String>,
-    },
-    /// List secret names (never values), globally and per-repository.
-    List {
-        /// Optional repository; if omitted, lists global and every per-repo override.
-        repository: Option<String>,
-    },
-    /// Push changed secrets to GitHub.
-    Sync {
-        /// Optional secret name; if omitted, syncs every defined secret.
-        name: Option<String>,
-        /// Optional repository; if omitted, syncs to every included repo.
-        repository: Option<String>,
-        /// Print extra detail about skipped/up-to-date items.
-        #[arg(long, short)]
-        verbose: bool,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum RecordCmd {
-    /// Mark every secret as already synced (use on first-time adoption).
-    Fill,
-    /// Wipe all sync records (forces re-sync of everything). Cannot be undone.
-    Reset,
-}
-
 /// Entry point invoked from `main`.
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let paths = Paths::resolve()?;
-    let (mut app, mut profile) = load_active_profile(&paths)?;
-    let mut app_dirty = false;
-    let mut profile_dirty = false;
+    let cwd = PathBuf::from(".");
 
     match cli.command {
-        Command::Token { token } => {
-            profile.github_token = token;
-            profile_dirty = true;
-            println!("token: set for profile '{}'", app.current_profile);
+        Command::Init { global, path } => {
+            let (target, starter) = if global {
+                (paths.global_manifest_file(), Manifest::global_starter())
+            } else {
+                (
+                    path.unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST_FILE)),
+                    Manifest::starter(),
+                )
+            };
+            if target.exists() {
+                bail!("{} already exists; refusing to overwrite", target.display());
+            }
+            starter.save(&target)?;
+            println!("init: wrote starter to {}", target.display());
         }
 
-        Command::Profile { command } => match command {
-            ProfileCmd::Create { name } => {
-                ensure_profile_name(&name)?;
-                if app.has_profile(&name) {
-                    anyhow::bail!("profile '{name}' already exists");
-                }
-                app.add_profile(&name);
-                // Touch a fresh profile file so the user can inspect it.
-                ProfileConfig::default().save(&paths.profile_file(&name))?;
-                app_dirty = true;
-                println!("profile '{name}': created");
-            }
-            ProfileCmd::Delete { name } => {
-                if !app.has_profile(&name) {
-                    anyhow::bail!("profile '{name}' does not exist");
-                }
-                if app.current_profile == name {
-                    anyhow::bail!(
-                        "profile '{name}' is currently active; switch with `gh-secrets profile set <other>` first"
-                    );
-                }
-                app.remove_profile(&name);
-                let path = paths.profile_file(&name);
-                if path.exists() {
-                    std::fs::remove_file(&path)
-                        .with_context(|| format!("removing {}", path.display()))?;
-                }
-                app_dirty = true;
-                println!("profile '{name}': deleted");
-            }
-            ProfileCmd::Set { name } => {
-                if !app.has_profile(&name) {
-                    anyhow::bail!("profile '{name}' does not exist");
-                }
-                profile = ProfileConfig::load_or_default(&paths.profile_file(&name))?;
-                println!("profile '{name}': active");
-                app.current_profile = name;
-                app_dirty = true;
-            }
-        },
-
-        Command::Repo { command } => match command {
-            RepoCmd::Add(RepoArg { name }) => {
-                profile.add_include(&name)?;
-                profile_dirty = true;
-                println!("repo '{name}': included");
-            }
-            RepoCmd::Remove(RepoArg { name }) => {
-                profile.remove_include(&name)?;
-                profile_dirty = true;
-                println!("repo '{name}': removed from included");
-            }
-            RepoCmd::AddExclude(RepoArg { name }) => {
-                profile.add_exclude(&name)?;
-                profile_dirty = true;
-                println!("repo '{name}': excluded");
-            }
-            RepoCmd::RemoveExclude(RepoArg { name }) => {
-                profile.remove_exclude(&name)?;
-                profile_dirty = true;
-                println!("repo '{name}': removed from excluded");
-            }
-            RepoCmd::Bootstrap => {
-                let client = GitHubClient::new(&profile.github_token)?;
-                let discovered = client.list_user_repositories()?;
-                let excluded: Vec<String> =
-                    profile.exclude_repositories.clone().unwrap_or_default();
-                let mut added = 0usize;
-                for repo in discovered {
-                    if excluded.iter().any(|r| r == &repo) {
-                        continue;
-                    }
-                    if profile.add_include(&repo).is_ok() {
-                        added += 1;
-                        println!("repo '{repo}': included");
-                    }
-                }
-                profile_dirty = true;
-                println!("bootstrap: {added} repo(s) added");
-            }
-        },
-
-        Command::Secrets { command } => match command {
-            SecretCmd::Add {
-                name,
-                value,
-                repository,
-            } => {
-                let outcome = match repository.as_deref() {
-                    Some(repo) => profile.repository_secrets.upsert(repo, &name, &value),
-                    None => profile.global_secrets.upsert(&name, &value),
-                };
-                profile_dirty = true;
-                let verb = match outcome {
-                    Upsert::Created => "created",
-                    Upsert::Updated => "updated",
-                };
-                println!(
-                    "secret '{name}' ({}): {verb}",
-                    scope_label(repository.as_deref())
-                );
-            }
-            SecretCmd::Remove { name, repository } => {
-                let removed = match repository.as_deref() {
-                    Some(repo) => profile.repository_secrets.remove(repo, &name),
-                    None => profile.global_secrets.remove(&name),
-                };
-                if !removed {
-                    anyhow::bail!(
-                        "secret '{name}' ({}) was not defined",
-                        scope_label(repository.as_deref())
-                    );
-                }
-                profile_dirty = true;
-                println!(
-                    "secret '{name}' ({}): removed",
-                    scope_label(repository.as_deref())
-                );
-            }
-            SecretCmd::List { repository } => {
-                list_secrets(&profile, repository.as_deref());
-            }
-            SecretCmd::Sync {
-                name,
-                repository,
-                verbose,
-            } => {
-                let report = sync::sync(
-                    &mut profile,
-                    repository.as_deref(),
-                    name.as_deref(),
-                    verbose,
-                )?;
-                profile_dirty = true;
-                print_sync_report(&report);
-            }
-        },
-
-        Command::Record { command } => match command {
-            RecordCmd::Fill => {
-                let repos = profile.include_repositories.clone().unwrap_or_default();
-                sync::record_fill(&mut profile, &repos);
-                profile_dirty = true;
-                println!("record fill: marked all secrets as synced");
-            }
-            RecordCmd::Reset => {
-                profile.sync_records.clear();
-                profile_dirty = true;
-                println!("record reset: all sync records cleared");
-            }
-        },
-
-        Command::Check => {
-            check(&profile)?;
+        Command::List { config } => {
+            // Reads only config metadata — no source contact, no credentials.
+            let pipeline = engine::resolve_pipeline(
+                &paths,
+                &cwd,
+                &config.selector(),
+                PipelineOverrides::default(),
+                false,
+            )?;
+            list_declared_secrets(&pipeline);
         }
 
-        Command::Manifest { command } => match command {
-            ManifestCmd::Init { path } => {
-                let target = path.unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST_FILE));
-                if target.exists() {
-                    anyhow::bail!("{} already exists; refusing to overwrite", target.display());
-                }
-                RepoManifest::starter().save(&target)?;
-                println!("manifest: wrote starter to {}", target.display());
-            }
-            ManifestCmd::List { config } => {
-                let manifest_path = config.unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST_FILE));
-                let manifest = RepoManifest::load(&manifest_path).with_context(|| {
-                    format!("loading manifest from {}", manifest_path.display())
-                })?;
-                list_manifest_secrets(&manifest);
-            }
-            ManifestCmd::Sync { config, state } => {
-                // Make `.env`/`.env.local` in the working directory available as
-                // credentials before resolving the source/destinations.
-                envfile::load_dotenv_cwd();
-                let manifest_path = config.unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST_FILE));
-                let report = sync_manifest::sync_manifest(&manifest_path, state.as_deref())?;
-                print_manifest_report(&report);
-            }
-        },
+        Command::Sync { config, pipeline } => {
+            // Make `.env`/`.env.local` in the working directory available as
+            // credentials before resolving the source/destinations.
+            envfile::load_dotenv_cwd();
+            let overrides = pipeline.overrides()?;
+            let resolved =
+                engine::resolve_pipeline(&paths, &cwd, &config.selector(), overrides, true)?;
+            let report = engine::sync(&paths, &resolved)?;
+            print_sync_report(&report);
+        }
+
+        Command::Check { config, pipeline } => {
+            envfile::load_dotenv_cwd();
+            let overrides = pipeline.overrides()?;
+            let resolved =
+                engine::resolve_pipeline(&paths, &cwd, &config.selector(), overrides, true)?;
+            let report = engine::check(&paths, &resolved)?;
+            print_check_report(&resolved, &report);
+        }
 
         Command::Source { command } => match command {
-            SourceCmd::List { config } => {
-                // Same credential resolution as `manifest sync`: load
-                // `.env`/`.env.local` before unlocking the source.
+            SourceCmd::List { config, from } => {
+                // Same credential resolution as `sync`: load `.env`/`.env.local`
+                // before unlocking the source.
                 envfile::load_dotenv_cwd();
-                let manifest_path = config.unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST_FILE));
-                let items = sync_manifest::list_source_items(&manifest_path)?;
+                let overrides = PipelineOverrides {
+                    source: match &from {
+                        Some(spec) => Some(parse_source_spec(spec, None, None, None)?),
+                        None => None,
+                    },
+                    ..Default::default()
+                };
+                let resolved =
+                    engine::resolve_pipeline(&paths, &cwd, &config.selector(), overrides, false)?;
+                let items = engine::list_source_items(&paths, &resolved)?;
                 print_source_items(&items);
             }
         },
 
+        Command::Store { command } => {
+            // The vault passphrase may live in `.env`/`.env.local`.
+            envfile::load_dotenv_cwd();
+            let vault_path = paths.vault_file();
+            match command {
+                StoreCmd::Set { name, value } => {
+                    if name.is_empty() {
+                        bail!("secret name cannot be empty");
+                    }
+                    let value = match value {
+                        Some(v) => v,
+                        None => read_value_from_stdin(&name)?,
+                    };
+                    let mut data = vault::load(&vault_path)?;
+                    let existed = data.secrets.insert(name.clone(), value).is_some();
+                    vault::save(&vault_path, &data)?;
+                    println!(
+                        "store: {} '{name}'",
+                        if existed { "updated" } else { "set" }
+                    );
+                }
+                StoreCmd::Remove { name } => {
+                    let mut data = vault::load(&vault_path)?;
+                    if data.secrets.remove(&name).is_none() {
+                        bail!("store has no secret named '{name}'");
+                    }
+                    if data.is_empty() && vault_path.exists() {
+                        vault::remove(&vault_path)?;
+                    } else {
+                        vault::save(&vault_path, &data)?;
+                    }
+                    println!("store: removed '{name}'");
+                }
+                StoreCmd::List => {
+                    let data = vault::load(&vault_path)?;
+                    if data.secrets.is_empty() {
+                        println!("store: empty");
+                    } else {
+                        println!("store ({}):", data.secrets.len());
+                        for name in data.secrets.keys() {
+                            println!("  - {name}");
+                        }
+                    }
+                }
+            }
+        }
+
         Command::Auth { command } => {
-            let creds_path = paths.credentials_file();
-            let mut stored = StoredCredentials::load(&creds_path)?;
+            // The vault passphrase (and `auth status` provenance) may come
+            // from `.env`/`.env.local`.
+            let origins = envfile::load_dotenv_cwd();
+            let vault_path = paths.vault_file();
             match command {
                 AuthCmd::Github { token } => {
                     if token.is_empty() {
-                        anyhow::bail!("token cannot be empty");
+                        bail!("token cannot be empty");
                     }
-                    stored.github_token = Some(token);
-                    stored.save(&creds_path)?;
+                    let mut data = vault::load(&vault_path)?;
+                    data.credentials.github_token = Some(token);
+                    vault::save(&vault_path, &data)?;
                     println!("auth: stored GitHub token");
                 }
                 AuthCmd::Bitwarden {
@@ -453,169 +396,218 @@ pub fn run() -> Result<()> {
                     master_password,
                 } => {
                     if client_id.is_none() && client_secret.is_none() && master_password.is_none() {
-                        anyhow::bail!(
+                        bail!(
                             "provide at least one of --client-id, --client-secret, --master-password"
                         );
                     }
+                    let mut data = vault::load(&vault_path)?;
                     let mut set = Vec::new();
                     if let Some(v) = client_id {
-                        stored.bitwarden.client_id = Some(v);
+                        data.credentials.bitwarden.client_id = Some(v);
                         set.push("client id");
                     }
                     if let Some(v) = client_secret {
-                        stored.bitwarden.client_secret = Some(v);
+                        data.credentials.bitwarden.client_secret = Some(v);
                         set.push("client secret");
                     }
                     if let Some(v) = master_password {
-                        stored.bitwarden.master_password = Some(v);
+                        data.credentials.bitwarden.master_password = Some(v);
                         set.push("master password");
                     }
-                    stored.save(&creds_path)?;
+                    vault::save(&vault_path, &data)?;
                     println!("auth: stored Bitwarden {}", set.join(", "));
                 }
                 AuthCmd::Status => {
-                    let origins = envfile::load_dotenv_cwd();
+                    let stored = vault::load(&vault_path)?.credentials;
                     print_auth_status(&origins, &stored);
                 }
                 AuthCmd::Clear { github, bitwarden } => {
+                    let mut data = vault::load(&vault_path)?;
                     // No flag means clear everything.
                     let clear_all = !github && !bitwarden;
                     if github || clear_all {
-                        stored.github_token = None;
+                        data.credentials.github_token = None;
                     }
                     if bitwarden || clear_all {
-                        stored.bitwarden = Default::default();
+                        data.credentials.bitwarden = Default::default();
                     }
-                    if stored.is_empty() && creds_path.exists() {
-                        std::fs::remove_file(&creds_path)
-                            .with_context(|| format!("removing {}", creds_path.display()))?;
+                    if data.is_empty() {
+                        vault::remove(&vault_path)?;
                     } else {
-                        stored.save(&creds_path)?;
+                        vault::save(&vault_path, &data)?;
                     }
                     println!("auth: cleared stored credentials");
                 }
             }
         }
     }
-
-    if profile_dirty {
-        profile.save(&paths.profile_file(&app.current_profile))?;
-    }
-    if app_dirty {
-        app.save(&paths.app_file())?;
-    }
     Ok(())
 }
 
-fn ensure_profile_name(name: &str) -> Result<()> {
-    if name == "app" {
-        anyhow::bail!("'app' is reserved and cannot be used as a profile name");
-    }
-    if name.is_empty() {
-        anyhow::bail!("profile name cannot be empty");
-    }
-    Ok(())
-}
+// ---- store-spec parsing ----
 
-fn scope_label(repo: Option<&str>) -> String {
-    match repo {
-        Some(r) => format!("repo '{r}'"),
-        None => "global".to_string(),
-    }
-}
-
-/// Print the names of stored secrets, never their values. With `repository`
-/// set, only that repo's per-repo overrides are listed; otherwise the global
-/// secrets and every per-repo override are shown, each group sorted by name.
-fn list_secrets(profile: &ProfileConfig, repository: Option<&str>) {
-    let sorted = |names: Vec<&str>| -> Vec<String> {
-        let mut v: Vec<String> = names.into_iter().map(str::to_string).collect();
-        v.sort();
-        v
-    };
-
-    if let Some(repo) = repository {
-        let names = sorted(profile.repository_secrets.names_for(repo));
-        if names.is_empty() {
-            println!("secrets: none defined for {}", scope_label(Some(repo)));
-            return;
+/// Parse a `--from` spec. GitHub is rejected here because the store is
+/// write-only: there is no API to read a secret's value back.
+fn parse_source_spec(
+    spec: &str,
+    collection_id: Option<String>,
+    organization_id: Option<String>,
+    default_field: Option<String>,
+) -> Result<ManifestSource> {
+    match split_spec(spec) {
+        ("bitwarden", None) => Ok(ManifestSource::Bitwarden(BitwardenSourceConfig {
+            collection_id,
+            organization_id,
+            default_field,
+        })),
+        ("local", None) => Ok(ManifestSource::Local),
+        ("env" | "env_file", Some(path)) if !path.is_empty() => {
+            Ok(ManifestSource::EnvFile(EnvFileSourceConfig {
+                path: PathBuf::from(path),
+            }))
         }
-        print_secret_group(&scope_label(Some(repo)), &names);
-        return;
-    }
-
-    let global = sorted(
-        profile
-            .global_secrets
-            .secrets
-            .iter()
-            .map(|s| s.name.as_str())
-            .collect(),
-    );
-    let per_repo: Vec<(&String, Vec<String>)> = profile
-        .repository_secrets
-        .by_repo
-        .iter()
-        .filter(|(_, secrets)| !secrets.is_empty())
-        .map(|(repo, secrets)| {
-            (
-                repo,
-                sorted(secrets.iter().map(|s| s.name.as_str()).collect()),
-            )
-        })
-        .collect();
-
-    if global.is_empty() && per_repo.is_empty() {
-        println!("secrets: none defined");
-        return;
-    }
-    if !global.is_empty() {
-        print_secret_group("global", &global);
-    }
-    for (repo, names) in &per_repo {
-        print_secret_group(&scope_label(Some(repo)), names);
-    }
-}
-
-fn print_secret_group(label: &str, names: &[String]) {
-    println!("{label} ({}):", names.len());
-    for name in names {
-        println!("  - {name}");
-    }
-}
-
-/// Print the secrets a manifest manages and where each is sourced from. Reads
-/// only the checked-in manifest — no source contact, no credentials — and the
-/// manifest holds only name/item/field mapping, never a value.
-fn list_manifest_secrets(manifest: &RepoManifest) {
-    let (source_label, default_field) = match &manifest.source {
-        // Mirror `BitwardenSource::default_field`: unspecified means `password`.
-        ManifestSource::Bitwarden(c) => (
-            "bitwarden",
-            c.default_field.as_deref().unwrap_or("password"),
+        ("github", _) => bail!(
+            "github is write-only (GitHub never returns a secret's value), so it can only be a --to destination"
         ),
+        _ => bail!(
+            "invalid source '{spec}': expected `bitwarden`, `env:<path>`, or `local`"
+        ),
+    }
+}
+
+/// Parse a `--to` spec.
+fn parse_destination_spec(spec: &str) -> Result<ManifestDestination> {
+    match split_spec(spec) {
+        ("github", Some(repo)) if repo.split('/').filter(|p| !p.is_empty()).count() == 2 => {
+            Ok(ManifestDestination::Github(GithubDestinationConfig {
+                repository: repo.to_string(),
+            }))
+        }
+        ("github", _) => bail!("invalid destination '{spec}': expected `github:<owner>/<repo>`"),
+        ("env" | "env_file", Some(path)) if !path.is_empty() => {
+            Ok(ManifestDestination::EnvFile(EnvFileDestinationConfig {
+                path: PathBuf::from(path),
+            }))
+        }
+        ("local", None) => Ok(ManifestDestination::Local),
+        ("bitwarden", _) => {
+            bail!("bitwarden is not yet supported as a destination (it is read-only today)")
+        }
+        _ => bail!(
+            "invalid destination '{spec}': expected `github:<owner>/<repo>`, `env:<path>`, or `local`"
+        ),
+    }
+}
+
+fn split_spec(spec: &str) -> (&str, Option<&str>) {
+    match spec.split_once(':') {
+        Some((kind, rest)) => (kind, Some(rest)),
+        None => (spec, None),
+    }
+}
+
+/// Parse a `--secret` spec: `NAME`, `NAME=ITEM`, or `NAME=ITEM#FIELD`.
+fn parse_secret_spec(spec: &str) -> Result<ManifestSecret> {
+    let (name, rest) = match spec.split_once('=') {
+        Some((n, r)) => (n, Some(r)),
+        None => (spec, None),
     };
-    if manifest.secrets.is_empty() {
-        println!("manifest: no secrets declared (source: {source_label})");
+    if name.is_empty() {
+        bail!("invalid secret '{spec}': name is empty");
+    }
+    let (item, field) = match rest {
+        None => (None, None),
+        Some(r) => match r.rsplit_once('#') {
+            Some((item, field)) if !field.is_empty() => (nonempty(item), Some(field.to_string())),
+            _ => (nonempty(r), None),
+        },
+    };
+    if rest.is_some() && item.is_none() {
+        bail!("invalid secret '{spec}': item is empty");
+    }
+    Ok(ManifestSecret {
+        name: name.to_string(),
+        item,
+        field,
+    })
+}
+
+fn nonempty(s: &str) -> Option<String> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
+fn read_value_from_stdin(name: &str) -> Result<String> {
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() {
+        return rpassword::prompt_password(format!("value for '{name}': "))
+            .context("reading value");
+    }
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .context("reading value from stdin")?;
+    let value = buf.trim_end_matches(['\n', '\r']).to_string();
+    if value.is_empty() {
+        bail!("no value provided on stdin");
+    }
+    Ok(value)
+}
+
+// ---- output ----
+
+/// Print the secrets the resolved config declares and where each is sourced
+/// from. Reads only mapping metadata — never a value.
+fn list_declared_secrets(pipeline: &Pipeline) {
+    let source_label = pipeline.source.label();
+    let origin = match &pipeline.origin {
+        ConfigOrigin::File(path) => format!("{}", path.display()),
+        ConfigOrigin::Args => "arguments".to_string(),
+    };
+    if pipeline.secrets.is_empty() {
+        println!("list: no secrets declared (config: {origin}, source: {source_label})");
         return;
     }
     println!(
-        "manifest secrets ({}, source: {source_label}):",
-        manifest.secrets.len()
+        "secrets ({}, config: {origin}, source: {source_label}):",
+        pipeline.secrets.len()
     );
-    for s in &manifest.secrets {
-        let field = s.field.as_deref().unwrap_or(default_field);
-        println!(
-            "  - {}  ({source_label} item '{}', field '{}')",
-            s.name,
-            s.source_item(),
-            field
-        );
+    for s in &pipeline.secrets {
+        match &pipeline.source {
+            ManifestSource::Bitwarden(c) => {
+                // Mirror `BitwardenSource::default_field`: unspecified means
+                // `password`.
+                let field = s
+                    .field
+                    .as_deref()
+                    .or(c.default_field.as_deref())
+                    .unwrap_or("password");
+                println!(
+                    "  - {}  (bitwarden item '{}', field '{field}')",
+                    s.name,
+                    s.source_item()
+                );
+            }
+            ManifestSource::EnvFile(c) => {
+                println!(
+                    "  - {}  (env file '{}', key '{}')",
+                    s.name,
+                    c.path.display(),
+                    s.source_item()
+                );
+            }
+            ManifestSource::Local => {
+                println!("  - {}  (local store key '{}')", s.name, s.source_item());
+            }
+        }
     }
 }
 
-/// Print the items available in a manifest's source (name + id), sorted by name
-/// for stable output. Identity metadata only — never a value.
+/// Print the items available in a source (name + id), sorted by name for
+/// stable output. Identity metadata only — never a value.
 fn print_source_items(items: &[SourceItem]) {
     if items.is_empty() {
         println!("source: no items available");
@@ -629,9 +621,9 @@ fn print_source_items(items: &[SourceItem]) {
     }
 }
 
-/// Report where each manifest credential resolves from, without ever printing
-/// a value (honoring the "never print a secret" invariant — tokens and the
-/// master password are secrets too).
+/// Report where each credential resolves from, without ever printing a value
+/// (honoring the "never print a secret" invariant — tokens and the master
+/// password are secrets too).
 fn print_auth_status(origins: &BTreeMap<String, &'static str>, stored: &StoredCredentials) {
     println!("auth status (priority: shell env > .env > .env.local > stored config):");
     let rows: [(&str, &[&str], Option<&str>); 5] = [
@@ -689,9 +681,9 @@ fn describe_source(
     }
 }
 
-fn print_manifest_report(report: &ManifestSyncReport) {
+fn print_sync_report(report: &engine::SyncReport) {
     if report.is_noop() {
-        println!("manifest sync: nothing to do");
+        println!("sync: nothing to do");
         return;
     }
     for outcome in &report.destinations {
@@ -714,103 +706,100 @@ fn print_destination_report(key: &str, report: &DestinationReport) {
     );
 }
 
-fn print_sync_report(report: &SyncReport) {
-    if report.is_noop() {
-        println!("sync: nothing to do");
-        return;
+fn print_check_report(pipeline: &Pipeline, report: &engine::CheckReport) {
+    let origin = match &pipeline.origin {
+        ConfigOrigin::File(path) => format!("{}", path.display()),
+        ConfigOrigin::Args => "arguments".to_string(),
+    };
+    println!("check (config: {origin}):");
+    let mut total_stale = 0usize;
+    for dest in &report.destinations {
+        if dest.stale.is_empty() {
+            println!(
+                "  {}: up to date ({} secret(s))",
+                dest.destination_key,
+                dest.up_to_date.len()
+            );
+        } else {
+            total_stale += dest.stale.len();
+            println!(
+                "  {}: {} to push ({}), {} up to date",
+                dest.destination_key,
+                dest.stale.len(),
+                dest.stale.join(", "),
+                dest.up_to_date.len()
+            );
+        }
     }
-    for (repo, name) in &report.created {
-        println!("sync: created '{name}' in {repo}");
-    }
-    for (repo, name) in &report.updated {
-        println!("sync: updated '{name}' in {repo}");
-    }
-    println!(
-        "sync: {} created, {} updated, {} skipped",
-        report.created.len(),
-        report.updated.len(),
-        report.skipped.len()
-    );
-}
-
-fn check(profile: &ProfileConfig) -> Result<()> {
-    if profile.github_token.is_empty() {
-        anyhow::bail!("GitHub token is not set; run `gh-secrets token <token>` first");
-    }
-    let client = GitHubClient::new(&profile.github_token)?;
-    let known: std::collections::BTreeSet<&str> = profile
-        .include_repositories
-        .iter()
-        .flatten()
-        .map(String::as_str)
-        .collect();
-    let excluded: std::collections::BTreeSet<&str> = profile
-        .exclude_repositories
-        .iter()
-        .flatten()
-        .map(String::as_str)
-        .collect();
-    let discovered = client.list_user_repositories()?;
-    let new_repos: Vec<String> = discovered
-        .into_iter()
-        .filter(|r| !known.contains(r.as_str()) && !excluded.contains(r.as_str()))
-        .collect();
-
-    let unsynced = unsynced_secrets(profile);
-
-    if new_repos.is_empty() && unsynced.is_empty() {
+    if total_stale == 0 {
         println!("check: everything is up to date");
-        return Ok(());
+    } else {
+        println!("check: {total_stale} push(es) pending — run `gh-secrets sync`");
     }
-    if !new_repos.is_empty() {
-        println!("check: {} new repository(ies):", new_repos.len());
-        for r in &new_repos {
-            println!("  - {r}");
-        }
-    }
-    if !unsynced.is_empty() {
-        println!("check: {} unsynced secret(s):", unsynced.len());
-        for (repo, name) in &unsynced {
-            println!("  - {repo}  {name}");
-        }
-    }
-    Ok(())
 }
 
-fn unsynced_secrets(profile: &ProfileConfig) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let repos = profile.include_repositories.clone().unwrap_or_default();
-    for repo in &repos {
-        // For each (global + repo-scoped) secret, decide whether it's been
-        // synced to *this* repo at or after its last update.
-        let mut names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for s in &profile.global_secrets.secrets {
-            names.insert(s.name.clone());
-        }
-        if let Some(list) = profile.repository_secrets.by_repo.get(repo) {
-            for s in list {
-                names.insert(s.name.clone());
-            }
-        }
-        let records = profile.sync_records.get(repo);
-        for name in names {
-            let secret = profile
-                .repository_secrets
-                .get(repo, &name)
-                .cloned()
-                .or_else(|| profile.global_secrets.get(&name).cloned());
-            let Some(secret) = secret else { continue };
-            let last = records
-                .and_then(|rs| rs.iter().find(|r| r.secret_name == name))
-                .map(|r| r.last_synced);
-            let stale = match last {
-                Some(ts) => ts < secret.updated,
-                None => true,
-            };
-            if stale {
-                out.push((repo.clone(), name));
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secret_spec_parses_name_item_field() {
+        let s = parse_secret_spec("FOO").unwrap();
+        assert_eq!((s.name.as_str(), s.item, s.field), ("FOO", None, None));
+
+        let s = parse_secret_spec("FOO=my item").unwrap();
+        assert_eq!(s.item.as_deref(), Some("my item"));
+        assert_eq!(s.field, None);
+
+        let s = parse_secret_spec("FOO=my item#fields.API_KEY").unwrap();
+        assert_eq!(s.item.as_deref(), Some("my item"));
+        assert_eq!(s.field.as_deref(), Some("fields.API_KEY"));
+
+        assert!(parse_secret_spec("=item").is_err());
+        assert!(parse_secret_spec("FOO=").is_err());
     }
-    out
+
+    #[test]
+    fn source_spec_enforces_capabilities() {
+        assert!(matches!(
+            parse_source_spec("bitwarden", None, None, None).unwrap(),
+            ManifestSource::Bitwarden(_)
+        ));
+        assert!(matches!(
+            parse_source_spec("local", None, None, None).unwrap(),
+            ManifestSource::Local
+        ));
+        match parse_source_spec("env:.env.master", None, None, None).unwrap() {
+            ManifestSource::EnvFile(c) => assert_eq!(c.path, PathBuf::from(".env.master")),
+            other => panic!("unexpected: {other:?}"),
+        }
+        // GitHub is write-only.
+        let err = parse_source_spec("github:o/r", None, None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("write-only"), "got: {err}");
+        assert!(parse_source_spec("nope", None, None, None).is_err());
+    }
+
+    #[test]
+    fn destination_spec_enforces_capabilities() {
+        assert!(matches!(
+            parse_destination_spec("github:o/r").unwrap(),
+            ManifestDestination::Github(_)
+        ));
+        assert!(matches!(
+            parse_destination_spec("local").unwrap(),
+            ManifestDestination::Local
+        ));
+        assert!(matches!(
+            parse_destination_spec("env:.env").unwrap(),
+            ManifestDestination::EnvFile(_)
+        ));
+        // Bitwarden writes aren't implemented yet.
+        let err = parse_destination_spec("bitwarden").unwrap_err().to_string();
+        assert!(err.contains("not yet supported"), "got: {err}");
+        // A github destination needs owner/repo.
+        assert!(parse_destination_spec("github:just-a-name").is_err());
+        assert!(parse_destination_spec("github:").is_err());
+    }
 }

@@ -5,8 +5,11 @@
 //! 1. `auth status` reports where each credential resolves from — and never
 //!    prints the value itself.
 //! 2. The precedence actually selects the right GitHub token for a real
-//!    `manifest sync`: the token that reaches the (wiremock) GitHub API is the
-//!    one the precedence rules say should win.
+//!    `sync`: the token that reaches the (wiremock) GitHub API is the one the
+//!    precedence rules say should win.
+//! 3. The stored credentials are encrypted at rest: the vault file never
+//!    contains a plaintext token, and without the passphrase it cannot be
+//!    read (with a precise error, not a hang or a panic).
 
 mod common;
 
@@ -22,8 +25,9 @@ use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 /// Working dir holds `.env`/`.env.local`/manifest/source; `home/` is the
-/// isolated config root (so `auth` writes a tempdir credentials.json, never the
-/// developer's real one). `auth_headers` records the `Authorization` header of
+/// isolated config root (so `auth` writes a tempdir vault, never the
+/// developer's real one). The vault passphrase is provided via
+/// `GH_SECRETS_PASSPHRASE`, exactly as a non-interactive user would. `auth_headers` records the `Authorization` header of
 /// every GitHub request so a test can assert which token actually won.
 struct AuthHarness {
     dir: TempDir,
@@ -51,6 +55,7 @@ impl AuthHarness {
         c.current_dir(self.dir.path())
             .env("GH_SECRETS_HOME", self.dir.path().join("home"))
             .env("GH_SECRETS_API_BASE", self.server.uri())
+            .env("GH_SECRETS_PASSPHRASE", "auth-e2e-passphrase")
             // Scrub any inherited credentials so the test starts from a known
             // state regardless of the developer's shell / .env.
             .env_remove("GH_TOKEN")
@@ -71,8 +76,8 @@ impl AuthHarness {
         fs::write(self.dir.path().join(name), contents).unwrap();
     }
 
-    fn credentials_file(&self) -> std::path::PathBuf {
-        self.dir.path().join("home").join("credentials.json")
+    fn vault_file(&self) -> std::path::PathBuf {
+        self.dir.path().join("home").join("vault.json")
     }
 
     /// Mount a GitHub mock that accepts any token and records the bearer used.
@@ -122,7 +127,7 @@ impl AuthHarness {
         );
     }
 
-    /// A `manifest sync` command wired to the static-source override so it never
+    /// A `sync` command wired to the static-source override so it never
     /// contacts Bitwarden; only the GitHub token resolution is under test.
     fn sync_cmd(&self) -> Command {
         let mut c = self.cmd();
@@ -130,7 +135,7 @@ impl AuthHarness {
             "GH_SECRETS_TEST_SOURCE_FILE",
             self.dir.path().join("source.json"),
         )
-        .args(["manifest", "sync"]);
+        .args(["sync"]);
         c
     }
 
@@ -166,14 +171,14 @@ async fn e2e_auth_status_reports_unset_then_stored() {
         .stdout(contains("GitHub token: set (from stored config)"))
         .stdout(contains("ghp_supersecret_value").not());
 
-    // On Unix the stored file is owner-only.
+    // The vault never contains the plaintext token, and on Unix it is
+    // owner-only.
+    let raw = fs::read_to_string(h.vault_file()).unwrap();
+    assert!(!raw.contains("ghp_supersecret_value"));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(h.credentials_file())
-            .unwrap()
-            .permissions()
-            .mode();
+        let mode = fs::metadata(h.vault_file()).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
     }
 }
@@ -239,7 +244,7 @@ async fn e2e_auth_status_provenance_follows_precedence() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_manifest_sync_uses_stored_github_token() {
+async fn e2e_sync_uses_stored_github_token() {
     let h = AuthHarness::new().await;
     let repo = "owner/repo1";
     h.write_github_manifest(repo);
@@ -258,7 +263,7 @@ async fn e2e_manifest_sync_uses_stored_github_token() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_manifest_sync_dotenv_token_beats_stored_config() {
+async fn e2e_sync_dotenv_token_beats_stored_config() {
     let h = AuthHarness::new().await;
     let repo = "owner/repo1";
     h.write_github_manifest(repo);
@@ -279,7 +284,7 @@ async fn e2e_manifest_sync_dotenv_token_beats_stored_config() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_manifest_sync_shell_env_token_beats_dotenv() {
+async fn e2e_sync_shell_env_token_beats_dotenv() {
     let h = AuthHarness::new().await;
     let repo = "owner/repo1";
     h.write_github_manifest(repo);
@@ -303,7 +308,7 @@ async fn e2e_auth_clear_removes_stored_credentials() {
         .args(["auth", "bitwarden", "--client-id", "user.x"])
         .assert()
         .success();
-    assert!(h.credentials_file().exists());
+    assert!(h.vault_file().exists());
 
     // Clearing only the GitHub token leaves Bitwarden intact and keeps the file.
     h.cmd()
@@ -319,10 +324,58 @@ async fn e2e_auth_clear_removes_stored_credentials() {
 
     // Clearing everything removes the file entirely.
     h.cmd().args(["auth", "clear"]).assert().success();
-    assert!(!h.credentials_file().exists());
+    assert!(!h.vault_file().exists());
     h.cmd()
         .args(["auth", "status"])
         .assert()
         .success()
         .stdout(contains("Bitwarden client id: not set"));
+}
+
+/// An existing vault without any available passphrase must fail fast with
+/// guidance (we run non-interactively, so prompting is impossible) — and a
+/// wrong passphrase must produce a decryption error, not garbage.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_vault_requires_the_right_passphrase() {
+    let h = AuthHarness::new().await;
+    h.cmd().args(["auth", "github", "ghp_x"]).assert().success();
+
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["auth", "status"])
+        .assert()
+        .failure()
+        .stderr(contains("GH_SECRETS_PASSPHRASE"));
+
+    h.cmd()
+        .env("GH_SECRETS_PASSPHRASE", "not-the-passphrase")
+        .args(["auth", "status"])
+        .assert()
+        .failure()
+        .stderr(contains("could not decrypt"));
+}
+
+/// When no vault exists at all, credential-consuming commands need no
+/// passphrase — the CI path (`GH_TOKEN` in env, nothing stored) must never
+/// ask for one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_no_vault_means_no_passphrase_needed() {
+    let h = AuthHarness::new().await;
+    let repo = "owner/repo1";
+    h.write_github_manifest(repo);
+    h.mount_github(repo).await;
+
+    let mut cmd = h.sync_cmd();
+    cmd.env_remove("GH_SECRETS_PASSPHRASE")
+        .env("GH_TOKEN", "ghp_env_only");
+    cmd.assert().success().stdout(contains("created"));
+    assert_eq!(h.bearer_tokens(), vec!["Bearer ghp_env_only"]);
+
+    // `auth status` likewise reads "not set" everywhere without a vault.
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["auth", "status"])
+        .assert()
+        .success()
+        .stdout(contains("GitHub token: not set"));
 }

@@ -1,596 +1,538 @@
-//! End-to-end tests: drive the compiled `gh-secrets` binary the way a user
-//! does, against a mocked GitHub API. The compiled binary is the same artifact
-//! the user runs, so this is the highest-fidelity local check we have short of
-//! a real GitHub round-trip (`tests/e2e_live.rs`).
+//! End-to-end tests for the unified CLI: one `sync` command whose pipeline
+//! (source → secrets → destinations) comes from a config file, CLI arguments,
+//! or a mix of both.
 //!
-//! Covers: local CRUD round-trips, happy-path sync + no-op resync, token
-//! rotation recovery, profile isolation, `record fill`/`reset` semantics,
-//! `repo bootstrap` from a discovered repo list (with and without an exclude
-//! list), per-repo override during sync, `check` reporting drift, public-key
-//! 404 with an actionable error, profile-delete on-disk cleanup, and a
-//! ciphertext-shape assertion on the PUT body so we catch regressions in the
-//! seal step without decrypting anything.
+//! Drives the compiled `gh-secrets` binary the way a user does, against a
+//! mocked GitHub API. Sources are real files (env-file source) or the real
+//! encrypted vault (local store) — no test-only source override is needed for
+//! most of these.
+//!
+//! What's covered:
+//! - A pure-argument pipeline (`--from env:… --to github:… --secret …`)
+//!   pushes sealed-box-shaped PUTs and is a no-op on re-run.
+//! - `--to` overrides a config's destinations wholesale.
+//! - `--only` limits a run to a subset of the declared secrets.
+//! - `--from github:…` is rejected: GitHub is a write-only store.
+//! - The local store (`store set/list/remove`) round-trips through the
+//!   encrypted vault, never leaks plaintext to disk or stdout, and works as
+//!   both `--from local` and `--to local`.
+//! - `check` reports pending pushes without contacting destinations (no
+//!   GitHub token needed) and reports clean after a sync.
+//! - With no project-local config, `sync` falls back to the global config;
+//!   `init --global` scaffolds it.
 
 mod common;
 
+use std::fs;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use assert_cmd::Command;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
-use common::{fake_pubkey_b64, E2eHarness};
+use common::fake_pubkey_b64;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use serde_json::{json, Value};
+use tempfile::TempDir;
 use wiremock::matchers::{header, method, path_regex};
-use wiremock::{Mock, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
-/// Local-only flows: token, repo include/exclude, secrets add/remove. No
-/// network involved. Catches regressions in the config persistence layer.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_local_state_persists_across_invocations() {
-    let h = E2eHarness::new().await;
+const PASSPHRASE: &str = "e2e-test-passphrase";
 
-    h.cmd().args(["token", "ghp_test"]).assert().success();
-
-    h.cmd()
-        .args(["repo", "add", "owner/repo1"])
-        .assert()
-        .success();
-    h.cmd()
-        .args(["repo", "add", "owner/repo2"])
-        .assert()
-        .success();
-    // Duplicate add must fail; the error has to point at the conflict.
-    h.cmd()
-        .args(["repo", "add", "owner/repo1"])
-        .assert()
-        .failure()
-        .stderr(contains("already included"));
-
-    // Cannot move a repo to excluded while it's still included.
-    h.cmd()
-        .args(["repo", "add-exclude", "owner/repo1"])
-        .assert()
-        .failure()
-        .stderr(contains("included list"));
-
-    h.cmd()
-        .args(["secrets", "add", "API_KEY", "value-1"])
-        .assert()
-        .success()
-        .stdout(contains("created"));
-    // Re-add updates.
-    h.cmd()
-        .args(["secrets", "add", "API_KEY", "value-2"])
-        .assert()
-        .success()
-        .stdout(contains("updated"));
-    // Repo-scoped override.
-    h.cmd()
-        .args(["secrets", "add", "API_KEY", "override", "owner/repo1"])
-        .assert()
-        .success();
-
-    h.cmd()
-        .args(["secrets", "remove", "API_KEY"])
-        .assert()
-        .success();
-    // Removing a missing global secret is an error.
-    h.cmd()
-        .args(["secrets", "remove", "API_KEY"])
-        .assert()
-        .failure()
-        .stderr(contains("was not defined"));
+/// Per-test harness: a tempdir as the working directory (configs, env files,
+/// state), an isolated config root under `home/`, wiremock for GitHub, and
+/// captured PUT bodies for assertions.
+struct Harness {
+    dir: TempDir,
+    server: MockServer,
+    put_bodies: Arc<Mutex<Vec<(String, Value)>>>, // (secret name, JSON body)
 }
 
-/// `secrets list` shows global and per-repo secret names, sorted, and never
-/// prints a value — the listing exists precisely to let a user audit what's
-/// defined without exposing the values.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_secrets_list_shows_names_not_values() {
-    let h = E2eHarness::new().await;
+impl Harness {
+    async fn new() -> Self {
+        Self {
+            dir: TempDir::new().expect("tempdir"),
+            server: MockServer::start().await,
+            put_bodies: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
 
-    // Empty profile reports nothing defined.
-    h.cmd()
-        .args(["secrets", "list"])
-        .assert()
-        .success()
-        .stdout(contains("none defined"));
+    fn cmd(&self) -> Command {
+        let mut c = Command::cargo_bin("gh-secrets").expect("locate gh-secrets bin");
+        c.current_dir(self.dir.path())
+            .env("GH_SECRETS_HOME", self.home())
+            .env("GH_SECRETS_API_BASE", self.server.uri())
+            .env("GH_SECRETS_PASSPHRASE", PASSPHRASE)
+            .env("GH_TOKEN", "ghp_test");
+        c
+    }
 
-    h.cmd()
-        .args(["secrets", "add", "DB_PASS", "pass-value"])
-        .assert()
-        .success();
-    h.cmd()
-        .args(["secrets", "add", "API_KEY", "key-value"])
-        .assert()
-        .success();
-    h.cmd()
-        .args([
-            "secrets",
-            "add",
-            "DEPLOY_KEY",
-            "deploy-value",
-            "owner/repo1",
-        ])
-        .assert()
-        .success();
+    fn home(&self) -> PathBuf {
+        self.dir.path().join("home")
+    }
 
-    // Default listing: globals + per-repo overrides, names only, no values.
-    h.cmd()
-        .args(["secrets", "list"])
-        .assert()
-        .success()
-        .stdout(contains("global (2):"))
-        .stdout(contains("API_KEY"))
-        .stdout(contains("DB_PASS"))
-        .stdout(contains("repo 'owner/repo1' (1):"))
-        .stdout(contains("DEPLOY_KEY"))
-        .stdout(contains("key-value").not())
-        .stdout(contains("pass-value").not())
-        .stdout(contains("deploy-value").not());
+    fn write(&self, name: &str, contents: &str) {
+        let path = self.dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, contents).unwrap();
+    }
 
-    // Scoped to a repo: only that repo's overrides.
-    h.cmd()
-        .args(["secrets", "list", "owner/repo1"])
-        .assert()
-        .success()
-        .stdout(contains("repo 'owner/repo1' (1):"))
-        .stdout(contains("DEPLOY_KEY"))
-        .stdout(contains("API_KEY").not());
+    fn read(&self, name: &str) -> String {
+        fs::read_to_string(self.dir.path().join(name)).unwrap()
+    }
 
-    // A repo with no overrides says so explicitly.
-    h.cmd()
-        .args(["secrets", "list", "owner/repo2"])
-        .assert()
-        .success()
-        .stdout(contains("none defined for repo 'owner/repo2'"));
-}
+    async fn mount_github(&self, repo: &str) {
+        Mock::given(method("GET"))
+            .and(path_regex(format!(
+                "^/repos/{repo}/actions/secrets/public-key$"
+            )))
+            .and(header("authorization", "Bearer ghp_test"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "key_id": "kid-1",
+                "key": fake_pubkey_b64(),
+            })))
+            .mount(&self.server)
+            .await;
 
-/// Happy path: push a global secret to two repos, then re-sync and confirm it
-/// is a no-op.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_sync_happy_path_then_noop_resync() {
-    let h = E2eHarness::new().await;
+        let bodies = self.put_bodies.clone();
+        Mock::given(method("PUT"))
+            .and(path_regex(format!("^/repos/{repo}/actions/secrets/(.+)$")))
+            .and(header("authorization", "Bearer ghp_test"))
+            .respond_with(move |req: &Request| {
+                let name = req.url.path().rsplit('/').next().unwrap_or("").to_string();
+                let body: Value = serde_json::from_slice(&req.body).expect("PUT body is JSON");
+                bodies.lock().unwrap().push((name, body));
+                ResponseTemplate::new(201)
+            })
+            .mount(&self.server)
+            .await;
+    }
 
-    Mock::given(method("GET"))
-        .and(path_regex(
-            r"^/repos/[^/]+/[^/]+/actions/secrets/public-key$",
-        ))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({"key_id": "kid-1", "key": fake_pubkey_b64()})),
-        )
-        .mount(&h.server)
-        .await;
-    Mock::given(method("PUT"))
-        .and(path_regex(r"^/repos/[^/]+/[^/]+/actions/secrets/[^/]+$"))
-        .respond_with(ResponseTemplate::new(201))
-        .mount(&h.server)
-        .await;
-
-    h.cmd().args(["token", "good"]).assert().success();
-    h.cmd()
-        .args(["repo", "add", "owner/repo1"])
-        .assert()
-        .success();
-    h.cmd()
-        .args(["repo", "add", "owner/repo2"])
-        .assert()
-        .success();
-    h.cmd()
-        .args(["secrets", "add", "API_KEY", "v1"])
-        .assert()
-        .success();
-
-    // Initial sync: both repos get the secret.
-    h.cmd()
-        .args(["secrets", "sync"])
-        .assert()
-        .success()
-        .stdout(contains("created 'API_KEY' in owner/repo1"))
-        .stdout(contains("created 'API_KEY' in owner/repo2"));
-
-    // Re-sync: nothing changed, so nothing happens.
-    h.cmd()
-        .args(["secrets", "sync"])
-        .assert()
-        .success()
-        .stdout(contains("nothing to do"));
-}
-
-/// Failure/recovery: GitHub rejects a bad token; the user rotates it and the
-/// next sync succeeds.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_sync_recovers_after_token_rotation() {
-    let h = E2eHarness::new().await;
-
-    // Bad token: 401 on the public-key fetch.
-    Mock::given(method("GET"))
-        .and(path_regex(
-            r"^/repos/[^/]+/[^/]+/actions/secrets/public-key$",
-        ))
-        .and(header("authorization", "Bearer bad"))
-        .respond_with(
-            ResponseTemplate::new(401).set_body_string(r#"{"message":"Bad credentials"}"#),
-        )
-        .mount(&h.server)
-        .await;
-
-    // Good token: 200 + a real-shaped public key payload.
-    Mock::given(method("GET"))
-        .and(path_regex(
-            r"^/repos/[^/]+/[^/]+/actions/secrets/public-key$",
-        ))
-        .and(header("authorization", "Bearer good"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({"key_id": "kid-1", "key": fake_pubkey_b64()})),
-        )
-        .mount(&h.server)
-        .await;
-
-    Mock::given(method("PUT"))
-        .and(path_regex(r"^/repos/[^/]+/[^/]+/actions/secrets/[^/]+$"))
-        .and(header("authorization", "Bearer good"))
-        .respond_with(ResponseTemplate::new(201))
-        .mount(&h.server)
-        .await;
-
-    h.cmd().args(["token", "bad"]).assert().success();
-    h.cmd()
-        .args(["repo", "add", "owner/repo1"])
-        .assert()
-        .success();
-    h.cmd()
-        .args(["secrets", "add", "API_KEY", "v1"])
-        .assert()
-        .success();
-
-    // First sync fails with a clear message naming the 401.
-    h.cmd()
-        .args(["secrets", "sync"])
-        .assert()
-        .failure()
-        .stderr(contains("401"))
-        .stderr(contains("gh-secrets token"));
-
-    // Rotate to the good token; retry succeeds.
-    h.cmd().args(["token", "good"]).assert().success();
-    h.cmd()
-        .args(["secrets", "sync"])
-        .assert()
-        .success()
-        .stdout(contains("created 'API_KEY' in owner/repo1"));
-}
-
-/// Profile lifecycle: create, switch, isolate state, delete.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_profiles_isolate_state() {
-    let h = E2eHarness::new().await;
-
-    h.cmd().args(["token", "default-token"]).assert().success();
-    h.cmd()
-        .args(["secrets", "add", "A", "1"])
-        .assert()
-        .success();
-
-    h.cmd()
-        .args(["profile", "create", "work"])
-        .assert()
-        .success();
-    h.cmd().args(["profile", "set", "work"]).assert().success();
-    // Reserved name is rejected.
-    h.cmd()
-        .args(["profile", "create", "app"])
-        .assert()
-        .failure()
-        .stderr(contains("reserved"));
-
-    // 'work' profile starts empty: removing A errors.
-    h.cmd()
-        .args(["secrets", "remove", "A"])
-        .assert()
-        .failure()
-        .stderr(contains("was not defined"));
-
-    // Cannot delete the active profile.
-    h.cmd()
-        .args(["profile", "delete", "work"])
-        .assert()
-        .failure()
-        .stderr(contains("currently active"));
-
-    // Switch back to default and confirm A is still there.
-    h.cmd()
-        .args(["profile", "set", "default"])
-        .assert()
-        .success();
-    h.cmd().args(["secrets", "remove", "A"]).assert().success();
-}
-
-/// `record fill` pre-marks every (repo, secret) as already synced. The next
-/// sync should be a no-op because the local timestamps haven't moved.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_record_fill_makes_next_sync_a_noop() {
-    let h = E2eHarness::new().await;
-
-    // No mocks for the secret endpoints: a no-op sync should never hit them,
-    // so missing mocks here are an assertion that we never reached out.
-
-    h.cmd().args(["token", "good"]).assert().success();
-    h.cmd()
-        .args(["repo", "add", "owner/repo1"])
-        .assert()
-        .success();
-    h.cmd()
-        .args(["secrets", "add", "API_KEY", "v1"])
-        .assert()
-        .success();
-    h.cmd().args(["record", "fill"]).assert().success();
-
-    h.cmd()
-        .args(["secrets", "sync"])
-        .assert()
-        .success()
-        .stdout(contains("nothing to do"));
-
-    // Nothing should have hit GitHub.
-    let reqs = h.server.received_requests().await.unwrap_or_default();
-    assert!(
-        reqs.is_empty(),
-        "expected no GitHub calls after record fill + sync, got {} requests",
-        reqs.len()
-    );
-}
-
-/// `record reset` wipes the sync log. Even an unchanged secret should be
-/// re-pushed on the next sync.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_record_reset_forces_resync() {
-    let h = E2eHarness::new().await;
-
-    Mock::given(method("GET"))
-        .and(path_regex(
-            r"^/repos/[^/]+/[^/]+/actions/secrets/public-key$",
-        ))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({"key_id": "kid-1", "key": fake_pubkey_b64()})),
-        )
-        .mount(&h.server)
-        .await;
-    Mock::given(method("PUT"))
-        .and(path_regex(r"^/repos/[^/]+/[^/]+/actions/secrets/[^/]+$"))
-        .respond_with(ResponseTemplate::new(201))
-        .mount(&h.server)
-        .await;
-
-    h.cmd().args(["token", "good"]).assert().success();
-    h.cmd()
-        .args(["repo", "add", "owner/repo1"])
-        .assert()
-        .success();
-    h.cmd()
-        .args(["secrets", "add", "API_KEY", "v1"])
-        .assert()
-        .success();
-
-    h.cmd().args(["secrets", "sync"]).assert().success();
-    // Resync without reset: no-op.
-    h.cmd()
-        .args(["secrets", "sync"])
-        .assert()
-        .success()
-        .stdout(contains("nothing to do"));
-    // After reset, the same secret should ship again.
-    h.cmd().args(["record", "reset"]).assert().success();
-    h.cmd()
-        .args(["secrets", "sync"])
-        .assert()
-        .success()
-        .stdout(contains("created 'API_KEY' in owner/repo1"));
-}
-
-/// `repo bootstrap` discovers repos via /user/repos and adds them to the
-/// included list. Excluded repos must be skipped.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_repo_bootstrap_includes_discovered_minus_excluded() {
-    let h = E2eHarness::new().await;
-
-    Mock::given(method("GET"))
-        .and(path_regex(r"^/user/repos$"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {"full_name": "owner/alpha"},
-            {"full_name": "owner/beta"},
-            {"full_name": "owner/gamma"},
-        ])))
-        .mount(&h.server)
-        .await;
-
-    h.cmd().args(["token", "good"]).assert().success();
-    h.cmd()
-        .args(["repo", "add-exclude", "owner/beta"])
-        .assert()
-        .success();
-    h.cmd()
-        .args(["repo", "bootstrap"])
-        .assert()
-        .success()
-        .stdout(contains("owner/alpha"))
-        .stdout(contains("owner/gamma"))
-        .stdout(contains("2 repo(s) added"));
-}
-
-/// When both a global and a repo-scoped secret exist with the same name, sync
-/// must use the per-repo override. The mock counts PUTs; we expect one per
-/// included repo, and we verify the encrypted_value on the wire looks like a
-/// libsodium sealed box (base64 of ephemeral pubkey + MAC + ciphertext).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_sync_uses_per_repo_override_and_seals_value() {
-    let h = E2eHarness::new().await;
-
-    Mock::given(method("GET"))
-        .and(path_regex(
-            r"^/repos/[^/]+/[^/]+/actions/secrets/public-key$",
-        ))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({"key_id": "kid-1", "key": fake_pubkey_b64()})),
-        )
-        .mount(&h.server)
-        .await;
-    Mock::given(method("PUT"))
-        .and(path_regex(r"^/repos/[^/]+/[^/]+/actions/secrets/[^/]+$"))
-        .respond_with(ResponseTemplate::new(201))
-        .mount(&h.server)
-        .await;
-
-    h.cmd().args(["token", "good"]).assert().success();
-    h.cmd()
-        .args(["repo", "add", "owner/repo1"])
-        .assert()
-        .success();
-    h.cmd()
-        .args(["repo", "add", "owner/repo2"])
-        .assert()
-        .success();
-    h.cmd()
-        .args(["secrets", "add", "API_KEY", "global-value-with-some-length"])
-        .assert()
-        .success();
-    h.cmd()
-        .args([
-            "secrets",
-            "add",
-            "API_KEY",
-            "override-much-longer-than-the-global-value-on-purpose",
-            "owner/repo1",
-        ])
-        .assert()
-        .success();
-    h.cmd().args(["secrets", "sync"]).assert().success();
-
-    let puts: Vec<_> = h
-        .server
-        .received_requests()
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|r| r.method.as_str().eq_ignore_ascii_case("PUT"))
-        .collect();
-    assert_eq!(puts.len(), 2, "expected one PUT per included repo");
-
-    for p in &puts {
-        let body: Value = serde_json::from_slice(&p.body).expect("PUT body is json");
-        let key_id = body["key_id"].as_str().expect("key_id present");
-        assert_eq!(key_id, "kid-1");
-        let enc = body["encrypted_value"]
-            .as_str()
-            .expect("encrypted_value present");
-        let raw = B64.decode(enc).expect("encrypted_value is base64");
-        // Plaintext was never empty, so the floor on a sealed-box is the
-        // ephemeral pubkey (32) + Poly1305 tag (16) + at least one plaintext
-        // byte. Assert the structural floor rather than an exact length so we
-        // don't pin to a specific message size.
-        assert!(
-            raw.len() > 32 + 16,
-            "ciphertext too short: {} bytes",
-            raw.len()
-        );
-        assert!(!enc.contains("global-value"), "plaintext leaked into body");
-        assert!(!enc.contains("override-much"), "plaintext leaked into body");
+    fn put_count(&self) -> usize {
+        self.put_bodies.lock().unwrap().len()
     }
 }
 
-/// A 404 on the public-key fetch must surface as a clear error pointing at the
-/// repo name, not a low-level reqwest message.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_sync_surfaces_public_key_404_clearly() {
-    let h = E2eHarness::new().await;
-
-    Mock::given(method("GET"))
-        .and(path_regex(
-            r"^/repos/[^/]+/[^/]+/actions/secrets/public-key$",
-        ))
-        .respond_with(ResponseTemplate::new(404).set_body_string(r#"{"message":"Not Found"}"#))
-        .mount(&h.server)
-        .await;
-
-    h.cmd().args(["token", "good"]).assert().success();
-    h.cmd()
-        .args(["repo", "add", "owner/missing"])
-        .assert()
-        .success();
-    h.cmd()
-        .args(["secrets", "add", "API_KEY", "v1"])
-        .assert()
-        .success();
-
-    h.cmd()
-        .args(["secrets", "sync"])
-        .assert()
-        .failure()
-        .stderr(contains("404"))
-        .stderr(contains("owner/missing"));
+/// Assert a PUT body is sealed-box shaped and the plaintext never appears in
+/// it — the same structural guard every GitHub-pushing suite carries so a
+/// broken seal step can't slip through.
+fn assert_sealed_box(name: &str, body: &Value, plaintexts: &[&str]) {
+    assert_eq!(body["key_id"].as_str(), Some("kid-1"));
+    let ct_b64 = body["encrypted_value"]
+        .as_str()
+        .expect("encrypted_value present");
+    let raw = B64.decode(ct_b64).expect("encrypted_value is base64");
+    // Sealed box: 32-byte ephemeral pubkey + 16-byte MAC + ciphertext.
+    assert!(raw.len() > 32 + 16, "{name}: sealed box too short");
+    let serialized = serde_json::to_string(body).unwrap();
+    for plain in plaintexts {
+        assert!(
+            !serialized.contains(plain),
+            "plaintext leaked into PUT body for {name}"
+        );
+    }
 }
 
-/// `check` should call /user/repos, report discovered-but-unincluded repos,
-/// and list stale secrets (those without a sync record).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_check_reports_new_repos_and_unsynced_secrets() {
-    let h = E2eHarness::new().await;
+async fn e2e_pure_args_env_file_to_github() {
+    let h = Harness::new().await;
+    let repo = "owner/repo1";
+    h.mount_github(repo).await;
+    h.write("source.env", "FOO=\"foo-value\"\nBAR=\"bar-value\"\n");
 
-    Mock::given(method("GET"))
-        .and(path_regex(r"^/user/repos$"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {"full_name": "owner/known"},
-            {"full_name": "owner/brand-new"},
-        ])))
-        .mount(&h.server)
-        .await;
-
-    h.cmd().args(["token", "good"]).assert().success();
+    let args = [
+        "sync",
+        "--from",
+        "env:source.env",
+        "--to",
+        "github:owner/repo1",
+        "--secret",
+        "FOO",
+        "--secret",
+        "BAR",
+    ];
     h.cmd()
-        .args(["repo", "add", "owner/known"])
+        .args(args)
+        .assert()
+        .success()
+        .stdout(contains("created"));
+
+    let bodies = h.put_bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 2);
+    for (name, body) in bodies.iter() {
+        assert_sealed_box(name, body, &["foo-value", "bar-value"]);
+    }
+    drop(bodies);
+
+    // State landed in the working directory (no config file involved) and a
+    // re-run with unchanged source values is a no-op.
+    assert!(h.dir.path().join(".gh-secrets-state.json").exists());
+    h.cmd()
+        .args(args)
+        .assert()
+        .success()
+        .stdout(contains("nothing to do"));
+    assert_eq!(h.put_count(), 2, "no new PUTs on the no-op resync");
+
+    // A source-side change repushes only the affected secret.
+    h.write("source.env", "FOO=\"foo-value2\"\nBAR=\"bar-value\"\n");
+    h.cmd().args(args).assert().success();
+    let bodies = h.put_bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 3);
+    assert_eq!(bodies.last().unwrap().0, "FOO");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_to_args_override_config_destinations() {
+    let h = Harness::new().await;
+    // The config wants to push to GitHub; `--to env:out.env` must replace
+    // that destination wholesale, so no PUT may happen.
+    h.write(
+        "gh-secrets.json",
+        &serde_json::to_string_pretty(&json!({
+            "source": {"type": "env_file", "path": "source.env"},
+            "secrets": [{"name": "FOO"}],
+            "destinations": [{"type": "github", "repository": "owner/repo1"}],
+        }))
+        .unwrap(),
+    );
+    h.write("source.env", "FOO=value-1\n");
+
+    h.cmd()
+        .args(["sync", "--to", "env:out.env"])
+        .assert()
+        .success()
+        .stdout(contains("env_file:out.env: created 'FOO'"));
+
+    assert_eq!(h.put_count(), 0, "github destination was overridden away");
+    assert!(h.read("out.env").contains("FOO=\"value-1\""));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_only_limits_the_run_to_named_secrets() {
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=1\nBAR=2\n");
+    let base = [
+        "sync",
+        "--from",
+        "env:source.env",
+        "--to",
+        "env:out.env",
+        "--secret",
+        "FOO",
+        "--secret",
+        "BAR",
+    ];
+
+    h.cmd()
+        .args(base)
+        .args(["--only", "FOO"])
         .assert()
         .success();
+    let out = h.read("out.env");
+    assert!(out.contains("FOO="));
+    assert!(!out.contains("BAR="), "BAR was filtered out by --only");
+
+    // An --only name that isn't declared is an error, not a silent no-op.
     h.cmd()
-        .args(["secrets", "add", "API_KEY", "v1"])
+        .args(base)
+        .args(["--only", "MISSING"])
         .assert()
-        .success();
+        .failure()
+        .stderr(contains("MISSING"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_github_as_source_is_rejected() {
+    let h = Harness::new().await;
+    h.cmd()
+        .args(["sync", "--from", "github:owner/repo1", "--to", "env:.env"])
+        .assert()
+        .failure()
+        .stderr(contains("write-only"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_store_round_trips_encrypted_and_feeds_sync() {
+    let h = Harness::new().await;
+    let repo = "owner/repo1";
+    h.mount_github(repo).await;
+
+    // Set one value as an argument and one via stdin.
+    h.cmd()
+        .args(["store", "set", "FOO", "foo-store-value"])
+        .assert()
+        .success()
+        .stdout(contains("set 'FOO'").and(contains("foo-store-value").not()));
+    h.cmd()
+        .args(["store", "set", "BAR"])
+        .write_stdin("bar-store-value\n")
+        .assert()
+        .success()
+        .stdout(contains("set 'BAR'"));
+
+    // Names only — never values.
+    h.cmd()
+        .args(["store", "list"])
+        .assert()
+        .success()
+        .stdout(contains("FOO"))
+        .stdout(contains("BAR"))
+        .stdout(contains("foo-store-value").not())
+        .stdout(contains("bar-store-value").not());
+
+    // The vault is encrypted at rest: neither names nor values are readable.
+    let raw = fs::read_to_string(h.home().join("vault.json")).unwrap();
+    assert!(!raw.contains("foo-store-value"));
+    assert!(!raw.contains("bar-store-value"));
+    assert!(!raw.contains("FOO"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(h.home().join("vault.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    // The store works as a source.
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "local",
+            "--to",
+            "github:owner/repo1",
+            "--secret",
+            "FOO",
+        ])
+        .assert()
+        .success()
+        .stdout(contains(format!("github:{repo}: created 'FOO'")));
+    let bodies = h.put_bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 1);
+    assert_sealed_box("FOO", &bodies[0].1, &["foo-store-value"]);
+    drop(bodies);
+
+    // Remove; a removed name is gone and removing it again errors.
+    h.cmd().args(["store", "remove", "BAR"]).assert().success();
+    h.cmd()
+        .args(["store", "remove", "BAR"])
+        .assert()
+        .failure()
+        .stderr(contains("no secret named 'BAR'"));
+    h.cmd()
+        .args(["store", "list"])
+        .assert()
+        .success()
+        .stdout(contains("BAR").not());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_local_store_as_destination() {
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=imported-value\n");
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "env:source.env",
+            "--to",
+            "local",
+            "--secret",
+            "FOO",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("local: created 'FOO'"));
 
     h.cmd()
+        .args(["store", "list"])
+        .assert()
+        .success()
+        .stdout(contains("FOO"));
+
+    // Idempotent: a re-run with the same source value is a no-op.
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "env:source.env",
+            "--to",
+            "local",
+            "--secret",
+            "FOO",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("nothing to do"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_check_reports_pending_then_clean_without_pushing() {
+    let h = Harness::new().await;
+    let repo = "owner/repo1";
+    h.mount_github(repo).await;
+    h.write(
+        "gh-secrets.json",
+        &serde_json::to_string_pretty(&json!({
+            "source": {"type": "env_file", "path": "source.env"},
+            "secrets": [{"name": "FOO"}, {"name": "BAR"}],
+            "destinations": [{"type": "github", "repository": repo}],
+        }))
+        .unwrap(),
+    );
+    h.write("source.env", "FOO=1\nBAR=2\n");
+
+    // Check needs no GitHub token: it never contacts destinations.
+    h.cmd()
+        .env_remove("GH_TOKEN")
         .args(["check"])
         .assert()
         .success()
-        .stdout(contains("owner/brand-new"))
-        .stdout(contains("API_KEY"));
+        .stdout(contains(format!("github:{repo}: 2 to push (FOO, BAR)")))
+        .stdout(contains("2 push(es) pending"));
+    assert_eq!(h.put_count(), 0, "check must not push");
+
+    h.cmd().args(["sync"]).assert().success();
+    assert_eq!(h.put_count(), 2);
+
+    h.cmd()
+        .env_remove("GH_TOKEN")
+        .args(["check"])
+        .assert()
+        .success()
+        .stdout(contains("everything is up to date"));
+    assert_eq!(h.put_count(), 2, "check after sync must not push either");
 }
 
-/// Deleting a profile must drop the on-disk profile file too, not just the
-/// entry in app.json. Otherwise a future `profile create <same-name>` would
-/// silently inherit the old state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2e_profile_delete_removes_file_on_disk() {
-    let h = E2eHarness::new().await;
+async fn e2e_falls_back_to_global_config() {
+    let h = Harness::new().await;
+    // Global config under the config root; paths inside it resolve relative
+    // to that directory.
+    let source = h.dir.path().join("global-source.env");
+    fs::write(&source, "FOO=global-value\n").unwrap();
+    let out = h.dir.path().join("global-out.env");
+    fs::create_dir_all(h.home()).unwrap();
+    fs::write(
+        h.home().join("gh-secrets.json"),
+        serde_json::to_string_pretty(&json!({
+            "source": {"type": "env_file", "path": source},
+            "secrets": [{"name": "FOO"}],
+            "destinations": [{"type": "env_file", "path": out}],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    // The working directory has no gh-secrets.json, so the global config is
+    // used — and its state lives next to it, under the config root.
+    h.cmd().args(["sync"]).assert().success();
+    assert!(fs::read_to_string(&out).unwrap().contains("global-value"));
+    assert!(h.home().join(".gh-secrets-state.json").exists());
+
+    // A project-local config would normally win; --global forces the global
+    // one even then.
+    h.write(
+        "gh-secrets.json",
+        &serde_json::to_string_pretty(&json!({
+            "source": {"type": "env_file", "path": "local-source.env"},
+            "secrets": [{"name": "LOCAL_ONLY"}],
+            "destinations": [{"type": "env_file", "path": "local-out.env"}],
+        }))
+        .unwrap(),
+    );
+    h.cmd()
+        .args(["check", "--global"])
+        .assert()
+        .success()
+        .stdout(contains("everything is up to date"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_init_scaffolds_local_and_global() {
+    let h = Harness::new().await;
+    h.cmd()
+        .args(["init"])
+        .assert()
+        .success()
+        .stdout(contains("wrote starter"));
+    let local: Value =
+        serde_json::from_str(&h.read("gh-secrets.json")).expect("starter is valid JSON");
+    assert_eq!(local["source"]["type"], "bitwarden");
+    // Re-running must refuse to overwrite.
+    h.cmd()
+        .args(["init"])
+        .assert()
+        .failure()
+        .stderr(contains("refusing to overwrite"));
 
     h.cmd()
-        .args(["profile", "create", "scratch"])
+        .args(["init", "--global"])
         .assert()
-        .success();
-    let scratch_file = h.home.path().join("profiles").join("scratch.json");
-    assert!(
-        scratch_file.exists(),
-        "profile file should exist after create"
-    );
+        .success()
+        .stdout(contains("wrote starter"));
+    let global: Value =
+        serde_json::from_str(&fs::read_to_string(h.home().join("gh-secrets.json")).unwrap())
+            .unwrap();
+    // The global starter sources from the encrypted local store.
+    assert_eq!(global["source"]["type"], "local");
+}
 
-    // Cannot delete the active profile; we are still on `default`, so this
-    // should succeed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_list_shows_mapping_for_env_file_source() {
+    let h = Harness::new().await;
+    h.write(
+        "gh-secrets.json",
+        &serde_json::to_string_pretty(&json!({
+            "source": {"type": "env_file", "path": ".env.master"},
+            "secrets": [
+                {"name": "DATABASE_URL", "item": "DB_URL"},
+                {"name": "FOO"}
+            ],
+            "destinations": [{"type": "github", "repository": "owner/repo1"}],
+        }))
+        .unwrap(),
+    );
     h.cmd()
-        .args(["profile", "delete", "scratch"])
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(contains("secrets (2"))
+        .stdout(contains("source: env file"))
+        .stdout(contains(
+            "DATABASE_URL  (env file '.env.master', key 'DB_URL')",
+        ))
+        .stdout(contains("FOO  (env file '.env.master', key 'FOO')"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_source_list_enumerates_env_file_and_local_store() {
+    let h = Harness::new().await;
+    h.write("source.env", "ALPHA=a-value\nBETA=b-value\n");
+    h.cmd()
+        .args(["source", "list", "--from", "env:source.env"])
+        .assert()
+        .success()
+        .stdout(contains("source items (2):"))
+        .stdout(contains("ALPHA"))
+        .stdout(contains("BETA"))
+        .stdout(contains("a-value").not())
+        .stdout(contains("b-value").not());
+
+    h.cmd()
+        .args(["store", "set", "GAMMA", "g-value"])
         .assert()
         .success();
-    assert!(
-        !scratch_file.exists(),
-        "profile file should be gone after delete"
-    );
+    h.cmd()
+        .args(["source", "list", "--from", "local"])
+        .assert()
+        .success()
+        .stdout(contains("GAMMA"))
+        .stdout(contains("g-value").not());
 }

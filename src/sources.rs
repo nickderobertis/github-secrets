@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -14,6 +15,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::manifest::{BitwardenSourceConfig, ManifestSecret};
+use crate::vault;
 
 /// A plaintext value retrieved from a source. Callers MUST treat this as
 /// sensitive and must never log or persist `value` outside the documented
@@ -70,30 +72,112 @@ impl StaticSource {
 
 impl SecretSource for StaticSource {
     fn fetch(&self, secrets: &[ManifestSecret]) -> Result<Vec<FetchedSecret>> {
-        let mut out = Vec::with_capacity(secrets.len());
-        for s in secrets {
-            let value = self
-                .values
-                .get(&s.name)
-                .ok_or_else(|| anyhow!("static source has no value for '{}'", s.name))?;
-            out.push(FetchedSecret {
-                name: s.name.clone(),
-                value: value.clone(),
-            });
-        }
-        Ok(out)
+        fetch_from_map(&self.values, secrets, "static source")
     }
 
     fn list_available(&self) -> Result<Vec<SourceItem>> {
-        // No real ids in a static map, so the key doubles as name and id.
-        Ok(self
-            .values
-            .keys()
-            .map(|k| SourceItem {
-                name: k.clone(),
-                id: k.clone(),
-            })
-            .collect())
+        Ok(map_items(&self.values))
+    }
+}
+
+/// Shared lookup for the map-backed sources (static, env file, local store):
+/// `item` (defaulting to the secret's name) is the key in the map, and the
+/// Bitwarden-style `field` selector has no meaning, so specifying one is a
+/// config error rather than something to silently ignore.
+fn fetch_from_map(
+    values: &HashMap<String, String>,
+    secrets: &[ManifestSecret],
+    what: &str,
+) -> Result<Vec<FetchedSecret>> {
+    let mut out = Vec::with_capacity(secrets.len());
+    for s in secrets {
+        if let Some(field) = &s.field {
+            bail!(
+                "secret '{}' specifies field '{field}', but a {what} has no fields",
+                s.name
+            );
+        }
+        let key = s.source_item();
+        let value = values
+            .get(key)
+            .ok_or_else(|| anyhow!("{what} has no value for '{key}'"))?;
+        out.push(FetchedSecret {
+            name: s.name.clone(),
+            value: value.clone(),
+        });
+    }
+    Ok(out)
+}
+
+/// Identity listing for a map-backed source: the key doubles as name and id.
+fn map_items(values: &HashMap<String, String>) -> Vec<SourceItem> {
+    values
+        .keys()
+        .map(|k| SourceItem {
+            name: k.clone(),
+            id: k.clone(),
+        })
+        .collect()
+}
+
+/// A dotenv-style file used as a source: each managed secret's `item` is a key
+/// in the file. The read-half of the same store the `env_file` destination
+/// writes.
+pub struct EnvFileSource {
+    /// Already resolved against the manifest's directory by the caller.
+    pub path: PathBuf,
+}
+
+impl EnvFileSource {
+    fn read_values(&self) -> Result<HashMap<String, String>> {
+        let content = std::fs::read_to_string(&self.path)
+            .with_context(|| format!("reading env file source {}", self.path.display()))?;
+        Ok(crate::envfile::parse_dotenv(&content).into_iter().collect())
+    }
+}
+
+impl SecretSource for EnvFileSource {
+    fn fetch(&self, secrets: &[ManifestSecret]) -> Result<Vec<FetchedSecret>> {
+        let values = self.read_values()?;
+        fetch_from_map(
+            &values,
+            secrets,
+            &format!("env file ({})", self.path.display()),
+        )
+    }
+
+    fn list_available(&self) -> Result<Vec<SourceItem>> {
+        Ok(map_items(&self.read_values()?))
+    }
+}
+
+/// The global encrypted local store used as a source. Decrypting the vault may
+/// resolve a passphrase (env or prompt); see `crate::vault`.
+pub struct LocalStoreSource {
+    pub vault_path: PathBuf,
+}
+
+impl LocalStoreSource {
+    pub fn new(vault_path: &Path) -> Self {
+        Self {
+            vault_path: vault_path.to_path_buf(),
+        }
+    }
+
+    fn read_values(&self) -> Result<HashMap<String, String>> {
+        let data = vault::load(&self.vault_path)?;
+        Ok(data.secrets.into_iter().collect())
+    }
+}
+
+impl SecretSource for LocalStoreSource {
+    fn fetch(&self, secrets: &[ManifestSecret]) -> Result<Vec<FetchedSecret>> {
+        let values = self.read_values()?;
+        fetch_from_map(&values, secrets, "local store")
+    }
+
+    fn list_available(&self) -> Result<Vec<SourceItem>> {
+        Ok(map_items(&self.read_values()?))
     }
 }
 
@@ -740,6 +824,61 @@ mod tests {
         // Session short-circuits auth; the collection/org scope is forwarded.
         let calls = src.cli.calls.borrow().clone();
         assert_eq!(calls, vec!["list_items:coll-1:org-1"]);
+    }
+
+    #[test]
+    fn env_file_source_reads_keys_and_rejects_fields() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join(".env.master");
+        std::fs::write(&path, "FOO=\"bar\"\nDB_URL=postgres://x\n").unwrap();
+        let src = EnvFileSource { path };
+        // `item` maps the secret name onto a different key in the file.
+        let got = src
+            .fetch(&[ManifestSecret {
+                name: "DATABASE_URL".into(),
+                item: Some("DB_URL".into()),
+                field: None,
+            }])
+            .unwrap();
+        assert_eq!(got[0].value, "postgres://x");
+        // A Bitwarden-style field selector is a config error here.
+        let err = src
+            .fetch(&[ManifestSecret {
+                name: "FOO".into(),
+                item: None,
+                field: Some("password".into()),
+            }])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("has no fields"), "got: {err}");
+        // Listing surfaces keys, never values.
+        let mut items = src.list_available().unwrap();
+        items.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(items[0].name, "DB_URL");
+        assert_eq!(items[1].name, "FOO");
+    }
+
+    #[test]
+    fn local_store_source_reads_vault_secrets() {
+        std::env::set_var(vault::PASSPHRASE_ENV, "test-pass");
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("vault.json");
+        let mut data = vault::VaultData::default();
+        data.secrets.insert("FOO".into(), "from-vault".into());
+        vault::save(&path, &data).unwrap();
+        let src = LocalStoreSource::new(&path);
+        let got = src
+            .fetch(&[ManifestSecret {
+                name: "FOO".into(),
+                item: None,
+                field: None,
+            }])
+            .unwrap();
+        assert_eq!(got[0].value, "from-vault");
+        let items = src.list_available().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "FOO");
+        std::env::remove_var(vault::PASSPHRASE_ENV);
     }
 
     #[test]

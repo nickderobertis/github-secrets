@@ -1,10 +1,21 @@
 # gh-secrets
 
-A small Rust CLI for managing GitHub Actions repository secrets in bulk.
+A small Rust CLI that syncs secrets from a **source** to one or more
+**destinations**, pushing only what changed since the last sync.
 
-You keep a local config of profiles, included/excluded repositories, and global
-+ per-repository secret values. `gh-secrets sync` then pushes only the secrets
-that have changed since the last sync.
+Every store declares a read/write capability:
+
+| Store                       | As source (`--from`) | As destination (`--to`) |
+| --------------------------- | -------------------- | ----------------------- |
+| `github:<owner>/<repo>`     | ✗ (write-only)       | ✓ GitHub Actions secrets |
+| `bitwarden`                 | ✓                    | not yet                 |
+| `env:<path>` (dotenv file)  | ✓                    | ✓                       |
+| `local` (encrypted store)   | ✓                    | ✓                       |
+
+The pipeline (source → secrets → destinations) comes from a checked-in
+`gh-secrets.json`, from CLI arguments, or a mix: each `--from`/`--to`/`--secret`
+argument replaces that section of the config, so anything a config can express
+is also a one-liner.
 
 ## Install
 
@@ -36,27 +47,49 @@ cargo install --path .              # from a clone
 ```sh
 gh-secrets --help
 
-# Tell it about your GitHub token.
-gh-secrets token <ghp_xxx>
+# Scaffold a project config (gh-secrets.json, checked in — it holds mappings,
+# never values), then sync it.
+gh-secrets init
+gh-secrets sync
 
-# Add repositories to the profile (or discover all of yours).
-gh-secrets repo add owner/repo
-gh-secrets repo bootstrap
+# Or skip the config entirely — arguments express the same pipeline:
+gh-secrets sync --from bitwarden --to github:owner/repo \
+  --secret STRIPE_KEY --secret API_KEY=my-bw-item#fields.API_KEY
 
-# Add a secret (global to the profile, or scoped to one repo).
-gh-secrets secrets add MY_KEY "value"
-gh-secrets secrets add MY_KEY "override-for-this-repo" owner/repo
+# Push a local dotenv file's values to several repos:
+gh-secrets sync --from env:.env.master \
+  --to github:owner/repo1 --to github:owner/repo2 --secret STRIPE_KEY
 
-# Push changed secrets to GitHub.
-gh-secrets secrets sync
+# Pull your manifest's secrets into a local .env for development:
+gh-secrets sync --to env:.env
 
-# See what would change.
+# Keep ad-hoc values in the global encrypted store and push from it:
+gh-secrets store set MY_KEY            # value read from stdin/prompt
+gh-secrets sync --from local --to github:owner/repo --secret MY_KEY
+
+# See what a sync would push (read-only, no GitHub token needed):
 gh-secrets check
+
+# Discover what the source offers (names/ids only, never values):
+gh-secrets source list
+
+# Store credentials (encrypted at rest) as the lowest-priority fallback;
+# resolution order is: shell env > .env > .env.local > stored config.
+gh-secrets auth github <ghp_xxx>
+gh-secrets auth bitwarden --client-id ... --client-secret ... --master-password ...
+gh-secrets auth status
 ```
 
-Config lives under `$XDG_CONFIG_HOME/gh-secrets` (Linux), `~/Library/Application
-Support/gh-secrets` (macOS), or `%APPDATA%\gh-secrets` (Windows). Override with
-`GH_SECRETS_HOME`.
+`sync`/`check`/`list` use `./gh-secrets.json` when present and otherwise fall
+back to the global config (`gh-secrets init --global`), so `check` is
+project-local inside a project and global everywhere else; `--global`/`--config`
+force either.
+
+The encrypted vault (stored credentials + the `local` store) and the global
+config live under `$XDG_CONFIG_HOME/gh-secrets` (Linux),
+`~/Library/Application Support/gh-secrets` (macOS), or `%APPDATA%\gh-secrets`
+(Windows). Override with `GH_SECRETS_HOME`. The vault passphrase comes from
+`GH_SECRETS_PASSPHRASE` or an interactive prompt.
 
 ## Develop
 

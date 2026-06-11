@@ -40,10 +40,38 @@ impl ManifestSecret {
 
 /// What kind of source the manifest pulls from. Tagged on `type` so we can add
 /// further providers without breaking older configs.
+///
+/// Every store type declares a read/write capability: `bitwarden`, `env_file`,
+/// and `local` are readable (sources); `github` is write-only and therefore
+/// only appears in [`ManifestDestination`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ManifestSource {
     Bitwarden(BitwardenSourceConfig),
+    /// A dotenv-style file: each managed secret's `item` (default: its name)
+    /// is a key in the file.
+    EnvFile(EnvFileSourceConfig),
+    /// The global encrypted local store (`gh-secrets store`), shared across
+    /// projects under the config root.
+    Local,
+}
+
+impl ManifestSource {
+    /// Short human label used in `list` output and error messages.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ManifestSource::Bitwarden(_) => "bitwarden",
+            ManifestSource::EnvFile(_) => "env file",
+            ManifestSource::Local => "local store",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnvFileSourceConfig {
+    /// Path to the env file, relative to the manifest's directory unless
+    /// absolute.
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -66,6 +94,9 @@ pub struct BitwardenSourceConfig {
 pub enum ManifestDestination {
     Github(GithubDestinationConfig),
     EnvFile(EnvFileDestinationConfig),
+    /// The global encrypted local store — the write half of
+    /// [`ManifestSource::Local`].
+    Local,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -88,13 +119,16 @@ impl ManifestDestination {
         match self {
             ManifestDestination::Github(c) => format!("github:{}", c.repository),
             ManifestDestination::EnvFile(c) => format!("env_file:{}", c.path.display()),
+            ManifestDestination::Local => "local".to_string(),
         }
     }
 }
 
-/// The full manifest, loaded from `gh-secrets.json`.
+/// The full config: a source, the managed secrets, and the destinations. The
+/// same schema serves the project-local `gh-secrets.json` (checked in) and the
+/// global config under the config root.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RepoManifest {
+pub struct Manifest {
     pub source: ManifestSource,
     #[serde(default)]
     pub secrets: Vec<ManifestSecret>,
@@ -102,7 +136,7 @@ pub struct RepoManifest {
     pub destinations: Vec<ManifestDestination>,
 }
 
-impl RepoManifest {
+impl Manifest {
     pub fn starter() -> Self {
         Self {
             source: ManifestSource::Bitwarden(BitwardenSourceConfig::default()),
@@ -119,6 +153,22 @@ impl RepoManifest {
                     path: PathBuf::from(".env"),
                 }),
             ],
+        }
+    }
+
+    /// Starter for the global config: secrets live in the encrypted local
+    /// store and sync to explicitly listed repositories.
+    pub fn global_starter() -> Self {
+        Self {
+            source: ManifestSource::Local,
+            secrets: vec![ManifestSecret {
+                name: "EXAMPLE_SECRET".into(),
+                item: None,
+                field: None,
+            }],
+            destinations: vec![ManifestDestination::Github(GithubDestinationConfig {
+                repository: "owner/repo".into(),
+            })],
         }
     }
 
@@ -228,10 +278,29 @@ mod tests {
 
     #[test]
     fn manifest_round_trip_json() {
-        let m = RepoManifest::starter();
+        let m = Manifest::starter();
         let s = serde_json::to_string_pretty(&m).unwrap();
-        let back: RepoManifest = serde_json::from_str(&s).unwrap();
+        let back: Manifest = serde_json::from_str(&s).unwrap();
         assert_eq!(m, back);
+    }
+
+    #[test]
+    fn env_file_and_local_source_round_trip_json() {
+        let m = Manifest {
+            source: ManifestSource::EnvFile(EnvFileSourceConfig {
+                path: PathBuf::from(".env.master"),
+            }),
+            secrets: vec![],
+            destinations: vec![ManifestDestination::Local],
+        };
+        let s = serde_json::to_string(&m).unwrap();
+        assert!(s.contains(r#""type":"env_file""#));
+        assert!(s.contains(r#""type":"local""#));
+        let back: Manifest = serde_json::from_str(&s).unwrap();
+        assert_eq!(m, back);
+        let g = serde_json::to_string(&Manifest::global_starter()).unwrap();
+        let back: Manifest = serde_json::from_str(&g).unwrap();
+        assert_eq!(back.source, ManifestSource::Local);
     }
 
     #[test]

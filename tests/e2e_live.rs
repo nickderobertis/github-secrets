@@ -6,6 +6,10 @@
 //! account, isolate themselves via a per-test unique secret-name prefix, and
 //! clean up the secrets they create in `Drop`.
 //!
+//! Each test drives the unified `sync` command with an env-file source and a
+//! real `github:` destination — the same pipeline a user runs, with the
+//! GitHub token resolving from `GH_TOKEN` exactly as documented.
+//!
 //! Run with: `just test-live` (or directly:
 //! `GH_SECRETS_LIVE_TEST=1 GH_TOKEN=... cargo test --test e2e_live`).
 
@@ -26,25 +30,28 @@ macro_rules! skip_if_no_live {
     };
 }
 
-/// Configure a profile, push a secret, and verify the GitHub API reports it.
+/// Sync a secret from an env-file source to the sandbox repo and verify the
+/// GitHub API reports it.
 #[test]
 fn live_sync_creates_secret_visible_via_api() {
     skip_if_no_live!();
     let s = LiveSession::new("create");
-    let tok = token();
     let name = s.secret_name("KEY");
+    let from = s.write_source_env(&[(&name, "live-test-value-1")]);
 
-    s.cmd().args(["token", tok.as_str()]).assert().success();
-    s.cmd().args(["repo", "add", &s.repo]).assert().success();
     s.cmd()
-        .args(["secrets", "add", &name, "live-test-value-1"])
-        .assert()
-        .success();
-    s.cmd()
-        .args(["secrets", "sync"])
+        .args([
+            "sync",
+            "--from",
+            &from,
+            "--to",
+            &format!("github:{}", s.repo),
+            "--secret",
+            &name,
+        ])
         .assert()
         .success()
-        .stdout(contains(format!("created '{name}' in {}", s.repo)));
+        .stdout(contains(format!("github:{}: created '{name}'", s.repo)));
 
     let remote = s.remote_secret_names();
     assert!(
@@ -59,40 +66,32 @@ fn live_sync_creates_secret_visible_via_api() {
 fn live_noop_resync_returns_nothing_to_do() {
     skip_if_no_live!();
     let s = LiveSession::new("noop");
-    let tok = token();
     let name = s.secret_name("KEY");
+    let from = s.write_source_env(&[(&name, "live-test-value-2")]);
+    let to = format!("github:{}", s.repo);
+    let args = ["sync", "--from", &from, "--to", &to, "--secret", &name];
 
-    s.cmd().args(["token", tok.as_str()]).assert().success();
-    s.cmd().args(["repo", "add", &s.repo]).assert().success();
+    s.cmd().args(args).assert().success();
     s.cmd()
-        .args(["secrets", "add", &name, "live-test-value-2"])
-        .assert()
-        .success();
-    s.cmd().args(["secrets", "sync"]).assert().success();
-    s.cmd()
-        .args(["secrets", "sync"])
+        .args(args)
         .assert()
         .success()
         .stdout(contains("nothing to do"));
 }
 
-/// Updating a value locally must propagate on the next sync. GitHub's
+/// Updating the source value must propagate on the next sync. GitHub's
 /// `updated_at` for the secret advances when we PUT a new ciphertext, so we
 /// use that as our remote witness.
 #[test]
 fn live_update_value_propagates_on_resync() {
     skip_if_no_live!();
     let s = LiveSession::new("update");
-    let tok = token();
     let name = s.secret_name("KEY");
+    let from = s.write_source_env(&[(&name, "v1")]);
+    let to = format!("github:{}", s.repo);
+    let args = ["sync", "--from", &from, "--to", &to, "--secret", &name];
 
-    s.cmd().args(["token", tok.as_str()]).assert().success();
-    s.cmd().args(["repo", "add", &s.repo]).assert().success();
-    s.cmd()
-        .args(["secrets", "add", &name, "v1"])
-        .assert()
-        .success();
-    s.cmd().args(["secrets", "sync"]).assert().success();
+    s.cmd().args(args).assert().success();
     let first = s
         .remote_secret(&name)
         .expect("secret exists after first sync");
@@ -105,15 +104,12 @@ fn live_update_value_propagates_on_resync() {
     // guaranteed to advance even if our second PUT lands very fast.
     std::thread::sleep(std::time::Duration::from_secs(2));
 
+    s.write_source_env(&[(&name, "v2")]);
     s.cmd()
-        .args(["secrets", "add", &name, "v2"])
-        .assert()
-        .success();
-    s.cmd()
-        .args(["secrets", "sync"])
+        .args(args)
         .assert()
         .success()
-        .stdout(contains(format!("updated '{name}' in {}", s.repo)));
+        .stdout(contains(format!("github:{}: updated '{name}'", s.repo)));
     let second = s
         .remote_secret(&name)
         .expect("secret still exists after update");
@@ -127,66 +123,62 @@ fn live_update_value_propagates_on_resync() {
     );
 }
 
-/// Bad token first → real 401 from GitHub → rotate to a good token → success.
-/// Proves the error message guides the user to the fix and that the fix works.
+/// Bad token first → real 401 from GitHub → rerun with the good token →
+/// success. Proves the error message guides the user to the fix and that the
+/// fix works.
 #[test]
 fn live_recovers_from_invalid_token() {
     skip_if_no_live!();
     let s = LiveSession::new("rotate");
-    let tok = token();
     let name = s.secret_name("KEY");
+    let from = s.write_source_env(&[(&name, "v1")]);
+    let to = format!("github:{}", s.repo);
+    let args = ["sync", "--from", &from, "--to", &to, "--secret", &name];
 
     s.cmd()
-        .args(["token", "ghp_obviously_invalid_token_for_e2e_testing"])
-        .assert()
-        .success();
-    s.cmd().args(["repo", "add", &s.repo]).assert().success();
-    s.cmd()
-        .args(["secrets", "add", &name, "v1"])
-        .assert()
-        .success();
-    s.cmd()
-        .args(["secrets", "sync"])
+        .env("GH_TOKEN", "ghp_obviously_invalid_token_for_e2e_testing")
+        .args(args)
         .assert()
         .failure()
         .stderr(contains("401"));
 
-    s.cmd().args(["token", tok.as_str()]).assert().success();
     s.cmd()
-        .args(["secrets", "sync"])
+        .env("GH_TOKEN", token())
+        .args(args)
         .assert()
         .success()
-        .stdout(contains(format!("created '{name}' in {}", s.repo)));
+        .stdout(contains(format!("github:{}: created '{name}'", s.repo)));
     assert!(s.remote_secret_names().contains(&name));
 }
 
-/// Per-repo override path: when both a global and a repo-scoped secret exist
-/// with the same name, sync uses the override. We can't read the value back,
-/// but we exercise the code path end-to-end and confirm the resulting secret
-/// is present on the remote.
+/// Removing a secret from the pipeline must NOT touch the remote secret. The
+/// CLI deliberately stays out of GitHub-side cleanup: if a user wants the
+/// remote secret gone too, they delete it themselves.
 #[test]
-fn live_repo_override_wins_during_sync() {
+fn live_undeclared_secret_is_not_deleted_remotely() {
     skip_if_no_live!();
-    let s = LiveSession::new("override");
-    let tok = token();
+    let s = LiveSession::new("undeclare");
     let name = s.secret_name("KEY");
+    let from = s.write_source_env(&[(&name, "v1")]);
+    let to = format!("github:{}", s.repo);
 
-    s.cmd().args(["token", tok.as_str()]).assert().success();
-    s.cmd().args(["repo", "add", &s.repo]).assert().success();
     s.cmd()
-        .args(["secrets", "add", &name, "global-value"])
+        .args(["sync", "--from", &from, "--to", &to, "--secret", &name])
         .assert()
         .success();
+    assert!(s.remote_secret_names().contains(&name));
+
+    // Same pipeline without the secret declared: nothing to push, and the
+    // remote secret survives.
     s.cmd()
-        .args(["secrets", "add", &name, "override-value", &s.repo])
-        .assert()
-        .success();
-    s.cmd()
-        .args(["secrets", "sync"])
+        .args(["sync", "--from", &from, "--to", &to])
         .assert()
         .success()
-        .stdout(contains(format!("created '{name}' in {}", s.repo)));
-    assert!(s.remote_secret_names().contains(&name));
+        .stdout(contains("nothing to do"));
+    assert!(
+        s.remote_secret_names().contains(&name),
+        "an undeclared secret must not be deleted remotely"
+    );
 }
 
 /// The cross-platform install script (`scripts/install.sh`) must download the
@@ -241,40 +233,5 @@ fn live_install_script_downloads_and_verifies_release() {
     assert!(
         stdout.contains("gh-secrets"),
         "unexpected --version output: {stdout}"
-    );
-}
-
-/// Local-only removal must NOT touch the remote secret. The CLI deliberately
-/// stays out of GitHub-side cleanup: if a user wants the remote secret gone
-/// too, they delete it themselves.
-#[test]
-fn live_local_remove_does_not_delete_remote() {
-    skip_if_no_live!();
-    let s = LiveSession::new("local_remove");
-    let tok = token();
-    let name = s.secret_name("KEY");
-
-    s.cmd().args(["token", tok.as_str()]).assert().success();
-    s.cmd().args(["repo", "add", &s.repo]).assert().success();
-    s.cmd()
-        .args(["secrets", "add", &name, "v1"])
-        .assert()
-        .success();
-    s.cmd().args(["secrets", "sync"]).assert().success();
-    assert!(s.remote_secret_names().contains(&name));
-
-    s.cmd()
-        .args(["secrets", "remove", &name])
-        .assert()
-        .success();
-    // After the local remove, the next sync has nothing to push.
-    s.cmd()
-        .args(["secrets", "sync"])
-        .assert()
-        .success()
-        .stdout(contains("nothing to do"));
-    assert!(
-        s.remote_secret_names().contains(&name),
-        "removing locally must not delete the remote secret"
     );
 }
