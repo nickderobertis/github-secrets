@@ -372,7 +372,7 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
     what `scripts/bw-e2e-env.sh` reads (via `gh-secrets ... --secret
     NAME=ITEM#notes`) to run the suite locally — so a developer never copies the
     isolated account's secret into a shell.
-  - As **repo secrets** for CI, so the `Live e2e (Bitwarden)` step in
+  - As **repo secrets** for CI, so the `live-e2e-bitwarden` job in
     `.github/workflows/ci.yml` can run (it installs the `bw` CLI and runs
     `just test-live-bitwarden`):
     ```
@@ -382,9 +382,11 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
     ```
     The client id/secret are a Bitwarden **personal API key** (Account Settings
     → Security → Keys → "View API Key"); the password is the isolated account's
-    master password. The step is guarded on `GH_SECRETS_BW_E2E_CLIENT_ID` being
-    set, so without the secrets it is skipped (not failed) — forks and
-    unconfigured repos stay green.
+    master password. `live-e2e-bitwarden` is its own job (separate from the
+    GitHub `live-e2e`) and a **required status check** on `master`, so a
+    Bitwarden regression blocks merges. The run is guarded on
+    `GH_SECRETS_BW_E2E_CLIENT_ID` being set, so without the secrets it is
+    skipped (not failed) — forks and unconfigured repos stay green.
 - `scripts/install.sh` is the cross-platform installer (Linux x86_64 + arm64,
   macOS arm64, Windows x86_64 under a POSIX shell): it detects the host target,
   downloads the matching release archive, verifies its SHA-256, and installs
