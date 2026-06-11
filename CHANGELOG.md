@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/nickderobertis/github-secrets/compare/v0.2.0...v0.3.0) (2026-06-11)
+
+
+### Features
+
+* add `source list` to enumerate the manifest's source (Bitwarden vault) ([#28](https://github.com/nickderobertis/github-secrets/issues/28)) ([01852fb](https://github.com/nickderobertis/github-secrets/commit/01852fb9d2a13f4e0bf691289ac14056f9dee9db))
+
 ## [0.2.0](https://github.com/nickderobertis/github-secrets/compare/v0.1.2...v0.2.0) (2026-06-11)
 
 
