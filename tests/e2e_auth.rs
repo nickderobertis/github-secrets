@@ -506,6 +506,93 @@ async fn e2e_passphrase_resolves_from_dotenv() {
         .stderr(contains("could not decrypt"));
 }
 
+/// A session minted for one vault is useless after the vault is recreated:
+/// the mismatched key is detected and the stale session file is deleted on
+/// sight, after which the (new) passphrase unlocks normally.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_stale_session_for_recreated_vault_is_dropped() {
+    let h = AuthHarness::new().await;
+    h.cmd().args(["auth", "github", "ghp_x"]).assert().success();
+    h.cmd().args(["auth", "unlock"]).assert().success();
+    let session = h.dir.path().join("home").join("session.json");
+    assert!(session.exists());
+
+    // Recreate the vault under a different passphrase. The old session file
+    // survives the raw delete, but its key no longer fits the new vault.
+    fs::remove_file(h.vault_file()).unwrap();
+    h.cmd()
+        .env("GH_SECRETS_PASSPHRASE", "a-brand-new-passphrase")
+        .args(["store", "set", "FOO", "fresh-vault-value"])
+        .assert()
+        .success();
+    assert!(session.exists(), "the stale session is still on disk");
+
+    // The next unlock tries the session, finds the key mismatch, drops it,
+    // and falls through to the new passphrase.
+    h.cmd()
+        .env("GH_SECRETS_PASSPHRASE", "a-brand-new-passphrase")
+        .args(["store", "list"])
+        .assert()
+        .success()
+        .stdout(contains("FOO"));
+    assert!(!session.exists(), "the mismatched session was deleted");
+}
+
+/// `auth lock` without an active session says so instead of pretending to
+/// lock something.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_auth_lock_without_session_reports_none() {
+    let h = AuthHarness::new().await;
+    h.cmd()
+        .args(["auth", "lock"])
+        .assert()
+        .success()
+        .stdout(contains("no active session"));
+}
+
+/// `auth clear --bitwarden` is the mirror of `--github`: it removes only the
+/// Bitwarden login and keeps the GitHub token.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_auth_clear_bitwarden_keeps_github() {
+    let h = AuthHarness::new().await;
+    h.cmd().args(["auth", "github", "ghp_x"]).assert().success();
+    h.cmd()
+        .args([
+            "auth",
+            "bitwarden",
+            "--client-id",
+            "user.x",
+            "--client-secret",
+            "cs",
+        ])
+        .assert()
+        .success();
+
+    h.cmd()
+        .args(["auth", "clear", "--bitwarden"])
+        .assert()
+        .success();
+    h.cmd()
+        .args(["auth", "status"])
+        .assert()
+        .success()
+        .stdout(contains("GitHub token: set (from stored config)"))
+        .stdout(contains("Bitwarden client id: not set"))
+        .stdout(contains("Bitwarden client secret: not set"));
+}
+
+/// An empty token is rejected before anything touches the vault.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_auth_github_rejects_empty_token() {
+    let h = AuthHarness::new().await;
+    h.cmd()
+        .args(["auth", "github", ""])
+        .assert()
+        .failure()
+        .stderr(contains("token cannot be empty"));
+    assert!(!h.vault_file().exists());
+}
+
 /// `auth unlock --days` controls the session length, reflected in `auth
 /// status`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

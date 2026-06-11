@@ -131,6 +131,43 @@ fn live_bw_field_selectors_extract_each_field() {
     }
 }
 
+/// `--default-field` changes what an unselected secret extracts, while an
+/// explicit `#field` selector still overrides it per secret.
+#[test]
+fn live_bw_default_field_flag_changes_the_default() {
+    skip_if_no_bw_live!();
+    let s = BwLiveSession::new("deffield");
+    let (user, pw, notes) = ("username-value-5", "password-value-5", "notes-value-5");
+    let item = s.seed_login("DEFF", user, pw, notes, ("C", "v"));
+
+    s.cmd()
+        .args([
+            "sync",
+            "--from",
+            "bitwarden",
+            "--default-field",
+            "notes",
+            "--to",
+            "env:out.env",
+            "--secret",
+            &format!("DEFAULTED={item}"),
+            "--secret",
+            &format!("OVERRIDDEN={item}#username"),
+        ])
+        .assert()
+        .success();
+
+    let body = dest_body(&s);
+    assert!(
+        body.contains(&format!("DEFAULTED=\"{notes}\"")),
+        "expected the default-field value (notes); got:\n{body}"
+    );
+    assert!(
+        body.contains(&format!("OVERRIDDEN=\"{user}\"")),
+        "expected the per-secret selector to override the default; got:\n{body}"
+    );
+}
+
 /// `source list` enumerates the vault by contacting Bitwarden directly, and
 /// prints item names but never a value.
 #[test]
