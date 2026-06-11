@@ -346,6 +346,29 @@ async fn e2e_manifest_fans_one_source_value_out_to_multiple_names() {
     );
 }
 
+/// A manifest where two managed secrets resolve to the same destination name is
+/// a config error: it's caught at load time, so even a read-only `manifest list`
+/// refuses it (and `sync` never contacts the source).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_manifest_rejects_duplicate_destination_names() {
+    let h = ManifestHarness::new().await;
+    h.write_manifest(&json!({
+        "source": {"type": "bitwarden"},
+        "secrets": [
+            {"name": "primary", "destination_names": ["SHARED"]},
+            {"name": "other", "destination_names": ["SHARED"]}
+        ],
+        "destinations": [{"type": "env_file", "path": ".env"}]
+    }));
+
+    h.cmd()
+        .args(["manifest", "list"])
+        .assert()
+        .failure()
+        .stderr(contains("destination name 'SHARED'"))
+        .stderr(contains("two managed secrets"));
+}
+
 /// `manifest list` surfaces the source→destination fan-out mapping so a reader
 /// can see which names a value lands under without contacting the source.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

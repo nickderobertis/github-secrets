@@ -36,7 +36,10 @@ secrets in bulk. It has two distinct workflows:
    names (e.g. a single publish token pushed as both `NPM_TOKEN` and
    `NODE_AUTH_TOKEN`); the value is fetched once and pushed under each name, and
    each (destination-name, destination) pair tracks its own hash in the state
-   file. `gh-secrets manifest list` reports the secrets the manifest *declares*
+   file. Destination names must be unique across the whole manifest —
+   `RepoManifest::load` rejects a config where two managed secrets resolve to the
+   same destination name (which would otherwise race to last-writer-wins), so the
+   error surfaces at load time before any source contact. `gh-secrets manifest list` reports the secrets the manifest *declares*
    (each name plus its resolved source item/field, and the fan-out arrow `->
    NAME, NAME` when `destination_names` is set), reading only the checked-in
    file.

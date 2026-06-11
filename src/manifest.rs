@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -148,7 +148,39 @@ impl RepoManifest {
 
     pub fn load(path: &Path) -> Result<Self> {
         let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-        serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))
+        let manifest: Self = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parsing {}", path.display()))?;
+        manifest
+            .validate()
+            .with_context(|| format!("validating {}", path.display()))?;
+        Ok(manifest)
+    }
+
+    /// Reject a config that can't sync coherently. Today's only rule: every
+    /// resolved destination name must be unique across the whole manifest. Two
+    /// managed secrets fanning out to the same destination name would race to
+    /// last-writer-wins at every destination and thrash the state file, so we
+    /// surface it as a config error instead of silently picking one.
+    pub fn validate(&self) -> Result<()> {
+        let mut owner: BTreeMap<&str, &str> = BTreeMap::new();
+        for secret in &self.secrets {
+            for dest in secret.dest_names() {
+                match owner.insert(dest, secret.name.as_str()) {
+                    None => {}
+                    Some(prev) if prev == secret.name => bail!(
+                        "destination name '{dest}' is listed more than once for secret '{}'; \
+                         each destination name must be unique",
+                        secret.name
+                    ),
+                    Some(prev) => bail!(
+                        "destination name '{dest}' is claimed by two managed secrets ('{prev}' \
+                         and '{}'); each destination name must be unique",
+                        secret.name
+                    ),
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -310,6 +342,49 @@ mod tests {
             destination_names: vec!["NPM_TOKEN".into(), "NODE_AUTH_TOKEN".into()],
         };
         assert_eq!(fanned.dest_names(), vec!["NPM_TOKEN", "NODE_AUTH_TOKEN"]);
+    }
+
+    fn secret(name: &str, dest_names: &[&str]) -> ManifestSecret {
+        ManifestSecret {
+            name: name.into(),
+            item: None,
+            field: None,
+            destination_names: dest_names.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn manifest_with(secrets: Vec<ManifestSecret>) -> RepoManifest {
+        RepoManifest {
+            source: ManifestSource::Bitwarden(BitwardenSourceConfig::default()),
+            secrets,
+            destinations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn validate_accepts_distinct_destination_names() {
+        let m = manifest_with(vec![
+            secret("A", &[]),
+            secret("npm", &["NPM_TOKEN", "NODE_AUTH_TOKEN"]),
+        ]);
+        assert!(m.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_collision_across_secrets() {
+        // Two secrets resolve to the same destination name `SHARED`.
+        let m = manifest_with(vec![secret("SHARED", &[]), secret("other", &["SHARED"])]);
+        let err = m.validate().unwrap_err().to_string();
+        assert!(err.contains("destination name 'SHARED'"), "got: {err}");
+        assert!(err.contains("two managed secrets"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_within_one_secret() {
+        let m = manifest_with(vec![secret("npm", &["NPM_TOKEN", "NPM_TOKEN"])]);
+        let err = m.validate().unwrap_err().to_string();
+        assert!(err.contains("destination name 'NPM_TOKEN'"), "got: {err}");
+        assert!(err.contains("listed more than once"), "got: {err}");
     }
 
     #[test]
