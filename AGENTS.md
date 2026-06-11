@@ -27,8 +27,22 @@ secrets in bulk. It has two distinct workflows:
    already hold the current value. Idempotent across runs via a co-located
    `.gh-secrets-state.json` (gitignore it) that stores per-(secret,
    destination) SHA-256 hashes — the plaintext value is never persisted there.
-   `gh-secrets manifest list` reports the secrets the manifest *declares* (each
-   name plus its resolved source item/field), reading only the checked-in file.
+   Each managed secret has a *source-side* identity (`name`, plus an optional
+   `item`/`field` to look up a differently-named source entry) and a
+   *destination-side* identity (`destination_names`). When `destination_names`
+   is omitted it defaults to `[name]` — the common "same name everywhere" case
+   needs no extra config. Supplying it lets the destination name differ from the
+   source identity and lets one source value fan out to several destination
+   names (e.g. a single publish token pushed as both `NPM_TOKEN` and
+   `NODE_AUTH_TOKEN`); the value is fetched once and pushed under each name, and
+   each (destination-name, destination) pair tracks its own hash in the state
+   file. Destination names must be unique across the whole manifest —
+   `RepoManifest::load` rejects a config where two managed secrets resolve to the
+   same destination name (which would otherwise race to last-writer-wins), so the
+   error surfaces at load time before any source contact. `gh-secrets manifest list` reports the secrets the manifest *declares*
+   (each name plus its resolved source item/field, and the fan-out arrow `->
+   NAME, NAME` when `destination_names` is set), reading only the checked-in
+   file.
    `gh-secrets source list` instead *enumerates the source itself* — it unlocks
    the configured source (e.g. the Bitwarden vault, scoped by the manifest's
    collection/organization) and prints every available item's name and id, so a

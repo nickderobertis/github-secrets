@@ -284,6 +284,113 @@ async fn e2e_manifest_sync_pushes_to_github_and_env_file() {
     assert!(foo_dests["env_file:.env"].is_string());
 }
 
+/// One source value can be written under several destination names — and a
+/// destination name can differ entirely from the source-side identity. The
+/// single source item `npm-token` fans out to `NPM_TOKEN` + `NODE_AUTH_TOKEN`
+/// at both destinations; a resync is a no-op for all of them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_manifest_fans_one_source_value_out_to_multiple_names() {
+    let h = ManifestHarness::new().await;
+    let repo = "owner/repo1";
+    h.write_manifest(&json!({
+        "source": {"type": "bitwarden"},
+        "secrets": [
+            {"name": "npm-token", "destination_names": ["NPM_TOKEN", "NODE_AUTH_TOKEN"]}
+        ],
+        "destinations": [
+            {"type": "github", "repository": repo},
+            {"type": "env_file", "path": ".env"}
+        ]
+    }));
+    // Source is keyed by the secret's (source-side) name.
+    h.write_source(&json!({"npm-token": "npm-value"}));
+    h.mount_github(repo).await;
+
+    h.cmd().args(["manifest", "sync"]).assert().success();
+
+    // GitHub: one PUT per destination name, each under the destination name and
+    // never the source-side identity.
+    {
+        let bodies = h.put_bodies.lock().unwrap();
+        let names: Vec<&str> = bodies.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(bodies.len(), 2, "got names: {names:?}");
+        assert!(names.contains(&"NPM_TOKEN"));
+        assert!(names.contains(&"NODE_AUTH_TOKEN"));
+        assert!(!names.contains(&"npm-token"));
+        // Plaintext never appears in any PUT body.
+        for (name, body) in bodies.iter() {
+            let serialized = serde_json::to_string(body).unwrap();
+            assert!(
+                !serialized.contains("npm-value"),
+                "plaintext leaked into PUT body for {name}"
+            );
+        }
+    }
+
+    // Env file: both destination names present, source identity is not a key.
+    let content = fs::read_to_string(h.env_file()).unwrap();
+    assert!(content.contains("NPM_TOKEN=\"npm-value\""));
+    assert!(content.contains("NODE_AUTH_TOKEN=\"npm-value\""));
+    assert!(!content.contains("npm-token="));
+
+    // Resync with the same source value is a complete no-op.
+    h.cmd()
+        .args(["manifest", "sync"])
+        .assert()
+        .success()
+        .stdout(contains("nothing to do"));
+    assert_eq!(
+        h.put_bodies.lock().unwrap().len(),
+        2,
+        "no new PUTs on the no-op resync"
+    );
+}
+
+/// A manifest where two managed secrets resolve to the same destination name is
+/// a config error: it's caught at load time, so even a read-only `manifest list`
+/// refuses it (and `sync` never contacts the source).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_manifest_rejects_duplicate_destination_names() {
+    let h = ManifestHarness::new().await;
+    h.write_manifest(&json!({
+        "source": {"type": "bitwarden"},
+        "secrets": [
+            {"name": "primary", "destination_names": ["SHARED"]},
+            {"name": "other", "destination_names": ["SHARED"]}
+        ],
+        "destinations": [{"type": "env_file", "path": ".env"}]
+    }));
+
+    h.cmd()
+        .args(["manifest", "list"])
+        .assert()
+        .failure()
+        .stderr(contains("destination name 'SHARED'"))
+        .stderr(contains("two managed secrets"));
+}
+
+/// `manifest list` surfaces the source→destination fan-out mapping so a reader
+/// can see which names a value lands under without contacting the source.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_manifest_list_shows_fan_out_mapping() {
+    let h = ManifestHarness::new().await;
+    h.write_manifest(&json!({
+        "source": {"type": "bitwarden"},
+        "secrets": [
+            {"name": "npm-token", "destination_names": ["NPM_TOKEN", "NODE_AUTH_TOKEN"]}
+        ],
+        "destinations": [{"type": "env_file", "path": ".env"}]
+    }));
+
+    h.cmd()
+        .args(["manifest", "list"])
+        .assert()
+        .success()
+        .stdout(contains(
+        "npm-token  (bitwarden item 'npm-token', field 'password') -> NPM_TOKEN, NODE_AUTH_TOKEN",
+    ));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2e_manifest_resync_with_unchanged_source_is_a_noop() {
     let h = ManifestHarness::new().await;

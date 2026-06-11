@@ -153,18 +153,35 @@ fn run(
     let fetched = source
         .fetch(&manifest.secrets)
         .context("fetching from source")?;
+    // The source returns one value per managed secret, keyed by the secret's
+    // (source-side) `name`; index it so we can fan each value out to its
+    // destination names regardless of the order the source returned them in.
+    let fetched_by_name: HashMap<&str, &str> = fetched
+        .iter()
+        .map(|f| (f.name.as_str(), f.value.as_str()))
+        .collect();
 
-    // Compute current hashes once.
+    // Fan each managed secret out into one destination entry per destination
+    // name. The source hash is recorded once under the secret's `name`; each
+    // pushed entry hashes against its own destination name (so the same value
+    // written under two names tracks independently in the state file).
     let mut entries: Vec<DestinationEntry> = Vec::with_capacity(fetched.len());
-    for f in &fetched {
-        let h = value_hash(&f.name, &f.value);
-        state.record_source(&f.name, &h);
-        entries.push(DestinationEntry {
-            name: f.name.clone(),
-            value: f.value.clone(),
-            current_hash: h,
-            last_pushed_hash: None, // filled in per-destination below
-        });
+    for secret in &manifest.secrets {
+        let value = *fetched_by_name.get(secret.name.as_str()).ok_or_else(|| {
+            anyhow!(
+                "source returned no value for managed secret '{}'",
+                secret.name
+            )
+        })?;
+        state.record_source(&secret.name, &value_hash(&secret.name, value));
+        for dest_name in secret.dest_names() {
+            entries.push(DestinationEntry {
+                name: dest_name.to_string(),
+                value: value.to_string(),
+                current_hash: value_hash(dest_name, value),
+                last_pushed_hash: None, // filled in per-destination below
+            });
+        }
     }
 
     let mut report = ManifestSyncReport::default();
@@ -245,6 +262,7 @@ mod tests {
                 name: "FOO".into(),
                 item: None,
                 field: None,
+                destination_names: Vec::new(),
             }],
             destinations: vec![ManifestDestination::EnvFile(EnvFileDestinationConfig {
                 path: env_path,
@@ -273,6 +291,49 @@ mod tests {
         let report2 = sync_manifest_with_source(&manifest_path, None, &source).unwrap();
         assert!(report2.is_noop());
         assert_eq!(report2.destinations[0].report.unchanged, vec!["FOO"]);
+    }
+
+    #[test]
+    fn one_source_value_fans_out_to_multiple_destination_names() {
+        let dir = TempDir::new().unwrap();
+        // Source identity is `npm-token`; it must land under two GitHub-style
+        // names in the destination.
+        let manifest = RepoManifest {
+            source: ManifestSource::Bitwarden(BitwardenSourceConfig::default()),
+            secrets: vec![ManifestSecret {
+                name: "npm-token".into(),
+                item: None,
+                field: None,
+                destination_names: vec!["NPM_TOKEN".into(), "NODE_AUTH_TOKEN".into()],
+            }],
+            destinations: vec![ManifestDestination::EnvFile(EnvFileDestinationConfig {
+                path: PathBuf::from(".env"),
+            })],
+        };
+        let manifest_path = dir.path().join("gh-secrets.json");
+        manifest.save(&manifest_path).unwrap();
+
+        let source = StaticSource::new(vec![("npm-token", "s3cr3t")]);
+        let report = sync_manifest_with_source(&manifest_path, None, &source).unwrap();
+        // Both destination names are created from the single source value.
+        assert_eq!(
+            report.destinations[0].report.created,
+            vec!["NPM_TOKEN", "NODE_AUTH_TOKEN"]
+        );
+
+        let content = std::fs::read_to_string(dir.path().join(".env")).unwrap();
+        assert!(content.contains("NPM_TOKEN=\"s3cr3t\""));
+        assert!(content.contains("NODE_AUTH_TOKEN=\"s3cr3t\""));
+        // The source-side identity is never written as a destination key.
+        assert!(!content.contains("npm-token="));
+
+        // Re-running is a no-op for both fanned-out names.
+        let report2 = sync_manifest_with_source(&manifest_path, None, &source).unwrap();
+        assert!(report2.is_noop());
+        assert_eq!(
+            report2.destinations[0].report.unchanged,
+            vec!["NPM_TOKEN", "NODE_AUTH_TOKEN"]
+        );
     }
 
     #[test]

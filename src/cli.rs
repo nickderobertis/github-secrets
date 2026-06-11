@@ -605,12 +605,24 @@ fn list_manifest_secrets(manifest: &RepoManifest) {
     );
     for s in &manifest.secrets {
         let field = s.field.as_deref().unwrap_or(default_field);
-        println!(
-            "  - {}  ({source_label} item '{}', field '{}')",
-            s.name,
-            s.source_item(),
-            field
-        );
+        if s.destination_names.is_empty() {
+            println!(
+                "  - {}  ({source_label} item '{}', field '{}')",
+                s.name,
+                s.source_item(),
+                field
+            );
+        } else {
+            // The value fans out to one or more destination names that differ
+            // from the source-side identity; show the mapping explicitly.
+            println!(
+                "  - {}  ({source_label} item '{}', field '{}') -> {}",
+                s.name,
+                s.source_item(),
+                field,
+                s.destination_names.join(", ")
+            );
+        }
     }
 }
 

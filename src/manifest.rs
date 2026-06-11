@@ -12,16 +12,26 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const DEFAULT_MANIFEST_FILE: &str = "gh-secrets.json";
 pub const DEFAULT_STATE_FILE: &str = ".gh-secrets-state.json";
 
-/// One secret managed by the manifest. `item` defaults to `name` when omitted
-/// (i.e. the source's identifier matches the secret name). `field` defaults to
-/// the source's own default (typically `password` for Bitwarden logins).
+/// One secret managed by the manifest.
+///
+/// `name` is the secret's identity on the *source* side: it's the lookup key
+/// for the source (unless `item` overrides it) and the key the sync state hashes
+/// against. `field` defaults to the source's own default (typically `password`
+/// for Bitwarden logins).
+///
+/// `destination_names` is the identity on the *destination* side: the names this
+/// value is written under at every destination. When omitted it defaults to
+/// `[name]`, so the common "same name everywhere" case stays a single `name`.
+/// Supplying it lets the destination name differ from the source identity, and
+/// lets one source value fan out to several destination names (e.g. a single
+/// publish token written as both `NPM_TOKEN` and `NODE_AUTH_TOKEN`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ManifestSecret {
     pub name: String,
@@ -29,12 +39,25 @@ pub struct ManifestSecret {
     pub item: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub destination_names: Vec<String>,
 }
 
 impl ManifestSecret {
     /// The identifier passed to the source for lookup.
     pub fn source_item(&self) -> &str {
         self.item.as_deref().unwrap_or(&self.name)
+    }
+
+    /// The names this value is written under at each destination. Defaults to
+    /// `[name]` when `destination_names` is omitted, so a secret that keeps the
+    /// same name everywhere needs no extra config.
+    pub fn dest_names(&self) -> Vec<&str> {
+        if self.destination_names.is_empty() {
+            vec![self.name.as_str()]
+        } else {
+            self.destination_names.iter().map(String::as_str).collect()
+        }
     }
 }
 
@@ -110,6 +133,7 @@ impl RepoManifest {
                 name: "EXAMPLE_SECRET".into(),
                 item: Some("example-bitwarden-item-name-or-id".into()),
                 field: None,
+                destination_names: Vec::new(),
             }],
             destinations: vec![
                 ManifestDestination::Github(GithubDestinationConfig {
@@ -124,7 +148,39 @@ impl RepoManifest {
 
     pub fn load(path: &Path) -> Result<Self> {
         let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
-        serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))
+        let manifest: Self = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parsing {}", path.display()))?;
+        manifest
+            .validate()
+            .with_context(|| format!("validating {}", path.display()))?;
+        Ok(manifest)
+    }
+
+    /// Reject a config that can't sync coherently. Today's only rule: every
+    /// resolved destination name must be unique across the whole manifest. Two
+    /// managed secrets fanning out to the same destination name would race to
+    /// last-writer-wins at every destination and thrash the state file, so we
+    /// surface it as a config error instead of silently picking one.
+    pub fn validate(&self) -> Result<()> {
+        let mut owner: BTreeMap<&str, &str> = BTreeMap::new();
+        for secret in &self.secrets {
+            for dest in secret.dest_names() {
+                match owner.insert(dest, secret.name.as_str()) {
+                    None => {}
+                    Some(prev) if prev == secret.name => bail!(
+                        "destination name '{dest}' is listed more than once for secret '{}'; \
+                         each destination name must be unique",
+                        secret.name
+                    ),
+                    Some(prev) => bail!(
+                        "destination name '{dest}' is claimed by two managed secrets ('{prev}' \
+                         and '{}'); each destination name must be unique",
+                        secret.name
+                    ),
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -253,14 +309,97 @@ mod tests {
             name: "FOO".into(),
             item: None,
             field: None,
+            destination_names: Vec::new(),
         };
         assert_eq!(s.source_item(), "FOO");
         let s2 = ManifestSecret {
             name: "FOO".into(),
             item: Some("foo-bw".into()),
             field: None,
+            destination_names: Vec::new(),
         };
         assert_eq!(s2.source_item(), "foo-bw");
+    }
+
+    #[test]
+    fn dest_names_defaults_to_name_then_uses_overrides() {
+        // Omitted: the secret keeps its single source-side name on the
+        // destination too.
+        let single = ManifestSecret {
+            name: "FOO".into(),
+            item: None,
+            field: None,
+            destination_names: Vec::new(),
+        };
+        assert_eq!(single.dest_names(), vec!["FOO"]);
+
+        // Supplied: the value fans out to every listed destination name, which
+        // can differ entirely from the source-side `name`.
+        let fanned = ManifestSecret {
+            name: "npm-publish-token".into(),
+            item: None,
+            field: None,
+            destination_names: vec!["NPM_TOKEN".into(), "NODE_AUTH_TOKEN".into()],
+        };
+        assert_eq!(fanned.dest_names(), vec!["NPM_TOKEN", "NODE_AUTH_TOKEN"]);
+    }
+
+    fn secret(name: &str, dest_names: &[&str]) -> ManifestSecret {
+        ManifestSecret {
+            name: name.into(),
+            item: None,
+            field: None,
+            destination_names: dest_names.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn manifest_with(secrets: Vec<ManifestSecret>) -> RepoManifest {
+        RepoManifest {
+            source: ManifestSource::Bitwarden(BitwardenSourceConfig::default()),
+            secrets,
+            destinations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn validate_accepts_distinct_destination_names() {
+        let m = manifest_with(vec![
+            secret("A", &[]),
+            secret("npm", &["NPM_TOKEN", "NODE_AUTH_TOKEN"]),
+        ]);
+        assert!(m.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_collision_across_secrets() {
+        // Two secrets resolve to the same destination name `SHARED`.
+        let m = manifest_with(vec![secret("SHARED", &[]), secret("other", &["SHARED"])]);
+        let err = m.validate().unwrap_err().to_string();
+        assert!(err.contains("destination name 'SHARED'"), "got: {err}");
+        assert!(err.contains("two managed secrets"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_within_one_secret() {
+        let m = manifest_with(vec![secret("npm", &["NPM_TOKEN", "NPM_TOKEN"])]);
+        let err = m.validate().unwrap_err().to_string();
+        assert!(err.contains("destination name 'NPM_TOKEN'"), "got: {err}");
+        assert!(err.contains("listed more than once"), "got: {err}");
+    }
+
+    #[test]
+    fn destination_names_omitted_from_json_when_empty() {
+        let s = ManifestSecret {
+            name: "FOO".into(),
+            item: None,
+            field: None,
+            destination_names: Vec::new(),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("destination_names"), "got: {json}");
+        // And it round-trips back to an empty list (defaulted).
+        let back: ManifestSecret = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.destination_names, Vec::<String>::new());
     }
 
     #[test]
