@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/nickderobertis/github-secrets/compare/v0.1.2...v0.2.0) (2026-06-11)
+
+
+### Features
+
+* list available secrets in the CLI (profile and manifest) ([#26](https://github.com/nickderobertis/github-secrets/issues/26)) ([b59f56e](https://github.com/nickderobertis/github-secrets/commit/b59f56ecaefb0dc9edd4f8c0c7cab7ba5fc0bd68))
+
 ## [0.1.2](https://github.com/nickderobertis/github-secrets/compare/v0.1.1...v0.1.2) (2026-06-10)
 
 
