@@ -248,7 +248,19 @@ Project-local layout and credentials:
   --global`; `init` / `--path` / `--global` incl. overwrite refusals; error
   edges (source missing a declared value, Bitwarden scoping flags on a
   non-bitwarden source, empty store name); and the structural sealed-box
-  assertion on the PUT body so a broken seal step can't slip through.
+  assertion on the PUT body so a broken seal step can't slip through. It also
+  pins the failure/drift surface: the 401/403/404/500 message mapping on both
+  the public-key GET and the PUT, the 204→"updated" report, malformed
+  public-key rejection (wrong length, non-JSON); partial-failure semantics (a
+  failed destination records *no* state, so the re-run repushes); the state
+  file holding hashes only, and a deleted state file merely forcing a
+  re-push; out-of-band edits to readable destinations (env file, local
+  store) healed by `sync` while `check` stays state-only by design; hostile
+  values (quotes, `$`, backticks, newlines) round-tripping env-destination →
+  env-source with byte-identical canonical lines; invalid `--from`/`--to`/
+  `--secret` specs and malformed/unknown-type configs erroring with the
+  spec/file named; and `list` rendering the Bitwarden mapping (incl.
+  `default_field` and per-secret `field` overrides) with no credentials.
 - The live e2e suite (`tests/e2e_live.rs`) round-trips the same `sync`
   pipeline (env-file source → real `github:` destination) against the real
   GitHub API: a secret becomes visible via the API after sync, a resync is a
@@ -263,9 +275,11 @@ Project-local layout and credentials:
   suites can't — api-key login + master-password unlock + vault sync — then
   pulls real values off real items through every field selector (`password`,
   `#username`, `#notes`, `#fields.<NAME>`) to an env-file destination, asserts
-  a no-op resync, runs the full cold path through gh-secrets itself (login →
-  unlock → sync → fetch), and confirms a wrong master password yields a precise
-  unlock error with nothing written. Each test seeds uniquely-prefixed items
+  a no-op resync, proves `--default-field` changes what an unselected secret
+  extracts (with a per-secret `#field` still overriding it), runs the full
+  cold path through gh-secrets itself (login → unlock → sync → fetch), and
+  confirms a wrong master password yields a precise unlock error with nothing
+  written. Each test seeds uniquely-prefixed items
   via `bw` directly (the product CLI is write-only-blocked for Bitwarden) and
   deletes them in `Drop`. The hard-won isolation detail: every test points
   `BITWARDENCLI_APPDATA_DIR` at its own tempdir, and gh-secrets' spawned `bw`
@@ -286,12 +300,21 @@ Project-local layout and credentials:
   without a passphrase in a non-interactive run, and rejects a wrong
   passphrase with a decryption error); the session lifecycle (`auth unlock`
   lets fresh processes read *and* write with no passphrase anywhere in the
-  environment, expiry and `auth lock` revoke it, and a session cannot extend
-  itself); and — the key assertion — a real `sync`
+  environment, expiry and `auth lock` revoke it, a session cannot extend
+  itself, and a session left over from a *recreated* vault is detected as
+  mismatched and deleted on sight); selective clears (`--github` /
+  `--bitwarden`) and the empty-token / no-flag / lock-with-no-session edges;
+  and — the key assertion — a real `sync`
   against a wiremock GitHub records the exact `Authorization` bearer, so each
   test can confirm the token that *won* (shell env, `.env`, `.env.local`, or
   stored config) is the one that actually reached the API. The dotenv
   parser/precedence planner is also unit-tested in `src/envfile.rs`.
+- Deliberately *not* e2e-tested: the interactive passphrase prompt and the
+  session it auto-mints on a prompted unlock. Those paths need a PTY
+  (`rpassword` + `stdin.is_terminal()`), and a PTY harness is flakier than
+  the coverage is worth; the logic is unit-tested in `vault.rs` and the
+  non-interactive fallbacks (env passphrase, precise no-passphrase error) are
+  e2e-tested. Don't bolt a PTY driver onto the suite to close this gap.
 
 ## Conventional Commits
 

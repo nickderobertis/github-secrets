@@ -761,6 +761,537 @@ async fn e2e_sync_error_and_noop_edges() {
         .stderr(contains("name cannot be empty"));
 }
 
+/// GitHub error statuses surface the precise, actionable message from
+/// `github.rs` — both on the PUT and on the public-key GET — instead of a
+/// generic HTTP failure.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_github_error_statuses_surface_actionable_messages() {
+    let cases: [(u16, &str); 4] = [
+        (401, "set a valid token"),
+        (403, "lacks the required permissions"),
+        (404, "check the repository name"),
+        (500, "GitHub request failed"),
+    ];
+
+    // Failures on the PUT itself.
+    for (status, phrase) in cases {
+        let h = Harness::new().await;
+        h.write("source.env", "FOO=1\n");
+        Mock::given(method("GET"))
+            .and(path_regex(
+                "^/repos/owner/repo1/actions/secrets/public-key$",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "key_id": "kid-1",
+                "key": fake_pubkey_b64(),
+            })))
+            .mount(&h.server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path_regex("^/repos/owner/repo1/actions/secrets/(.+)$"))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(&h.server)
+            .await;
+        h.cmd()
+            .args(sync_args())
+            .assert()
+            .failure()
+            .stderr(contains(status.to_string()))
+            .stderr(contains(phrase))
+            .stderr(contains("uploading 'FOO' to owner/repo1"));
+    }
+
+    // Failures fetching the public key get their own context.
+    for (status, phrase) in cases {
+        let h = Harness::new().await;
+        h.write("source.env", "FOO=1\n");
+        Mock::given(method("GET"))
+            .and(path_regex(
+                "^/repos/owner/repo1/actions/secrets/public-key$",
+            ))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(&h.server)
+            .await;
+        h.cmd()
+            .args(sync_args())
+            .assert()
+            .failure()
+            .stderr(contains(status.to_string()))
+            .stderr(contains(phrase))
+            .stderr(contains("fetching public key for owner/repo1"));
+    }
+}
+
+/// The `sync` args every GitHub error-path test shares: one secret from an
+/// env-file source to the mocked `owner/repo1`.
+fn sync_args() -> [&'static str; 7] {
+    [
+        "sync",
+        "--from",
+        "env:source.env",
+        "--to",
+        "github:owner/repo1",
+        "--secret",
+        "FOO",
+    ]
+}
+
+/// A PUT answered with 204 (secret already existed) is reported as "updated",
+/// not "created" — the only place the created/updated wire distinction shows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_put_204_reports_updated() {
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=1\n");
+    Mock::given(method("GET"))
+        .and(path_regex(
+            "^/repos/owner/repo1/actions/secrets/public-key$",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "key_id": "kid-1",
+            "key": fake_pubkey_b64(),
+        })))
+        .mount(&h.server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path_regex("^/repos/owner/repo1/actions/secrets/(.+)$"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&h.server)
+        .await;
+
+    h.cmd()
+        .args(sync_args())
+        .assert()
+        .success()
+        .stdout(contains("github:owner/repo1: updated 'FOO'"))
+        .stdout(contains("0 created, 1 updated, 0 unchanged"));
+}
+
+/// A malformed public-key response is rejected at the trust boundary with a
+/// precise error — wrong key length and non-JSON body each name the problem.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_malformed_public_key_is_a_precise_error() {
+    // 31 bytes is not a valid X25519 public key.
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=1\n");
+    Mock::given(method("GET"))
+        .and(path_regex(
+            "^/repos/owner/repo1/actions/secrets/public-key$",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "key_id": "kid-1",
+            "key": B64.encode([7u8; 31]),
+        })))
+        .mount(&h.server)
+        .await;
+    h.cmd()
+        .args(sync_args())
+        .assert()
+        .failure()
+        .stderr(contains("wrong length"));
+
+    // A body that isn't the documented JSON shape fails parsing, with context.
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=1\n");
+    Mock::given(method("GET"))
+        .and(path_regex(
+            "^/repos/owner/repo1/actions/secrets/public-key$",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+        .mount(&h.server)
+        .await;
+    h.cmd()
+        .args(sync_args())
+        .assert()
+        .failure()
+        .stderr(contains("parsing public-key for owner/repo1"));
+}
+
+/// When one destination fails mid-sync, no state is recorded for *any*
+/// destination — so the next run re-pushes everything rather than silently
+/// believing a push that never landed. The earlier destination's write stands
+/// (its content is the source of truth on the re-run).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_failed_destination_records_no_state_so_rerun_repushes() {
+    let h = Harness::new().await;
+    let repo = "owner/repo1";
+    // Exactly one 500, mounted at higher priority than the recording PUT the
+    // harness mounts below; every later PUT succeeds.
+    Mock::given(method("PUT"))
+        .and(path_regex(format!("^/repos/{repo}/actions/secrets/(.+)$")))
+        .respond_with(ResponseTemplate::new(500))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&h.server)
+        .await;
+    h.mount_github(repo).await;
+    // env destination first, github second: the env write succeeds before the
+    // github destination aborts the run.
+    h.write(
+        "gh-secrets.json",
+        &serde_json::to_string_pretty(&json!({
+            "source": {"type": "env_file", "path": "source.env"},
+            "secrets": [{"name": "FOO"}],
+            "destinations": [
+                {"type": "env_file", "path": "out.env"},
+                {"type": "github", "repository": repo},
+            ],
+        }))
+        .unwrap(),
+    );
+    h.write("source.env", "FOO=v1\n");
+
+    h.cmd()
+        .args(["sync"])
+        .assert()
+        .failure()
+        .stderr(contains(format!("applying to destination github:{repo}")));
+    assert!(h.read("out.env").contains("FOO=\"v1\""), "env write landed");
+    assert!(
+        !h.dir.path().join(".gh-secrets-state.json").exists(),
+        "a failed sync must not record state"
+    );
+
+    // The re-run pushes to GitHub and converges; a third run is the no-op.
+    h.cmd().args(["sync"]).assert().success();
+    assert_eq!(h.put_count(), 1, "the re-run repushed the failed secret");
+    h.cmd()
+        .args(["sync"])
+        .assert()
+        .success()
+        .stdout(contains("nothing to do"));
+    assert_eq!(h.put_count(), 1);
+}
+
+/// The state file holds hashes, never values — and deleting it merely forces
+/// a re-push (losing it leaks nothing and breaks nothing).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_state_file_holds_no_values_and_deleting_it_forces_repush() {
+    let h = Harness::new().await;
+    let repo = "owner/repo1";
+    h.mount_github(repo).await;
+    h.write("source.env", "FOO=\"state-secret-value\"\n");
+    let args = [
+        "sync",
+        "--from",
+        "env:source.env",
+        "--to",
+        "github:owner/repo1",
+        "--secret",
+        "FOO",
+    ];
+    h.cmd().args(args).assert().success();
+    assert_eq!(h.put_count(), 1);
+
+    let state = h.read(".gh-secrets-state.json");
+    assert!(
+        !state.contains("state-secret-value"),
+        "plaintext leaked into the state file"
+    );
+    assert!(
+        state.contains(&format!("github:{repo}")),
+        "state keys on the destination"
+    );
+
+    fs::remove_file(h.dir.path().join(".gh-secrets-state.json")).unwrap();
+    h.cmd().args(args).assert().success();
+    assert_eq!(h.put_count(), 2, "lost state forces a re-push");
+    h.cmd()
+        .args(args)
+        .assert()
+        .success()
+        .stdout(contains("nothing to do"));
+    assert_eq!(h.put_count(), 2);
+}
+
+/// Out-of-band edits to a readable destination are healed by `sync` even when
+/// the recorded state says nothing changed — while `check` (state-only by
+/// design) keeps reporting clean. Unrelated lines survive every heal.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_sync_heals_out_of_band_env_edits_while_check_stays_state_only() {
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=canonical\n");
+    h.write("out.env", "# pinned comment\nOTHER=keepme\n");
+    let sync = [
+        "sync",
+        "--from",
+        "env:source.env",
+        "--to",
+        "env:out.env",
+        "--secret",
+        "FOO",
+    ];
+    let check = [
+        "check",
+        "--from",
+        "env:source.env",
+        "--to",
+        "env:out.env",
+        "--secret",
+        "FOO",
+    ];
+    h.cmd().args(sync).assert().success();
+    assert!(h.read("out.env").contains("FOO=\"canonical\""));
+
+    // Tamper with the managed line: check judges from state alone and stays
+    // clean; sync compares content and rewrites the canonical line.
+    h.write(
+        "out.env",
+        "# pinned comment\nOTHER=keepme\nFOO=\"tampered\"\n",
+    );
+    h.cmd()
+        .args(check)
+        .assert()
+        .success()
+        .stdout(contains("everything is up to date"));
+    h.cmd()
+        .args(sync)
+        .assert()
+        .success()
+        .stdout(contains("updated 'FOO'"));
+    let healed = h.read("out.env");
+    assert!(healed.contains("FOO=\"canonical\""));
+    assert!(healed.contains("# pinned comment"));
+    assert!(healed.contains("OTHER=keepme"));
+
+    // Delete the managed line entirely: sync re-creates it.
+    h.write("out.env", "# pinned comment\nOTHER=keepme\n");
+    h.cmd()
+        .args(sync)
+        .assert()
+        .success()
+        .stdout(contains("created 'FOO'"));
+    assert!(h.read("out.env").contains("FOO=\"canonical\""));
+
+    // Converged again: the next run is a genuine no-op.
+    h.cmd()
+        .args(sync)
+        .assert()
+        .success()
+        .stdout(contains("nothing to do"));
+}
+
+/// The local store is the other readable destination: a value changed behind
+/// the sync's back (`store set`) is healed on the next run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_sync_heals_local_store_drift() {
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=canonical\n");
+    let sync = [
+        "sync",
+        "--from",
+        "env:source.env",
+        "--to",
+        "local",
+        "--secret",
+        "FOO",
+    ];
+    h.cmd().args(sync).assert().success();
+    h.cmd()
+        .args(["store", "set", "FOO", "drifted"])
+        .assert()
+        .success();
+
+    h.cmd()
+        .args(sync)
+        .assert()
+        .success()
+        .stdout(contains("updated 'FOO'"));
+    h.cmd()
+        .args(sync)
+        .assert()
+        .success()
+        .stdout(contains("nothing to do"));
+
+    // Read the healed value back out through the store-as-source path.
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "local",
+            "--to",
+            "env:verify.env",
+            "--secret",
+            "FOO",
+        ])
+        .assert()
+        .success();
+    assert!(h.read("verify.env").contains("FOO=\"canonical\""));
+}
+
+/// Values full of shell-hostile characters survive a round trip: what the env
+/// destination writes, the env source reads back to the identical value (the
+/// canonical lines of two generations match exactly).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_env_destination_round_trips_hostile_values() {
+    let h = Harness::new().await;
+    let hostile = "a\"quote b\\slash $dollar `tick\nnewline\ttab";
+    h.cmd()
+        .args(["store", "set", "NASTY"])
+        .write_stdin(format!("{hostile}\n"))
+        .assert()
+        .success();
+
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "local",
+            "--to",
+            "env:gen1.env",
+            "--secret",
+            "NASTY",
+        ])
+        .assert()
+        .success();
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "env:gen1.env",
+            "--to",
+            "env:gen2.env",
+            "--secret",
+            "NASTY",
+        ])
+        .assert()
+        .success();
+
+    let gen1 = h.read("gen1.env");
+    let gen2 = h.read("gen2.env");
+    assert_eq!(gen1, gen2, "format -> parse -> format must be stable");
+    // Spot-check the escapes actually exercised the quoting rules.
+    assert!(gen1.contains("\\\"") && gen1.contains("\\$") && gen1.contains("\\n"));
+}
+
+/// Invalid store specs and secret specs fail through the binary with the
+/// guidance the parser promises.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_invalid_spec_errors_name_the_problem() {
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=1\n");
+
+    h.cmd()
+        .args(["sync", "--from", "env:source.env", "--to", "bitwarden"])
+        .assert()
+        .failure()
+        .stderr(contains("not yet supported"));
+
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "env:source.env",
+            "--to",
+            "github:just-a-name",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("github:<owner>/<repo>"));
+
+    h.cmd()
+        .args(["sync", "--from", "nope", "--to", "env:out.env"])
+        .assert()
+        .failure()
+        .stderr(contains("invalid source 'nope'"));
+
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "env:source.env",
+            "--to",
+            "env:out.env",
+            "--secret",
+            "=item",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("name is empty"));
+
+    // `store set` from a pipe with nothing on stdin is an error, not an empty
+    // secret.
+    h.cmd()
+        .args(["store", "set", "FOO"])
+        .write_stdin("")
+        .assert()
+        .failure()
+        .stderr(contains("no value provided on stdin"));
+}
+
+/// A broken config file is an error that names the file — malformed JSON and
+/// an unknown store type both fail at the trust boundary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_malformed_config_errors_name_the_file() {
+    let h = Harness::new().await;
+    h.write("gh-secrets.json", "{ not json");
+    h.cmd()
+        .args(["sync"])
+        .assert()
+        .failure()
+        .stderr(contains("gh-secrets.json"));
+
+    h.write(
+        "gh-secrets.json",
+        &serde_json::to_string_pretty(&json!({
+            "source": {"type": "carrier-pigeon"},
+            "secrets": [{"name": "FOO"}],
+            "destinations": [],
+        }))
+        .unwrap(),
+    );
+    h.cmd()
+        .args(["list"])
+        .assert()
+        .failure()
+        .stderr(contains("gh-secrets.json"))
+        .stderr(contains("carrier-pigeon"));
+}
+
+/// `list` renders the Bitwarden mapping — including the config's
+/// `default_field` and per-secret `field` overrides — without contacting
+/// Bitwarden or needing any credential.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_list_renders_bitwarden_mapping_with_default_field() {
+    let h = Harness::new().await;
+    h.write(
+        "gh-secrets.json",
+        &serde_json::to_string_pretty(&json!({
+            "source": {"type": "bitwarden", "default_field": "fields.TOKEN"},
+            "secrets": [
+                {"name": "PLAIN"},
+                {"name": "NOTEY", "item": "shared item", "field": "notes"},
+            ],
+            "destinations": [{"type": "github", "repository": "owner/repo1"}],
+        }))
+        .unwrap(),
+    );
+    h.cmd()
+        .args(["list"])
+        .assert()
+        .success()
+        .stdout(contains("source: bitwarden"))
+        .stdout(contains(
+            "PLAIN  (bitwarden item 'PLAIN', field 'fields.TOKEN')",
+        ))
+        .stdout(contains(
+            "NOTEY  (bitwarden item 'shared item', field 'notes')",
+        ));
+
+    // Without a default_field the implicit `password` shows.
+    h.write(
+        "gh-secrets.json",
+        &serde_json::to_string_pretty(&json!({
+            "source": {"type": "bitwarden"},
+            "secrets": [{"name": "PLAIN"}],
+            "destinations": [],
+        }))
+        .unwrap(),
+    );
+    h.cmd().args(["list"]).assert().success().stdout(contains(
+        "PLAIN  (bitwarden item 'PLAIN', field 'password')",
+    ));
+}
+
 /// `check` works with a pure-argument pipeline too (no config file at all).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2e_check_with_pure_args() {
