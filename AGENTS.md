@@ -359,6 +359,15 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
      tag/Release, and a push by `GITHUB_TOKEN` is ignored by Actions — it would
      strand the release at "PR merged, never tagged".
 
+  Gotcha that bit us once: the auto-merge step must read the PR number from the
+  raw `steps.release.outputs.pr` JSON **inside the run script** (via `jq`), not
+  as `PR_NUMBER: ${{ fromJson(steps.release.outputs.pr).number }}` in the step's
+  `env`. A step's `env` is evaluated even when its `if:` is false, so on every
+  run with no open release PR (the run that *cuts* a release, and runs after
+  non-releasing merges) `pr` is `""`, `fromJson('')` throws, and the whole
+  `release-please` job fails — which silently skips `build`/`crates-io` and
+  leaves an assetless, unpublished release.
+
   Auto-merge also requires the repo's **"Allow auto-merge"** setting to be on
   (Settings → General → Pull Requests) and a branch-protection rule with the
   required status checks; both are already configured on this repo. Set the PAT

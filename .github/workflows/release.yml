@@ -67,13 +67,25 @@ jobs:
         if: ${{ steps.release.outputs.pr }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-          PR_NUMBER: ${{ fromJson(steps.release.outputs.pr).number }}
+          # Pass the RAW pr JSON, not `fromJson(...).number`. A step's `env` is
+          # evaluated even when its `if:` is false, and `fromJson('')` throws
+          # ("Error reading JToken") — which would fail this whole job on every
+          # run with no open release PR (including the run that *cuts* a release
+          # and the runs after non-releasing merges), skipping build/publish.
+          # Parse the number with jq inside the script, where it only runs when
+          # `pr` is actually set.
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "RELEASE_PLEASE_TOKEN not set; leaving the release PR for a manual merge."
             exit 0
           fi
-          gh pr merge "$PR_NUMBER" --auto --squash --repo "$GITHUB_REPOSITORY"
+          pr_number=$(printf '%s' "$RELEASE_PR" | jq -r '.number')
+          if [ -z "$pr_number" ] || [ "$pr_number" = "null" ]; then
+            echo "No release PR number in release-please output; nothing to auto-merge."
+            exit 0
+          fi
+          gh pr merge "$pr_number" --auto --squash --repo "$GITHUB_REPOSITORY"
 
   build:
     name: build (${{ matrix.target }})
