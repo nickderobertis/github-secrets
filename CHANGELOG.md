@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/nickderobertis/github-secrets/compare/v0.4.0...v1.0.0) (2026-06-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* the profile-based command surface is gone and `manifest sync|list|init` are now top-level `sync`/`list`/`init`. The gh-secrets.json schema is unchanged. Stored credentials must be re-entered via `gh-secrets auth` (now encrypted).
+
+### Features
+
+* unify the CLI into one sync pipeline of capability-typed stores ([#32](https://github.com/nickderobertis/github-secrets/issues/32)) ([b826dc0](https://github.com/nickderobertis/github-secrets/commit/b826dc0e0179ec767001f93c41742ec3c0fab20e))
+
 ## [0.4.0](https://github.com/nickderobertis/github-secrets/compare/v0.3.0...v0.4.0) (2026-06-11)
 
 
