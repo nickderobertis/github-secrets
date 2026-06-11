@@ -19,9 +19,19 @@ use sha2::{Digest, Sha256};
 pub const DEFAULT_MANIFEST_FILE: &str = "gh-secrets.json";
 pub const DEFAULT_STATE_FILE: &str = ".gh-secrets-state.json";
 
-/// One secret managed by the manifest. `item` defaults to `name` when omitted
-/// (i.e. the source's identifier matches the secret name). `field` defaults to
-/// the source's own default (typically `password` for Bitwarden logins).
+/// One secret managed by the manifest.
+///
+/// `name` is the secret's identity on the *source* side: it's the lookup key
+/// for the source (unless `item` overrides it) and the key the sync state hashes
+/// against. `field` defaults to the source's own default (typically `password`
+/// for Bitwarden logins).
+///
+/// `destination_names` is the identity on the *destination* side: the names this
+/// value is written under at every destination. When omitted it defaults to
+/// `[name]`, so the common "same name everywhere" case stays a single `name`.
+/// Supplying it lets the destination name differ from the source identity, and
+/// lets one source value fan out to several destination names (e.g. a single
+/// publish token written as both `NPM_TOKEN` and `NODE_AUTH_TOKEN`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ManifestSecret {
     pub name: String,
@@ -29,12 +39,25 @@ pub struct ManifestSecret {
     pub item: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub destination_names: Vec<String>,
 }
 
 impl ManifestSecret {
     /// The identifier passed to the source for lookup.
     pub fn source_item(&self) -> &str {
         self.item.as_deref().unwrap_or(&self.name)
+    }
+
+    /// The names this value is written under at each destination. Defaults to
+    /// `[name]` when `destination_names` is omitted, so a secret that keeps the
+    /// same name everywhere needs no extra config.
+    pub fn dest_names(&self) -> Vec<&str> {
+        if self.destination_names.is_empty() {
+            vec![self.name.as_str()]
+        } else {
+            self.destination_names.iter().map(String::as_str).collect()
+        }
     }
 }
 
@@ -110,6 +133,7 @@ impl RepoManifest {
                 name: "EXAMPLE_SECRET".into(),
                 item: Some("example-bitwarden-item-name-or-id".into()),
                 field: None,
+                destination_names: Vec::new(),
             }],
             destinations: vec![
                 ManifestDestination::Github(GithubDestinationConfig {
@@ -253,14 +277,54 @@ mod tests {
             name: "FOO".into(),
             item: None,
             field: None,
+            destination_names: Vec::new(),
         };
         assert_eq!(s.source_item(), "FOO");
         let s2 = ManifestSecret {
             name: "FOO".into(),
             item: Some("foo-bw".into()),
             field: None,
+            destination_names: Vec::new(),
         };
         assert_eq!(s2.source_item(), "foo-bw");
+    }
+
+    #[test]
+    fn dest_names_defaults_to_name_then_uses_overrides() {
+        // Omitted: the secret keeps its single source-side name on the
+        // destination too.
+        let single = ManifestSecret {
+            name: "FOO".into(),
+            item: None,
+            field: None,
+            destination_names: Vec::new(),
+        };
+        assert_eq!(single.dest_names(), vec!["FOO"]);
+
+        // Supplied: the value fans out to every listed destination name, which
+        // can differ entirely from the source-side `name`.
+        let fanned = ManifestSecret {
+            name: "npm-publish-token".into(),
+            item: None,
+            field: None,
+            destination_names: vec!["NPM_TOKEN".into(), "NODE_AUTH_TOKEN".into()],
+        };
+        assert_eq!(fanned.dest_names(), vec!["NPM_TOKEN", "NODE_AUTH_TOKEN"]);
+    }
+
+    #[test]
+    fn destination_names_omitted_from_json_when_empty() {
+        let s = ManifestSecret {
+            name: "FOO".into(),
+            item: None,
+            field: None,
+            destination_names: Vec::new(),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("destination_names"), "got: {json}");
+        // And it round-trips back to an empty list (defaulted).
+        let back: ManifestSecret = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.destination_names, Vec::<String>::new());
     }
 
     #[test]

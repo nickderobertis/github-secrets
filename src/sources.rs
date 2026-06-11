@@ -585,6 +585,7 @@ mod tests {
             name: "STRIPE".into(),
             item: Some("stripe".into()),
             field: None,
+            destination_names: Vec::new(),
         }];
         let got = src.fetch(&secrets).unwrap();
         assert_eq!(got.len(), 1);
@@ -660,6 +661,7 @@ mod tests {
             name: "FOO".into(),
             item: Some("foo".into()),
             field: None,
+            destination_names: Vec::new(),
         }];
         let got = src.fetch(&secrets).unwrap();
         assert_eq!(got[0].value, "v");
@@ -695,6 +697,7 @@ mod tests {
             name: "FOO".into(),
             item: Some("foo".into()),
             field: None,
+            destination_names: Vec::new(),
         }];
         let got = src.fetch(&secrets).unwrap();
         assert_eq!(got[0].value, "v");
