@@ -9,7 +9,7 @@ use crate::credentials::StoredCredentials;
 use crate::destinations::{DestinationReport, GITHUB_TOKEN_ENVS};
 use crate::envfile;
 use crate::github::GitHubClient;
-use crate::manifest::{RepoManifest, DEFAULT_MANIFEST_FILE};
+use crate::manifest::{ManifestSource, RepoManifest, DEFAULT_MANIFEST_FILE};
 use crate::paths::Paths;
 use crate::secrets::Upsert;
 use crate::sources::{BW_CLIENTID_ENVS, BW_CLIENTSECRET_ENVS, BW_PASSWORD_ENVS, BW_SESSION_ENVS};
@@ -116,6 +116,13 @@ enum ManifestCmd {
         /// Where to write the manifest. Defaults to `./gh-secrets.json`.
         #[arg(long, short)]
         path: Option<PathBuf>,
+    },
+    /// List the secrets the manifest manages (names and their source mapping),
+    /// without contacting the source or printing any value.
+    List {
+        /// Path to the manifest file. Defaults to `./gh-secrets.json`.
+        #[arg(long, short)]
+        config: Option<PathBuf>,
     },
     /// Pull every managed secret from the manifest's source and push to each
     /// destination that doesn't already hold the current value.
@@ -379,6 +386,13 @@ pub fn run() -> Result<()> {
                 RepoManifest::starter().save(&target)?;
                 println!("manifest: wrote starter to {}", target.display());
             }
+            ManifestCmd::List { config } => {
+                let manifest_path = config.unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST_FILE));
+                let manifest = RepoManifest::load(&manifest_path).with_context(|| {
+                    format!("loading manifest from {}", manifest_path.display())
+                })?;
+                list_manifest_secrets(&manifest);
+            }
             ManifestCmd::Sync { config, state } => {
                 // Make `.env`/`.env.local` in the working directory available as
                 // credentials before resolving the source/destinations.
@@ -535,6 +549,36 @@ fn print_secret_group(label: &str, names: &[String]) {
     println!("{label} ({}):", names.len());
     for name in names {
         println!("  - {name}");
+    }
+}
+
+/// Print the secrets a manifest manages and where each is sourced from. Reads
+/// only the checked-in manifest — no source contact, no credentials — and the
+/// manifest holds only name/item/field mapping, never a value.
+fn list_manifest_secrets(manifest: &RepoManifest) {
+    let (source_label, default_field) = match &manifest.source {
+        // Mirror `BitwardenSource::default_field`: unspecified means `password`.
+        ManifestSource::Bitwarden(c) => (
+            "bitwarden",
+            c.default_field.as_deref().unwrap_or("password"),
+        ),
+    };
+    if manifest.secrets.is_empty() {
+        println!("manifest: no secrets declared (source: {source_label})");
+        return;
+    }
+    println!(
+        "manifest secrets ({}, source: {source_label}):",
+        manifest.secrets.len()
+    );
+    for s in &manifest.secrets {
+        let field = s.field.as_deref().unwrap_or(default_field);
+        println!(
+            "  - {}  ({source_label} item '{}', field '{}')",
+            s.name,
+            s.source_item(),
+            field
+        );
     }
 }
 

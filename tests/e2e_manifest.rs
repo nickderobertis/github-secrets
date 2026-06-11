@@ -153,6 +153,53 @@ async fn e2e_manifest_init_writes_starter() {
         .stderr(contains("refusing to overwrite"));
 }
 
+/// `manifest list` reports the managed secret names and their Bitwarden source
+/// mapping by reading only the checked-in manifest — no source contact, no
+/// credentials, and (since the manifest holds no values) nothing sensitive.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_manifest_list_shows_declared_secrets() {
+    let h = ManifestHarness::new().await;
+    h.write_manifest(&json!({
+        "source": {"type": "bitwarden", "default_field": "api-key"},
+        "secrets": [
+            {"name": "FOO", "item": "foo-bw-item"},
+            {"name": "BAR", "field": "password"}
+        ],
+        "destinations": [
+            {"type": "env_file", "path": ".env"}
+        ]
+    }));
+
+    h.cmd()
+        .args(["manifest", "list"])
+        .assert()
+        .success()
+        .stdout(contains("manifest secrets (2, source: bitwarden):"))
+        // FOO: explicit item, inherits the source's default field.
+        .stdout(contains(
+            "FOO  (bitwarden item 'foo-bw-item', field 'api-key')",
+        ))
+        // BAR: item defaults to the secret name, explicit field overrides.
+        .stdout(contains("BAR  (bitwarden item 'BAR', field 'password')"));
+}
+
+/// A manifest with no declared secrets lists cleanly rather than erroring.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_manifest_list_handles_empty_secrets() {
+    let h = ManifestHarness::new().await;
+    h.write_manifest(&json!({
+        "source": {"type": "bitwarden"},
+        "secrets": [],
+        "destinations": []
+    }));
+
+    h.cmd()
+        .args(["manifest", "list"])
+        .assert()
+        .success()
+        .stdout(contains("no secrets declared"));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2e_manifest_sync_pushes_to_github_and_env_file() {
     let h = ManifestHarness::new().await;
