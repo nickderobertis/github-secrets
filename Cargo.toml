@@ -34,6 +34,10 @@ sha2 = "0.10"
 
 [dev-dependencies]
 assert_cmd = "2.0"
+# Encodes seeded Bitwarden items for the live e2e suite (`bw create item`
+# wants a base64 of the item JSON). Already a normal dependency; listed here so
+# the integration tests can use it too.
+base64 = "0.22"
 predicates = "3.1"
 tempfile = "3.13"
 wiremock = "0.6"

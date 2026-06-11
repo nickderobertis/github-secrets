@@ -100,12 +100,57 @@ jobs:
       - name: Bootstrap
         run: just bootstrap
 
-      - name: Live e2e
+      - name: Live e2e (GitHub)
         env:
           GH_TOKEN: ${{ secrets.GH_E2E_TOKEN }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "GH_E2E_TOKEN not configured; skipping live e2e."
+            echo "GH_E2E_TOKEN not configured; skipping GitHub live e2e."
             exit 0
           fi
           just test-live
+
+  # Live e2e against a real, isolated Bitwarden account. Kept a separate job (not
+  # a step in live-e2e) so it is an independent required check, decoupled from the
+  # GitHub live test. Runs only when the isolated account's api-key credentials
+  # are configured as repo secrets; the guard lives in the run script (the
+  # `secrets` context is not allowed in a job/step `if:`), so it is skipped — not
+  # failed — when they're absent, keeping forks and unconfigured repos green.
+  live-e2e-bitwarden:
+    needs: check
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Cache Cargo registry + build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Bootstrap
+        run: just bootstrap
+
+      - name: Live e2e (Bitwarden)
+        env:
+          GH_SECRETS_BW_E2E_CLIENT_ID: ${{ secrets.GH_SECRETS_BW_E2E_CLIENT_ID }}
+          GH_SECRETS_BW_E2E_CLIENT_SECRET: ${{ secrets.GH_SECRETS_BW_E2E_CLIENT_SECRET }}
+          GH_SECRETS_BW_E2E_PASSWORD: ${{ secrets.GH_SECRETS_BW_E2E_PASSWORD }}
+        run: |
+          if [ -z "$GH_SECRETS_BW_E2E_CLIENT_ID" ]; then
+            echo "GH_SECRETS_BW_E2E_* not configured; skipping Bitwarden live e2e."
+            exit 0
+          fi
+          npm install -g @bitwarden/cli
+          just test-live-bitwarden

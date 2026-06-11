@@ -77,6 +77,14 @@ Use the `just` recipes; do not hand-roll equivalent commands.
   API. Requires `GH_TOKEN` with `repo` scope; creates (idempotently) a private
   sandbox repo `gh-secrets-e2e-sandbox` on the authenticated user's account
   and cleans up the secrets it creates.
+- `just test-live-bitwarden` — opt-in: run the live e2e suite against a real,
+  isolated Bitwarden account (`tests/e2e_live_bitwarden.rs`). Requires the
+  account's api-key credentials in the environment (`GH_SECRETS_BW_E2E_CLIENT_ID`,
+  `GH_SECRETS_BW_E2E_CLIENT_SECRET`, `GH_SECRETS_BW_E2E_PASSWORD`) and the `bw`
+  CLI on PATH. Locally, wrap it with `scripts/bw-e2e-env.sh just
+  test-live-bitwarden`, which pulls those creds out of your own vault (see
+  "Releases and CI secrets"). Runs serially and self-cleans every item it
+  seeds; without the creds, every test skips.
 - `just lint` / `just format` — clippy / rustfmt.
 - `just upgrade` — `cargo update`, then re-run `just check`.
 
@@ -96,12 +104,14 @@ they exercise it the way a user does.
 - E2E is part of the default gate, not opt-in. The wiremock e2e suite
   (`tests/e2e.rs`) is plain `#[test]`-driven (no `#[ignore]`), spins up a
   mocked GitHub API with `wiremock`, and drives the compiled binary. Live
-  GitHub credentials are never required to run the gate. The live e2e suite
-  (`tests/e2e_live.rs`) exists alongside it for opt-in real-API coverage —
-  each test runtime-skips with a logged `skip:` line when
-  `GH_SECRETS_LIVE_TEST=1` is not set, so the default gate still compiles and
-  exercises that code path as a no-op (catching breakage in the live test
-  helpers without making any network call).
+  GitHub credentials are never required to run the gate. The live e2e suites
+  (`tests/e2e_live.rs` against GitHub, `tests/e2e_live_bitwarden.rs` against a
+  real isolated Bitwarden account) exist alongside it for opt-in real-API
+  coverage — each test runtime-skips with a logged `skip:` line when its gate
+  env vars are unset (`GH_SECRETS_LIVE_TEST=1` for both, plus the
+  `GH_SECRETS_BW_E2E_*` credentials for the Bitwarden suite), so the default
+  gate still compiles and exercises that code path as a no-op (catching
+  breakage in the live test helpers without making any network call).
 - The CLI never prints the value of a secret to stdout, stderr, log lines, or
   error messages. Secret values are also never written into the configured
   `GH_SECRETS_HOME` path other than inside the encrypted vault (`vault.json`),
@@ -246,6 +256,22 @@ Project-local layout and credentials:
   surfaces a 401 the user can act on, and undeclaring a secret does not delete
   it remotely. The sandbox repo is shared across tests; isolation comes from a
   per-test secret-name prefix and a `Drop` cleanup.
+- The live Bitwarden e2e suite (`tests/e2e_live_bitwarden.rs`) is the source
+  half's real-API complement: it drives `sync`/`source list` against a real,
+  *isolated* Bitwarden account (one that exists only for this test, so seeding
+  and deleting items in it is safe). It proves the auth chain the wiremock
+  suites can't — api-key login + master-password unlock + vault sync — then
+  pulls real values off real items through every field selector (`password`,
+  `#username`, `#notes`, `#fields.<NAME>`) to an env-file destination, asserts
+  a no-op resync, runs the full cold path through gh-secrets itself (login →
+  unlock → sync → fetch), and confirms a wrong master password yields a precise
+  unlock error with nothing written. Each test seeds uniquely-prefixed items
+  via `bw` directly (the product CLI is write-only-blocked for Bitwarden) and
+  deletes them in `Drop`. The hard-won isolation detail: every test points
+  `BITWARDENCLI_APPDATA_DIR` at its own tempdir, and gh-secrets' spawned `bw`
+  inherits it — so the suite never disturbs (or is confused by) a developer's
+  real Bitwarden login in the default app-data location. See
+  `tests/live_bw_common/mod.rs`.
 - The config-driven e2e suite (`tests/e2e_manifest.rs`) drives the binary
   through `init`, `list`, and `sync` against a checked-in `gh-secrets.json`:
   pushes to GitHub (wiremock) and a `.env` destination simultaneously;
@@ -335,8 +361,32 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   gh secret set GH_E2E_TOKEN --repo <owner>/<repo>
   # paste the token when prompted
   ```
-  Without the secret, the `live-e2e` job in `.github/workflows/ci.yml` is a
-  no-op. Rotate the PAT through the same command whenever needed.
+  Without the secret, the GitHub `live-e2e` step in `.github/workflows/ci.yml`
+  is a no-op. Rotate the PAT through the same command whenever needed.
+- The **isolated Bitwarden e2e account** is a throwaway Bitwarden account used
+  only by the live Bitwarden suite. Its api-key credentials live in two places,
+  kept in lockstep:
+  - In **the maintainer's own Bitwarden vault**, as three secure notes whose
+    note body holds the value: `BITWARDEN_TEST_CLIENT_ID`,
+    `BITWARDEN_TEST_CLIENT_SECRET`, `BITWARDEN_TEST_MASTER_PASSWORD`. That is
+    what `scripts/bw-e2e-env.sh` reads (via `gh-secrets ... --secret
+    NAME=ITEM#notes`) to run the suite locally — so a developer never copies the
+    isolated account's secret into a shell.
+  - As **repo secrets** for CI, so the `live-e2e-bitwarden` job in
+    `.github/workflows/ci.yml` can run (it installs the `bw` CLI and runs
+    `just test-live-bitwarden`):
+    ```
+    gh secret set GH_SECRETS_BW_E2E_CLIENT_ID     --repo <owner>/<repo>
+    gh secret set GH_SECRETS_BW_E2E_CLIENT_SECRET --repo <owner>/<repo>
+    gh secret set GH_SECRETS_BW_E2E_PASSWORD      --repo <owner>/<repo>
+    ```
+    The client id/secret are a Bitwarden **personal API key** (Account Settings
+    → Security → Keys → "View API Key"); the password is the isolated account's
+    master password. `live-e2e-bitwarden` is its own job (separate from the
+    GitHub `live-e2e`) and a **required status check** on `master`, so a
+    Bitwarden regression blocks merges. The run is guarded on
+    `GH_SECRETS_BW_E2E_CLIENT_ID` being set, so without the secrets it is
+    skipped (not failed) — forks and unconfigured repos stay green.
 - `scripts/install.sh` is the cross-platform installer (Linux x86_64 + arm64,
   macOS arm64, Windows x86_64 under a POSIX shell): it detects the host target,
   downloads the matching release archive, verifies its SHA-256, and installs
