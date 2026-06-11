@@ -669,6 +669,7 @@ mod tests {
             name: "STRIPE".into(),
             item: Some("stripe".into()),
             field: None,
+            destination_names: Vec::new(),
         }];
         let got = src.fetch(&secrets).unwrap();
         assert_eq!(got.len(), 1);
@@ -744,6 +745,7 @@ mod tests {
             name: "FOO".into(),
             item: Some("foo".into()),
             field: None,
+            destination_names: Vec::new(),
         }];
         let got = src.fetch(&secrets).unwrap();
         assert_eq!(got[0].value, "v");
@@ -779,6 +781,7 @@ mod tests {
             name: "FOO".into(),
             item: Some("foo".into()),
             field: None,
+            destination_names: Vec::new(),
         }];
         let got = src.fetch(&secrets).unwrap();
         assert_eq!(got[0].value, "v");
@@ -838,6 +841,7 @@ mod tests {
                 name: "DATABASE_URL".into(),
                 item: Some("DB_URL".into()),
                 field: None,
+                destination_names: Vec::new(),
             }])
             .unwrap();
         assert_eq!(got[0].value, "postgres://x");
@@ -847,6 +851,7 @@ mod tests {
                 name: "FOO".into(),
                 item: None,
                 field: Some("password".into()),
+                destination_names: Vec::new(),
             }])
             .unwrap_err()
             .to_string();
@@ -872,6 +877,7 @@ mod tests {
                 name: "FOO".into(),
                 item: None,
                 field: None,
+                destination_names: Vec::new(),
             }])
             .unwrap();
         assert_eq!(got[0].value, "from-vault");

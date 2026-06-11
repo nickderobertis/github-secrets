@@ -148,6 +148,10 @@ pub fn resolve_pipeline(
         }
         secrets.retain(|s| overrides.only.contains(&s.name));
     }
+    // The same coherence guard `Manifest::load` applies, re-run on the
+    // *resolved* set so `--secret` overrides can't smuggle in a destination
+    // name collision (e.g. two `--secret FOO=...` entries).
+    crate::manifest::validate_unique_destination_names(&secrets)?;
 
     let base_dir = match &origin {
         ConfigOrigin::File(path) => parent_or(path, cwd),
@@ -412,16 +416,43 @@ fn fetch_entries(
     let fetched = source
         .fetch(&pipeline.secrets)
         .context("fetching from source")?;
-    let mut entries = Vec::with_capacity(fetched.len());
+    // The source hash is recorded once under the secret's (source-side)
+    // `name`; the fanned-out entries hash against their own destination name.
     for f in &fetched {
-        let h = value_hash(&f.name, &f.value);
-        state.record_source(&f.name, &h);
-        entries.push(DestinationEntry {
-            name: f.name.clone(),
-            value: f.value.clone(),
-            current_hash: h,
-            last_pushed_hash: None, // filled in per-destination
-        });
+        state.record_source(&f.name, &value_hash(&f.name, &f.value));
+    }
+    fan_out(&pipeline.secrets, &fetched)
+}
+
+/// Fan each managed secret out into one destination entry per destination
+/// name. The source returns one value per secret, keyed by the secret's
+/// (source-side) `name`; index it so the order the source returned them in
+/// doesn't matter. Each entry hashes against its own destination name, so the
+/// same value written under two names tracks independently in the state file.
+fn fan_out(
+    secrets: &[ManifestSecret],
+    fetched: &[crate::sources::FetchedSecret],
+) -> Result<Vec<DestinationEntry>> {
+    let fetched_by_name: HashMap<&str, &str> = fetched
+        .iter()
+        .map(|f| (f.name.as_str(), f.value.as_str()))
+        .collect();
+    let mut entries = Vec::new();
+    for secret in secrets {
+        let value = *fetched_by_name.get(secret.name.as_str()).ok_or_else(|| {
+            anyhow!(
+                "source returned no value for managed secret '{}'",
+                secret.name
+            )
+        })?;
+        for dest_name in secret.dest_names() {
+            entries.push(DestinationEntry {
+                name: dest_name.to_string(),
+                value: value.to_string(),
+                current_hash: value_hash(dest_name, value),
+                last_pushed_hash: None, // filled in per-destination
+            });
+        }
     }
     Ok(entries)
 }
@@ -458,6 +489,9 @@ pub fn check(paths: &Paths, pipeline: &Pipeline) -> Result<CheckReport> {
     let fetched = source
         .fetch(&pipeline.secrets)
         .context("fetching from source")?;
+    // Judge the same fanned-out (destination-name, destination) pairs a sync
+    // would push, so fan-out mappings are checked under their real names.
+    let entries = fan_out(&pipeline.secrets, &fetched)?;
 
     let mut report = CheckReport::default();
     for dest_cfg in &pipeline.destinations {
@@ -467,12 +501,11 @@ pub fn check(paths: &Paths, pipeline: &Pipeline) -> Result<CheckReport> {
             stale: Vec::new(),
             up_to_date: Vec::new(),
         };
-        for f in &fetched {
-            let current = value_hash(&f.name, &f.value);
-            if state.last_pushed_hash(&f.name, &dest_key) == Some(current.as_str()) {
-                check.up_to_date.push(f.name.clone());
+        for entry in &entries {
+            if state.last_pushed_hash(&entry.name, &dest_key) == Some(entry.current_hash.as_str()) {
+                check.up_to_date.push(entry.name.clone());
             } else {
-                check.stale.push(f.name.clone());
+                check.stale.push(entry.name.clone());
             }
         }
         report.destinations.push(check);
@@ -512,6 +545,7 @@ mod tests {
                 name: "FOO".into(),
                 item: None,
                 field: None,
+                destination_names: Vec::new(),
             }],
             destinations: vec![ManifestDestination::EnvFile(EnvFileDestinationConfig {
                 path: PathBuf::from("out.env"),
@@ -575,6 +609,7 @@ mod tests {
                 name: "FOO".into(),
                 item: None,
                 field: None,
+                destination_names: Vec::new(),
             }],
             destinations: vec![ManifestDestination::Github(
                 crate::manifest::GithubDestinationConfig {
@@ -621,11 +656,13 @@ mod tests {
                     name: "A".into(),
                     item: None,
                     field: None,
+                    destination_names: Vec::new(),
                 },
                 ManifestSecret {
                     name: "B".into(),
                     item: None,
                     field: None,
+                    destination_names: Vec::new(),
                 },
             ],
             only: vec!["A".into()],

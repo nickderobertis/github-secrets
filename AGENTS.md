@@ -35,16 +35,32 @@ file is ever required. Config resolution, first hit wins: explicit `--config`
 > the global config under the config root. That makes `sync`/`check`
 project-local inside a project and global elsewhere.
 
+Each managed secret has a *source-side* identity (`name`, plus an optional
+`item`/`field` to look up a differently-named source entry) and a
+*destination-side* identity (`destination_names`). When `destination_names`
+is omitted it defaults to `[name]` — the common "same name everywhere" case
+needs no extra config. Supplying it lets the destination name differ from the
+source identity and lets one source value fan out to several destination
+names (e.g. a single publish token pushed as both `NPM_TOKEN` and
+`NODE_AUTH_TOKEN`); the value is fetched once and pushed under each name, and
+each (destination-name, destination) pair tracks its own hash in the state
+file. Resolved destination names must be unique across the whole config —
+two secrets racing to last-writer-wins on one name is a config error,
+rejected at load *and* after CLI overrides are applied (so `--secret` args
+get the same guard). In argument form, fan-out is expressed as repeated
+`--secret DEST=ITEM` entries reading the same item.
+
 Sync is idempotent across runs via a `.gh-secrets-state.json` co-located with
 the resolved config (gitignore the project-local one) holding per-(secret,
 destination) SHA-256 hashes — the plaintext value is never persisted there.
 `check` is the read-only complement: it fetches current source values and
 reports what a `sync` would push, judging destinations purely from recorded
 state (no GitHub token needed, nothing written — not even the state file).
-`list` reports what the config *declares* (name + source item/field) from the
-file alone; `source list` instead *enumerates the source itself* (unlocking it
-if needed) and prints item names/ids so a user can discover what to wire in.
-All of these honor the never-print-a-value invariant.
+`list` reports what the config *declares* (name + source item/field, plus
+the `-> NAME, NAME` fan-out arrow when set) from the file alone; `source
+list` instead *enumerates the source itself* (unlocking it if needed) and
+prints item names/ids so a user can discover what to wire in. All of these
+honor the never-print-a-value invariant.
 
 ## Command surface
 

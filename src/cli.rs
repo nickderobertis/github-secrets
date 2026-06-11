@@ -553,6 +553,9 @@ fn parse_secret_spec(spec: &str) -> Result<ManifestSecret> {
         name: name.to_string(),
         item,
         field,
+        // No arg syntax for fan-out: repeated `--secret DEST=ITEM` entries
+        // reading the same item express the same thing.
+        destination_names: Vec::new(),
     })
 }
 
@@ -600,6 +603,13 @@ fn list_declared_secrets(pipeline: &Pipeline) {
         pipeline.secrets.len()
     );
     for s in &pipeline.secrets {
+        // The fan-out arrow appears only when the destination-side identity
+        // differs from `name` (i.e. `destination_names` was supplied).
+        let fan_out = if s.destination_names.is_empty() {
+            String::new()
+        } else {
+            format!(" -> {}", s.destination_names.join(", "))
+        };
         match &pipeline.source {
             ManifestSource::Bitwarden(c) => {
                 // Mirror `BitwardenSource::default_field`: unspecified means
@@ -610,21 +620,25 @@ fn list_declared_secrets(pipeline: &Pipeline) {
                     .or(c.default_field.as_deref())
                     .unwrap_or("password");
                 println!(
-                    "  - {}  (bitwarden item '{}', field '{field}')",
+                    "  - {}  (bitwarden item '{}', field '{field}'){fan_out}",
                     s.name,
                     s.source_item()
                 );
             }
             ManifestSource::EnvFile(c) => {
                 println!(
-                    "  - {}  (env file '{}', key '{}')",
+                    "  - {}  (env file '{}', key '{}'){fan_out}",
                     s.name,
                     c.path.display(),
                     s.source_item()
                 );
             }
             ManifestSource::Local => {
-                println!("  - {}  (local store key '{}')", s.name, s.source_item());
+                println!(
+                    "  - {}  (local store key '{}'){fan_out}",
+                    s.name,
+                    s.source_item()
+                );
             }
         }
     }

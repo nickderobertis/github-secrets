@@ -735,6 +735,24 @@ async fn e2e_sync_error_and_noop_edges() {
         .stdout(contains("nothing to do"));
     assert!(!h.dir.path().join("out.env").exists());
 
+    // Two --secret args claiming the same destination name get the same
+    // uniqueness guard a config file does.
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "env:source.env",
+            "--to",
+            "env:out.env",
+            "--secret",
+            "FOO",
+            "--secret",
+            "FOO=other-item",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("destination name 'FOO'"));
+
     // The store rejects an empty name before touching the vault.
     h.cmd()
         .args(["store", "set", "", "value"])
