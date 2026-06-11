@@ -66,3 +66,40 @@ upgrade:
 # Build a release binary.
 release:
     cargo build --release --locked
+
+# ---- performance ----
+#
+# Informational, never a gate: timings are noisy on shared hardware, so these
+# report numbers rather than block. The CI Performance workflow runs them on
+# every PR and posts a sticky comment. See benches/AGENTS.md.
+
+# Engine micro-benchmarks (Criterion); saves the `current` baseline for bench-compare.
+bench:
+    cargo bench --locked --bench engine -- --save-baseline current
+
+# Save current engine benchmarks as the `base` baseline (run on the comparison point).
+bench-base:
+    cargo bench --locked --bench engine -- --save-baseline base
+
+# Diff the latest `bench` run against `base` (run `bench-base` first; needs critcmp).
+bench-compare:
+    critcmp base current
+
+# End-to-end CLI latency for the offline verbs (hyperfine); writes target/bench/results.*.
+bench-cli:
+    @bash scripts/bench.sh
+
+# Fast smoke check of the CLI benchmark harness (one run, no warmup, no stable numbers).
+bench-cli-smoke:
+    @bash scripts/bench.sh --dry-run
+
+# Deterministic engine allocation counts (counting allocator; exact, comparable across commits).
+bench-allocs:
+    cargo bench --locked --quiet --bench engine_allocs
+
+# Deterministic end-to-end CLI instruction counts (cachegrind; Linux-only, needs valgrind).
+bench-instructions:
+    @bash scripts/bench-instructions.sh
+
+# Run the portable benchmark layers (Criterion + hyperfine + allocation counts).
+bench-all: bench bench-cli bench-allocs

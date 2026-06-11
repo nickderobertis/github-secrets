@@ -42,8 +42,29 @@ predicates = "3.1"
 tempfile = "3.13"
 wiremock = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Engine micro-benchmarks (`benches/engine.rs`). default-features off keeps the
+# plotters/gnuplot/rayon stack out of the build; `cargo_bench_support` is the
+# only feature the harness needs, and critcmp reads the JSON Criterion writes
+# regardless.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "engine"
+harness = false
+
+[[bench]]
+name = "engine_allocs"
+harness = false
 
 [profile.release]
 strip = true
 lto = "thin"
 codegen-units = 1
+
+# Codegen-matched to `release` but with symbols kept, so cachegrind/callgrind in
+# scripts/bench-instructions.sh count the shipped code path and a regression can
+# still be annotated back to source afterwards.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false

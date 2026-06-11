@@ -94,6 +94,12 @@ Use the `just` recipes; do not hand-roll equivalent commands.
   "Releases and CI secrets"). Runs serially and self-cleans every item it
   seeds; without the creds, every test skips.
 - `just lint` / `just format` — clippy / rustfmt.
+- `just bench` / `just bench-cli` / `just bench-allocs` / `just bench-instructions`
+  — the informational performance suite (Criterion engine micro-benchmarks,
+  hyperfine end-to-end CLI latency, deterministic allocation counts, cachegrind
+  instruction counts). Never a gate — see "Performance suite". `bench-all` runs
+  the portable layers; `bench-cli`/`bench-instructions` need `hyperfine`/
+  `valgrind` on PATH and fail with an install hint otherwise.
 - `just upgrade` — `cargo update`, then re-run `just check`.
 
 The product binary is `gh-secrets`. `cargo run -- <args>` invokes it during
@@ -447,6 +453,60 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   suite (`live_install_script_downloads_and_verifies_release`) runs the script
   against the real release every CI run that has `GH_E2E_TOKEN`, so a drift in
   asset naming fails the gate rather than only surfacing for a user.
+
+## Performance suite
+
+There is an **informational** performance suite, run by
+`.github/workflows/bench.yml` ("Performance") on every PR and on pushes to
+`master`. It reports numbers as a sticky PR comment and a job summary; it is
+**deliberately not a quality gate** — benchmark timings are noisy on shared CI
+runners, so it must never be a required check. The hard, deterministic gate is
+`ci.yml` / `just check`. It is also intentionally *not* part of `just check`,
+so the gate stays fast and dependency-light (Criterion, hyperfine, valgrind,
+and critcmp are only pulled in by the perf recipes / the perf workflow, never
+by `just bootstrap`).
+
+It has four layers, each measuring a different thing and chosen so that the
+ones sensitive to small deltas are the deterministic ones:
+
+- **`benches/engine.rs`** — Criterion micro-benchmarks of the pure in-process
+  engine surface a `sync`/`check` runs between process start and the network:
+  `value_hash` (SHA-256 content addressing), `parse_dotenv` (the env-file
+  source read), `Manifest::load`/parse+validate, and `SyncState` parse. Each
+  has a realistic-floor group (the checked-in `gh-secrets.json` / a small
+  corpus) and a `/synthetic` (or `/scaling`) group charting cost vs. secret (or
+  key) count. `harness = false`; run with `just bench`.
+- **`scripts/bench.sh`** (`just bench-cli`) — end-to-end wall-clock latency via
+  hyperfine, driving the **release** binary one process per command across the
+  offline verbs (`version`, `help`, `list`, `check`, `sync`, `source list`,
+  `store list`, `init`). Fully hermetic: an env-file source → env-file
+  destination config in a throwaway sandbox, `GH_SECRETS_HOME` and
+  `GH_SECRETS_PASSPHRASE` from the environment, so no network, no GitHub token,
+  no `bw`. `--dry-run` (`just bench-cli-smoke`) is a one-shot harness smoke
+  check used by the workflow.
+- **`benches/engine_allocs.rs`** (`just bench-allocs`) — a counting global
+  allocator reports exact allocator calls + bytes for the engine hot paths.
+  Deterministic for a given commit (`harness = false`, plain `main`, no
+  Criterion); no timing/randomness/I/O inside a measured closure.
+- **`scripts/bench-instructions.sh`** (`just bench-instructions`) — cachegrind
+  instruction counts for the same offline CLI verbs against the **`profiling`**
+  profile (release codegen, symbols kept). Linux-only (needs valgrind);
+  reproducible to ~0.1%, so this is where a small end-to-end regression is
+  trustworthy where a hyperfine delta is not. The `report BASE HEAD` subcommand
+  prints a markdown delta table from two `instructions.tsv` files (no valgrind
+  needed), which the workflow uses for the base-vs-PR comparison.
+
+The base comparison (Criterion via `critcmp`, plus the instruction-count delta)
+is best-effort: when the PR base predates a bench — e.g. the PR that introduces
+it — that step fails non-fatally and the report shows absolute numbers only.
+The sticky comment is posted on same-repo PRs only (fork PRs get a read-only
+token, so they fall back to the job summary + uploaded artifact), keyed by the
+`<!-- gh-secrets-perf -->` marker so each run updates one comment in place.
+
+When you add or rename a CLI verb or a hot path, extend the matching layer (a
+Criterion group / allocs row for engine code, a hyperfine + cachegrind `measure`
+row for a new offline command) so the numbers keep tracking what the binary
+runs. See `benches/AGENTS.md` for the bench-fixture conventions.
 
 ## Keeping the allowlist current
 
