@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/nickderobertis/github-secrets/compare/v0.3.0...v0.4.0) (2026-06-11)
+
+
+### Features
+
+* map source secret to differently-named/multiple destination names ([#30](https://github.com/nickderobertis/github-secrets/issues/30)) ([434200f](https://github.com/nickderobertis/github-secrets/commit/434200f9dfaa902cd8770da0b61a5482cc11543e))
+
 ## [0.3.0](https://github.com/nickderobertis/github-secrets/compare/v0.2.0...v0.3.0) (2026-06-11)
 
 
