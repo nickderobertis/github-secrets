@@ -66,7 +66,15 @@ honor the never-print-a-value invariant.
 
 Use the `just` recipes; do not hand-roll equivalent commands.
 
-- `just bootstrap` — fetch the toolchain components and `cargo fetch`.
+- `just bootstrap` — add the `rustfmt`/`clippy` components, install
+  `cargo-nextest` for the host platform (`scripts/install-nextest.sh`:
+  idempotent, downloads the prebuilt binary from get.nexte.st for
+  Linux x86_64/arm64, macOS universal, or Windows, and heals a wrong-arch
+  binary), and `cargo fetch`. The gate runs through nextest (not `cargo
+  test`) because the inline test modules mutate process-global env vars and
+  need a process per test; the script is the one cross-platform way to get it.
+  CI installs nextest via a setup action *before* `bootstrap`, so the script
+  no-ops there.
 - `just check` — full quality gate: `cargo fmt --check`, `cargo clippy -D
   warnings`, `cargo nextest run` (unit + integration), and `test-e2e` (the
   wiremock-driven e2e suite plus a compile-and-skip pass of the live suite).
