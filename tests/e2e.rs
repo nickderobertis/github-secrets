@@ -16,6 +16,7 @@ mod common;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use common::{fake_pubkey_b64, E2eHarness};
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use serde_json::{json, Value};
 use wiremock::matchers::{header, method, path_regex};
@@ -78,6 +79,70 @@ async fn e2e_local_state_persists_across_invocations() {
         .assert()
         .failure()
         .stderr(contains("was not defined"));
+}
+
+/// `secrets list` shows global and per-repo secret names, sorted, and never
+/// prints a value — the listing exists precisely to let a user audit what's
+/// defined without exposing the values.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_secrets_list_shows_names_not_values() {
+    let h = E2eHarness::new().await;
+
+    // Empty profile reports nothing defined.
+    h.cmd()
+        .args(["secrets", "list"])
+        .assert()
+        .success()
+        .stdout(contains("none defined"));
+
+    h.cmd()
+        .args(["secrets", "add", "DB_PASS", "pass-value"])
+        .assert()
+        .success();
+    h.cmd()
+        .args(["secrets", "add", "API_KEY", "key-value"])
+        .assert()
+        .success();
+    h.cmd()
+        .args([
+            "secrets",
+            "add",
+            "DEPLOY_KEY",
+            "deploy-value",
+            "owner/repo1",
+        ])
+        .assert()
+        .success();
+
+    // Default listing: globals + per-repo overrides, names only, no values.
+    h.cmd()
+        .args(["secrets", "list"])
+        .assert()
+        .success()
+        .stdout(contains("global (2):"))
+        .stdout(contains("API_KEY"))
+        .stdout(contains("DB_PASS"))
+        .stdout(contains("repo 'owner/repo1' (1):"))
+        .stdout(contains("DEPLOY_KEY"))
+        .stdout(contains("key-value").not())
+        .stdout(contains("pass-value").not())
+        .stdout(contains("deploy-value").not());
+
+    // Scoped to a repo: only that repo's overrides.
+    h.cmd()
+        .args(["secrets", "list", "owner/repo1"])
+        .assert()
+        .success()
+        .stdout(contains("repo 'owner/repo1' (1):"))
+        .stdout(contains("DEPLOY_KEY"))
+        .stdout(contains("API_KEY").not());
+
+    // A repo with no overrides says so explicitly.
+    h.cmd()
+        .args(["secrets", "list", "owner/repo2"])
+        .assert()
+        .success()
+        .stdout(contains("none defined for repo 'owner/repo2'"));
 }
 
 /// Happy path: push a global secret to two repos, then re-sync and confirm it

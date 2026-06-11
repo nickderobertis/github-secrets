@@ -9,7 +9,7 @@ use crate::credentials::StoredCredentials;
 use crate::destinations::{DestinationReport, GITHUB_TOKEN_ENVS};
 use crate::envfile;
 use crate::github::GitHubClient;
-use crate::manifest::{RepoManifest, DEFAULT_MANIFEST_FILE};
+use crate::manifest::{ManifestSource, RepoManifest, DEFAULT_MANIFEST_FILE};
 use crate::paths::Paths;
 use crate::secrets::Upsert;
 use crate::sources::{BW_CLIENTID_ENVS, BW_CLIENTSECRET_ENVS, BW_PASSWORD_ENVS, BW_SESSION_ENVS};
@@ -117,6 +117,13 @@ enum ManifestCmd {
         #[arg(long, short)]
         path: Option<PathBuf>,
     },
+    /// List the secrets the manifest manages (names and their source mapping),
+    /// without contacting the source or printing any value.
+    List {
+        /// Path to the manifest file. Defaults to `./gh-secrets.json`.
+        #[arg(long, short)]
+        config: Option<PathBuf>,
+    },
     /// Pull every managed secret from the manifest's source and push to each
     /// destination that doesn't already hold the current value.
     Sync {
@@ -172,6 +179,11 @@ enum SecretCmd {
     /// Remove a secret globally, or for a single repository.
     Remove {
         name: String,
+        repository: Option<String>,
+    },
+    /// List secret names (never values), globally and per-repository.
+    List {
+        /// Optional repository; if omitted, lists global and every per-repo override.
         repository: Option<String>,
     },
     /// Push changed secrets to GitHub.
@@ -328,6 +340,9 @@ pub fn run() -> Result<()> {
                     scope_label(repository.as_deref())
                 );
             }
+            SecretCmd::List { repository } => {
+                list_secrets(&profile, repository.as_deref());
+            }
             SecretCmd::Sync {
                 name,
                 repository,
@@ -370,6 +385,13 @@ pub fn run() -> Result<()> {
                 }
                 RepoManifest::starter().save(&target)?;
                 println!("manifest: wrote starter to {}", target.display());
+            }
+            ManifestCmd::List { config } => {
+                let manifest_path = config.unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST_FILE));
+                let manifest = RepoManifest::load(&manifest_path).with_context(|| {
+                    format!("loading manifest from {}", manifest_path.display())
+                })?;
+                list_manifest_secrets(&manifest);
             }
             ManifestCmd::Sync { config, state } => {
                 // Make `.env`/`.env.local` in the working directory available as
@@ -467,6 +489,96 @@ fn scope_label(repo: Option<&str>) -> String {
     match repo {
         Some(r) => format!("repo '{r}'"),
         None => "global".to_string(),
+    }
+}
+
+/// Print the names of stored secrets, never their values. With `repository`
+/// set, only that repo's per-repo overrides are listed; otherwise the global
+/// secrets and every per-repo override are shown, each group sorted by name.
+fn list_secrets(profile: &ProfileConfig, repository: Option<&str>) {
+    let sorted = |names: Vec<&str>| -> Vec<String> {
+        let mut v: Vec<String> = names.into_iter().map(str::to_string).collect();
+        v.sort();
+        v
+    };
+
+    if let Some(repo) = repository {
+        let names = sorted(profile.repository_secrets.names_for(repo));
+        if names.is_empty() {
+            println!("secrets: none defined for {}", scope_label(Some(repo)));
+            return;
+        }
+        print_secret_group(&scope_label(Some(repo)), &names);
+        return;
+    }
+
+    let global = sorted(
+        profile
+            .global_secrets
+            .secrets
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect(),
+    );
+    let per_repo: Vec<(&String, Vec<String>)> = profile
+        .repository_secrets
+        .by_repo
+        .iter()
+        .filter(|(_, secrets)| !secrets.is_empty())
+        .map(|(repo, secrets)| {
+            (
+                repo,
+                sorted(secrets.iter().map(|s| s.name.as_str()).collect()),
+            )
+        })
+        .collect();
+
+    if global.is_empty() && per_repo.is_empty() {
+        println!("secrets: none defined");
+        return;
+    }
+    if !global.is_empty() {
+        print_secret_group("global", &global);
+    }
+    for (repo, names) in &per_repo {
+        print_secret_group(&scope_label(Some(repo)), names);
+    }
+}
+
+fn print_secret_group(label: &str, names: &[String]) {
+    println!("{label} ({}):", names.len());
+    for name in names {
+        println!("  - {name}");
+    }
+}
+
+/// Print the secrets a manifest manages and where each is sourced from. Reads
+/// only the checked-in manifest — no source contact, no credentials — and the
+/// manifest holds only name/item/field mapping, never a value.
+fn list_manifest_secrets(manifest: &RepoManifest) {
+    let (source_label, default_field) = match &manifest.source {
+        // Mirror `BitwardenSource::default_field`: unspecified means `password`.
+        ManifestSource::Bitwarden(c) => (
+            "bitwarden",
+            c.default_field.as_deref().unwrap_or("password"),
+        ),
+    };
+    if manifest.secrets.is_empty() {
+        println!("manifest: no secrets declared (source: {source_label})");
+        return;
+    }
+    println!(
+        "manifest secrets ({}, source: {source_label}):",
+        manifest.secrets.len()
+    );
+    for s in &manifest.secrets {
+        let field = s.field.as_deref().unwrap_or(default_field);
+        println!(
+            "  - {}  ({source_label} item '{}', field '{}')",
+            s.name,
+            s.source_item(),
+            field
+        );
     }
 }
 
