@@ -67,7 +67,12 @@ jobs:
         if: ${{ steps.release.outputs.pr }}
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-          PR_NUMBER: ${{ fromJson(steps.release.outputs.pr).number }}
+          # The runner evaluates step `env` templates even when `if` is false,
+          # so a bare fromJson() here fails the whole job on every run where
+          # release-please opened no PR (exactly the release-cut runs, which
+          # then never reach `build` — a release with no assets). Short-circuit
+          # so fromJson never sees an empty string.
+          PR_NUMBER: ${{ steps.release.outputs.pr && fromJson(steps.release.outputs.pr).number || '' }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "RELEASE_PLEASE_TOKEN not set; leaving the release PR for a manual merge."
