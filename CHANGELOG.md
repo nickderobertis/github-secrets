@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/nickderobertis/github-secrets/compare/v1.0.0...v1.0.1) (2026-06-11)
+
+
+### Bug Fixes
+
+* list supported selectors when a Bitwarden field selector is unknown ([#37](https://github.com/nickderobertis/github-secrets/issues/37)) ([b8698aa](https://github.com/nickderobertis/github-secrets/commit/b8698aa1dd27451e7c23ca7a2972c12a1c00386f))
+
 ## [1.0.0](https://github.com/nickderobertis/github-secrets/compare/v0.4.0...v1.0.0) (2026-06-11)
 
 
