@@ -78,6 +78,11 @@ gh-secrets source list
 gh-secrets auth github <ghp_xxx>
 gh-secrets auth bitwarden --client-id ... --client-secret ... --master-password ...
 gh-secrets auth status
+
+# Unlock the vault for a week so nothing prompts for the passphrase
+# (a session, like `bw unlock`); end it early with `auth lock`.
+gh-secrets auth unlock          # or --days N
+gh-secrets auth lock
 ```
 
 `sync`/`check`/`list` use `./gh-secrets.json` when present and otherwise fall
@@ -88,8 +93,10 @@ force either.
 The encrypted vault (stored credentials + the `local` store) and the global
 config live under `$XDG_CONFIG_HOME/gh-secrets` (Linux),
 `~/Library/Application Support/gh-secrets` (macOS), or `%APPDATA%\gh-secrets`
-(Windows). Override with `GH_SECRETS_HOME`. The vault passphrase comes from
-`GH_SECRETS_PASSPHRASE` or an interactive prompt.
+(Windows). Override with `GH_SECRETS_HOME`. The vault unlocks via an active
+session (`auth unlock`, or started automatically the first time you type the
+passphrase at a prompt), then `GH_SECRETS_PASSPHRASE`, then an interactive
+prompt.
 
 ## Develop
 

@@ -240,8 +240,20 @@ enum AuthCmd {
         #[arg(long)]
         master_password: Option<String>,
     },
+    /// Verify the passphrase and unlock the vault for a while (default: a
+    /// week), so credential- and store-consuming commands stop asking for it.
+    /// The session lives next to the vault, `0600`, and expires on its own.
+    Unlock {
+        /// How many days the session stays valid.
+        #[arg(long, default_value_t = vault::DEFAULT_SESSION_DAYS, value_parser = clap::value_parser!(u64).range(1..=365))]
+        days: u64,
+    },
+    /// Forget the vault session immediately (the passphrase is required
+    /// again afterwards).
+    Lock,
     /// Show where each credential resolves from (env, .env, .env.local, or
-    /// stored config) without ever printing its value.
+    /// stored config) without ever printing its value, plus the vault
+    /// session state.
     Status,
     /// Remove stored credentials. With no flag, clears everything.
     Clear {
@@ -417,9 +429,21 @@ pub fn run() -> Result<()> {
                     vault::save(&vault_path, &data)?;
                     println!("auth: stored Bitwarden {}", set.join(", "));
                 }
+                AuthCmd::Unlock { days } => {
+                    vault::start_session(&vault_path, days)?;
+                    println!("auth: vault unlocked for {days} day(s)");
+                }
+                AuthCmd::Lock => {
+                    if vault::end_session(&vault_path)? {
+                        println!("auth: vault locked");
+                    } else {
+                        println!("auth: no active session");
+                    }
+                }
                 AuthCmd::Status => {
                     let stored = vault::load(&vault_path)?.credentials;
                     print_auth_status(&origins, &stored);
+                    print_session_status(&vault_path);
                 }
                 AuthCmd::Clear { github, bitwarden } => {
                     let mut data = vault::load(&vault_path)?;
@@ -655,6 +679,27 @@ fn print_auth_status(origins: &BTreeMap<String, &'static str>, stored: &StoredCr
             "  {label}: {}",
             describe_source(names, origins, stored_value)
         );
+    }
+}
+
+/// Report whether a vault session is active and roughly how long it has
+/// left, so a user knows why they are (or aren't) being asked for the
+/// passphrase.
+fn print_session_status(vault_path: &std::path::Path) {
+    match vault::session_expiry(vault_path) {
+        Some(expires_at) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let left = expires_at.saturating_sub(now);
+            println!(
+                "  Vault session: active (~{}d {}h left; `gh-secrets auth lock` to end)",
+                left / 86_400,
+                (left % 86_400) / 3_600
+            );
+        }
+        None => println!("  Vault session: none (passphrase required per use)"),
     }
 }
 

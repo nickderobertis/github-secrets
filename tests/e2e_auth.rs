@@ -379,3 +379,103 @@ async fn e2e_no_vault_means_no_passphrase_needed() {
         .success()
         .stdout(contains("GitHub token: not set"));
 }
+
+/// `auth unlock` mints a week-long session: after it, every invocation works
+/// with NO passphrase anywhere in the environment (reads *and* writes),
+/// until the session expires or `auth lock` ends it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_unlock_session_replaces_the_passphrase_for_a_week() {
+    let h = AuthHarness::new().await;
+    h.cmd().args(["auth", "github", "ghp_x"]).assert().success();
+
+    h.cmd()
+        .args(["auth", "unlock"])
+        .assert()
+        .success()
+        .stdout(contains("unlocked for 7 day(s)"));
+
+    // Reads work without a passphrase, and status explains why.
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["auth", "status"])
+        .assert()
+        .success()
+        .stdout(contains("GitHub token: set (from stored config)"))
+        .stdout(contains("Vault session: active"));
+
+    // Writes work too: the session key alone re-encrypts the vault.
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["store", "set", "FOO", "session-written"])
+        .assert()
+        .success();
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["store", "list"])
+        .assert()
+        .success()
+        .stdout(contains("FOO"));
+
+    // The session file is 0600 and never holds the passphrase.
+    let session = h.dir.path().join("home").join("session.json");
+    let raw = fs::read_to_string(&session).unwrap();
+    assert!(!raw.contains("auth-e2e-passphrase"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&session).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    // An expired session is as good as none: rewind the expiry and the next
+    // passphrase-less call fails with the usual guidance.
+    let mut parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    parsed["expires_at"] = serde_json::Value::from(1u64);
+    fs::write(&session, serde_json::to_vec(&parsed).unwrap()).unwrap();
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["store", "list"])
+        .assert()
+        .failure()
+        .stderr(contains("GH_SECRETS_PASSPHRASE"));
+    assert!(!session.exists(), "expired session is cleaned up");
+
+    // Unlock again, then `auth lock` ends it immediately.
+    h.cmd().args(["auth", "unlock"]).assert().success();
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["auth", "lock"])
+        .assert()
+        .success()
+        .stdout(contains("vault locked"));
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["store", "list"])
+        .assert()
+        .failure()
+        .stderr(contains("GH_SECRETS_PASSPHRASE"));
+}
+
+/// `auth unlock` always re-proves the passphrase — a session alone cannot
+/// extend itself — and without a vault it explains there is nothing to
+/// unlock yet.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_unlock_requires_passphrase_and_a_vault() {
+    let h = AuthHarness::new().await;
+    h.cmd()
+        .args(["auth", "unlock"])
+        .assert()
+        .failure()
+        .stderr(contains("no vault"));
+
+    h.cmd().args(["auth", "github", "ghp_x"]).assert().success();
+    h.cmd().args(["auth", "unlock"]).assert().success();
+    // Even with the session active, unlocking again without a passphrase
+    // must fail rather than silently sliding the expiry forward.
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["auth", "unlock"])
+        .assert()
+        .failure()
+        .stderr(contains("GH_SECRETS_PASSPHRASE"));
+}

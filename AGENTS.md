@@ -90,7 +90,9 @@ they exercise it the way a user does.
   error messages. Secret values are also never written into the configured
   `GH_SECRETS_HOME` path other than inside the encrypted vault (`vault.json`),
   and never in plaintext: the vault's ciphertext envelope is the only at-rest
-  form for stored credentials and the `local` store.
+  form for stored credentials and the `local` store. (`session.json` holds
+  time-boxed *key material*, never a credential, a secret value, or the
+  passphrase — see "Config and paths".)
 - Cross-platform: build and test on Linux, macOS, and Windows in CI.
 - Do not commit secrets, credentials, PII, or customer data.
 
@@ -100,15 +102,27 @@ The CLI keeps these files under a single root:
 
 - `<root>/vault.json` — the **encrypted vault**: stored credentials
   (`gh-secrets auth`) plus the `local` store's secret values (`gh-secrets
-  store`). XChaCha20-Poly1305 with an Argon2id-derived key; the file carries
-  only KDF parameters, salt, nonce, and ciphertext. The passphrase resolves
-  from `GH_SECRETS_PASSPHRASE` (shell env or auto-loaded `.env`/`.env.local`)
-  and otherwise an interactive prompt; non-interactive runs without it get a
-  precise error, never a hang. The passphrase is cached per process so one
-  invocation never prompts twice, and a *missing* vault never asks for a
-  passphrase at all — the engine decrypts lazily, only when something actually
-  needs a stored value (so CI with `GH_TOKEN` in env never touches it). `0600`
-  on Unix.
+  store`). Envelope encryption: the data is sealed with a random 32-byte data
+  key (XChaCha20-Poly1305) and the data key is stored wrapped by an
+  Argon2id-derived KEK, so the passphrase is never persisted and the file
+  carries only KDF parameters, salt, nonces, and ciphertexts. Unlock order:
+  active session > `GH_SECRETS_PASSPHRASE` (shell env or auto-loaded
+  `.env`/`.env.local`) > interactive prompt; non-interactive runs with none of
+  the three get a precise error, never a hang. The passphrase is cached per
+  process, and a *missing* vault never asks for one at all — the engine
+  decrypts lazily, only when something actually needs a stored value (so CI
+  with `GH_TOKEN` in env never touches it). `0600` on Unix.
+- `<root>/session.json` — the vault **session**: the plaintext data key plus
+  a hard expiry, minted by `gh-secrets auth unlock` (default 7 days, `--days`
+  to change) or automatically by the first prompt-based unlock (announced on
+  stderr). Holding this file *is* holding the vault key for its lifetime —
+  that is the deliberate convenience/security tradeoff, bounded by `0600`
+  permissions and the expiry; it is exactly the `bw unlock` / sudo-timestamp
+  model. Because saves reuse the existing wrapped key, a session alone can
+  read *and* write the vault. Expired or key-mismatched sessions are deleted
+  on sight; `gh-secrets auth lock` deletes it immediately, `auth unlock`
+  always re-proves the passphrase (a session cannot extend itself), and
+  `auth status` reports the session state.
 - `<root>/gh-secrets.json` + `<root>/.gh-secrets-state.json` — the global
   config and its sync state, used when the working directory has no
   project-local config (or `--global` forces it). Same schema as the
@@ -223,7 +237,10 @@ Project-local layout and credentials:
   provenance without printing values; storing/clearing round-trips through the
   encrypted vault (the file is `0600`, contains no plaintext token, fails fast
   without a passphrase in a non-interactive run, and rejects a wrong
-  passphrase with a decryption error); and — the key assertion — a real `sync`
+  passphrase with a decryption error); the session lifecycle (`auth unlock`
+  lets fresh processes read *and* write with no passphrase anywhere in the
+  environment, expiry and `auth lock` revoke it, and a session cannot extend
+  itself); and — the key assertion — a real `sync`
   against a wiremock GitHub records the exact `Authorization` bearer, so each
   test can confirm the token that *won* (shell env, `.env`, `.env.local`, or
   stored config) is the one that actually reached the API. The dotenv
