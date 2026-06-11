@@ -100,12 +100,27 @@ jobs:
       - name: Bootstrap
         run: just bootstrap
 
-      - name: Live e2e
+      - name: Live e2e (GitHub)
         env:
           GH_TOKEN: ${{ secrets.GH_E2E_TOKEN }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
-            echo "GH_E2E_TOKEN not configured; skipping live e2e."
+            echo "GH_E2E_TOKEN not configured; skipping GitHub live e2e."
             exit 0
           fi
           just test-live
+
+      # Bitwarden live e2e runs only when the isolated test account's api-key
+      # credentials are configured as repo secrets. Skipped (not failed) when
+      # they're absent, so forks and unconfigured repos stay green.
+      - name: Install Bitwarden CLI
+        if: ${{ secrets.GH_SECRETS_BW_E2E_CLIENT_ID != '' }}
+        run: npm install -g @bitwarden/cli
+
+      - name: Live e2e (Bitwarden)
+        if: ${{ secrets.GH_SECRETS_BW_E2E_CLIENT_ID != '' }}
+        env:
+          GH_SECRETS_BW_E2E_CLIENT_ID: ${{ secrets.GH_SECRETS_BW_E2E_CLIENT_ID }}
+          GH_SECRETS_BW_E2E_CLIENT_SECRET: ${{ secrets.GH_SECRETS_BW_E2E_CLIENT_SECRET }}
+          GH_SECRETS_BW_E2E_PASSWORD: ${{ secrets.GH_SECRETS_BW_E2E_PASSWORD }}
+        run: just test-live-bitwarden
