@@ -1,10 +1,13 @@
 //! Sync destinations: where the orchestrator pushes values to.
 //!
-//! Two concrete impls today:
-//! - `GitHubDestination` — wraps the existing GitHub Actions secrets client,
-//!   uses `GH_TOKEN` / `GITHUB_TOKEN` for auth.
+//! Three concrete impls today:
+//! - `GitHubDestination` — wraps the GitHub Actions secrets client, uses
+//!   `GH_TOKEN` / `GITHUB_TOKEN` for auth. Write-only: GitHub never returns a
+//!   secret's value, so there is no matching source.
 //! - `EnvFileDestination` — writes a dotenv-style file, preserving unrelated
 //!   lines and (on Unix) tightening file mode to 0600.
+//! - `LocalStoreDestination` — writes into the encrypted vault's secret map
+//!   (the write half of the `local` store).
 
 use std::collections::BTreeMap;
 use std::env;
@@ -15,7 +18,6 @@ use anyhow::{Context, Result};
 
 use crate::github::GitHubClient;
 use crate::manifest::{EnvFileDestinationConfig, GithubDestinationConfig};
-use crate::sync;
 
 /// One value the orchestrator wants pushed, with everything the destination
 /// needs to decide whether the push is a no-op.
@@ -115,7 +117,7 @@ impl Destination for GitHubDestination {
                 );
             }
             let key = public_key.as_ref().expect("public key set above");
-            let ct = sync::seal(&key.key, &entry.value)
+            let ct = crate::github::seal(&key.key, &entry.value)
                 .with_context(|| format!("encrypting '{}' for {}", entry.name, self.repository))?;
             let created = self
                 .client
@@ -232,6 +234,57 @@ impl Destination for EnvFileDestination {
             let mut body = lines.join("\n");
             body.push('\n');
             write_env_file(&self.path, &body)?;
+        }
+        Ok(report)
+    }
+}
+
+// ---- Local store ----
+
+/// The global encrypted local store as a destination. Because the store is
+/// readable, "unchanged" is decided by comparing the actual stored value, not
+/// the state-file hash — same philosophy as the env-file destination's
+/// content check.
+pub struct LocalStoreDestination {
+    pub vault_path: PathBuf,
+}
+
+impl LocalStoreDestination {
+    pub fn new(vault_path: &std::path::Path) -> Self {
+        Self {
+            vault_path: vault_path.to_path_buf(),
+        }
+    }
+}
+
+impl Destination for LocalStoreDestination {
+    fn key(&self) -> String {
+        "local".to_string()
+    }
+
+    fn apply(&mut self, request: DestinationRequest) -> Result<DestinationReport> {
+        let mut data = crate::vault::load(&self.vault_path)?;
+        let mut report = DestinationReport::default();
+        let mut changed = false;
+        for entry in &request.entries {
+            match data.secrets.get(&entry.name) {
+                Some(existing) if existing == &entry.value => {
+                    report.unchanged.push(entry.name.clone());
+                }
+                Some(_) => {
+                    data.secrets.insert(entry.name.clone(), entry.value.clone());
+                    report.updated.push(entry.name.clone());
+                    changed = true;
+                }
+                None => {
+                    data.secrets.insert(entry.name.clone(), entry.value.clone());
+                    report.created.push(entry.name.clone());
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            crate::vault::save(&self.vault_path, &data)?;
         }
         Ok(report)
     }
@@ -412,6 +465,40 @@ mod tests {
             .unwrap();
         assert_eq!(report.unchanged, vec!["FOO"]);
         assert!(!report.changed());
+    }
+
+    #[test]
+    fn local_store_destination_upserts_into_vault() {
+        std::env::set_var(crate::vault::PASSPHRASE_ENV, "test-pass");
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("vault.json");
+        let mut dest = LocalStoreDestination::new(&path);
+
+        let report = dest
+            .apply(DestinationRequest {
+                entries: vec![entry("FOO", "v1", None)],
+            })
+            .unwrap();
+        assert_eq!(report.created, vec!["FOO"]);
+
+        // Same value again: unchanged, decided by the stored value itself.
+        let report = dest
+            .apply(DestinationRequest {
+                entries: vec![entry("FOO", "v1", None)],
+            })
+            .unwrap();
+        assert_eq!(report.unchanged, vec!["FOO"]);
+
+        // New value: updated, and readable back through the vault.
+        let report = dest
+            .apply(DestinationRequest {
+                entries: vec![entry("FOO", "v2", None)],
+            })
+            .unwrap();
+        assert_eq!(report.updated, vec!["FOO"]);
+        let data = crate::vault::load(&path).unwrap();
+        assert_eq!(data.secrets.get("FOO").map(String::as_str), Some("v2"));
+        std::env::remove_var(crate::vault::PASSPHRASE_ENV);
     }
 
     #[test]

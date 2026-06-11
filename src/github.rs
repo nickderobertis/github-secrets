@@ -1,6 +1,8 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 use reqwest::StatusCode;
@@ -22,15 +24,10 @@ pub struct RepoPublicKey {
     pub key: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct RepoSummary {
-    full_name: String,
-}
-
 impl GitHubClient {
     pub fn new(token: &str) -> Result<Self> {
         if token.is_empty() {
-            bail!("GitHub token is not set; run `gh-secrets token <token>` first");
+            bail!("GitHub token is not set; set GH_TOKEN or run `gh-secrets auth github <token>`");
         }
         let base = std::env::var(API_BASE_ENV).unwrap_or_else(|_| DEFAULT_API_BASE.to_string());
         let mut headers = HeaderMap::new();
@@ -49,33 +46,6 @@ impl GitHubClient {
             .build()
             .context("building HTTP client")?;
         Ok(Self { base, http })
-    }
-
-    /// Lists every repository the authenticated user has access to (paginated).
-    pub fn list_user_repositories(&self) -> Result<Vec<String>> {
-        let mut out = Vec::new();
-        let mut page: u32 = 1;
-        loop {
-            let url = format!("{}/user/repos?per_page=100&page={page}", self.base);
-            let resp = self.http.get(&url).send().context("calling /user/repos")?;
-            let status = resp.status();
-            let body = resp.text().context("reading /user/repos body")?;
-            if !status.is_success() {
-                bail!(github_error_message(status, "GET /user/repos", &body));
-            }
-            let repos: Vec<RepoSummary> = serde_json::from_str(&body)
-                .with_context(|| format!("parsing /user/repos page {page}"))?;
-            if repos.is_empty() {
-                break;
-            }
-            let count = repos.len();
-            out.extend(repos.into_iter().map(|r| r.full_name));
-            if count < 100 {
-                break;
-            }
-            page += 1;
-        }
-        Ok(out)
     }
 
     pub fn get_public_key(&self, repo: &str) -> Result<RepoPublicKey> {
@@ -129,10 +99,27 @@ impl GitHubClient {
     }
 }
 
+/// Encrypts `plaintext` for the given base64-encoded X25519 public key using
+/// libsodium-compatible sealed-box semantics, and returns the ciphertext as
+/// base64. Matches what GitHub expects for `actions/secrets`.
+pub fn seal(public_key_b64: &str, plaintext: &str) -> Result<String> {
+    let key_bytes = B64.decode(public_key_b64).context("decoding public key")?;
+    let key_array: [u8; 32] = key_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow!("public key has wrong length (expected 32 bytes)"))?;
+    let pk = crypto_box::PublicKey::from(key_array);
+    let mut rng = crypto_box::aead::OsRng;
+    let ciphertext = pk
+        .seal(&mut rng, plaintext.as_bytes())
+        .map_err(|_| anyhow!("sealing failed"))?;
+    Ok(B64.encode(ciphertext))
+}
+
 fn github_error_message(status: StatusCode, op: &str, body: &str) -> String {
     let msg = match status {
         StatusCode::UNAUTHORIZED => {
-            "GitHub returned 401 Unauthorized — set a valid token with `gh-secrets token <token>`"
+            "GitHub returned 401 Unauthorized — set a valid token via GH_TOKEN or `gh-secrets auth github <token>`"
         }
         StatusCode::FORBIDDEN => {
             "GitHub returned 403 Forbidden — the token lacks the required permissions (need `repo` scope or fine-grained `secrets:write`)"
@@ -147,5 +134,21 @@ fn github_error_message(status: StatusCode, op: &str, body: &str) -> String {
         format!("{op}: {status} — {msg}")
     } else {
         format!("{op}: {status} — {msg}\n  body: {trimmed}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seal_with_a_real_pubkey_roundtrips_lengthwise() {
+        // 32-byte public key encoded in base64.
+        let key = [7u8; 32];
+        let b64 = B64.encode(key);
+        let ct = seal(&b64, "hello").unwrap();
+        let raw = B64.decode(ct).unwrap();
+        // Sealed box overhead: ephemeral pubkey (32) + MAC (16) on top of msg.
+        assert_eq!(raw.len(), 32 + 16 + "hello".len());
     }
 }

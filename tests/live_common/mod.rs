@@ -84,6 +84,10 @@ pub fn ensure_sandbox_repo() {
 /// prefix that survives the test.
 pub struct LiveSession {
     pub home: TempDir,
+    /// Working directory for the session's files (source env files); the
+    /// binary runs with this as CWD so relative paths and state stay isolated
+    /// from the repository checkout.
+    pub dir: TempDir,
     pub prefix: String,
     pub repo: String,
 }
@@ -96,6 +100,7 @@ impl LiveSession {
         );
         ensure_sandbox_repo();
         let home = TempDir::new().expect("tempdir");
+        let dir = TempDir::new().expect("tempdir");
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -105,6 +110,7 @@ impl LiveSession {
         let prefix = format!("E2E_{}_{nanos}_{n}", sanitize(test_name));
         Self {
             home,
+            dir,
             prefix,
             repo: repo_slug(),
         }
@@ -115,9 +121,18 @@ impl LiveSession {
     /// from the parent shell is explicitly cleared.
     pub fn cmd(&self) -> Command {
         let mut c = Command::cargo_bin("gh-secrets").expect("locate gh-secrets bin");
+        c.current_dir(self.dir.path());
         c.env("GH_SECRETS_HOME", self.home.path());
         c.env_remove("GH_SECRETS_API_BASE");
         c
+    }
+
+    /// Write (or overwrite) this session's source env file with the given
+    /// `NAME=value` entries, returning the `--from` spec for it.
+    pub fn write_source_env(&self, entries: &[(&str, &str)]) -> String {
+        let body: String = entries.iter().map(|(k, v)| format!("{k}={v}\n")).collect();
+        std::fs::write(self.dir.path().join("source.env"), body).expect("write source.env");
+        "env:source.env".to_string()
     }
 
     /// Build a secret name unique to this session.

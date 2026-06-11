@@ -4,17 +4,17 @@
 //! mocked GitHub API + a JSON-file "static" source (via
 //! `GH_SECRETS_TEST_SOURCE_FILE`). This exercises the orchestrator, source
 //! abstraction, env-file destination, and GitHub destination together — same
-//! plumbing the user hits when running `gh-secrets manifest sync` in their
+//! plumbing the user hits when running `gh-secrets sync` in their
 //! repo, minus only the Bitwarden CLI call (which is covered by unit tests
 //! against a mock `BwCli`).
 //!
 //! What's covered:
-//! - `manifest init` writes a usable starter manifest.
-//! - `manifest sync` pushes to both GitHub (one PUT per secret) and the local
+//! - `init` writes a usable starter manifest.
+//! - `sync` pushes to both GitHub (one PUT per secret) and the local
 //!   env file simultaneously.
 //! - The env file ends up with the expected content and preserves unrelated
 //!   lines that were already there.
-//! - A second `manifest sync` against the same source values is a no-op (no
+//! - A second `sync` against the same source values is a no-op (no
 //!   GitHub PUT, no env file change).
 //! - Changing the source value causes a new GitHub PUT and an env-file update.
 //! - The PUT body is structurally a sealed-box: base64 of 32 (ephemeral
@@ -137,7 +137,7 @@ fn manifest_for(repo: &str) -> Value {
 async fn e2e_manifest_init_writes_starter() {
     let h = ManifestHarness::new().await;
     h.cmd()
-        .args(["manifest", "init"])
+        .args(["init"])
         .assert()
         .success()
         .stdout(contains("wrote starter"));
@@ -148,13 +148,13 @@ async fn e2e_manifest_init_writes_starter() {
     assert!(!body["destinations"].as_array().unwrap().is_empty());
     // Re-running must refuse to overwrite a non-empty file.
     h.cmd()
-        .args(["manifest", "init"])
+        .args(["init"])
         .assert()
         .failure()
         .stderr(contains("refusing to overwrite"));
 }
 
-/// `manifest list` reports the managed secret names and their Bitwarden source
+/// `list` reports the managed secret names and their Bitwarden source
 /// mapping by reading only the checked-in manifest — no source contact, no
 /// credentials, and (since the manifest holds no values) nothing sensitive.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -172,10 +172,13 @@ async fn e2e_manifest_list_shows_declared_secrets() {
     }));
 
     h.cmd()
-        .args(["manifest", "list"])
+        .args(["list"])
         .assert()
         .success()
-        .stdout(contains("manifest secrets (2, source: bitwarden):"))
+        // Split around the config path: its separator is `/` on Unix and `\`
+        // on Windows (it's built via `cwd.join(...)`).
+        .stdout(contains("secrets (2, config: ."))
+        .stdout(contains("gh-secrets.json, source: bitwarden):"))
         // FOO: explicit item, inherits the source's default field.
         .stdout(contains(
             "FOO  (bitwarden item 'foo-bw-item', field 'api-key')",
@@ -229,7 +232,7 @@ async fn e2e_manifest_list_handles_empty_secrets() {
     }));
 
     h.cmd()
-        .args(["manifest", "list"])
+        .args(["list"])
         .assert()
         .success()
         .stdout(contains("no secrets declared"));
@@ -246,7 +249,7 @@ async fn e2e_manifest_sync_pushes_to_github_and_env_file() {
     fs::write(h.env_file(), "PRE_EXISTING=keepme\n").unwrap();
 
     h.cmd()
-        .args(["manifest", "sync"])
+        .args(["sync"])
         .assert()
         .success()
         .stdout(contains("created"));
@@ -306,7 +309,7 @@ async fn e2e_manifest_fans_one_source_value_out_to_multiple_names() {
     h.write_source(&json!({"npm-token": "npm-value"}));
     h.mount_github(repo).await;
 
-    h.cmd().args(["manifest", "sync"]).assert().success();
+    h.cmd().args(["sync"]).assert().success();
 
     // GitHub: one PUT per destination name, each under the destination name and
     // never the source-side identity.
@@ -335,7 +338,7 @@ async fn e2e_manifest_fans_one_source_value_out_to_multiple_names() {
 
     // Resync with the same source value is a complete no-op.
     h.cmd()
-        .args(["manifest", "sync"])
+        .args(["sync"])
         .assert()
         .success()
         .stdout(contains("nothing to do"));
@@ -347,7 +350,7 @@ async fn e2e_manifest_fans_one_source_value_out_to_multiple_names() {
 }
 
 /// A manifest where two managed secrets resolve to the same destination name is
-/// a config error: it's caught at load time, so even a read-only `manifest list`
+/// a config error: it's caught at load time, so even a read-only `list`
 /// refuses it (and `sync` never contacts the source).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2e_manifest_rejects_duplicate_destination_names() {
@@ -362,14 +365,14 @@ async fn e2e_manifest_rejects_duplicate_destination_names() {
     }));
 
     h.cmd()
-        .args(["manifest", "list"])
+        .args(["list"])
         .assert()
         .failure()
         .stderr(contains("destination name 'SHARED'"))
         .stderr(contains("two managed secrets"));
 }
 
-/// `manifest list` surfaces the source→destination fan-out mapping so a reader
+/// `list` surfaces the source→destination fan-out mapping so a reader
 /// can see which names a value lands under without contacting the source.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2e_manifest_list_shows_fan_out_mapping() {
@@ -382,11 +385,7 @@ async fn e2e_manifest_list_shows_fan_out_mapping() {
         "destinations": [{"type": "env_file", "path": ".env"}]
     }));
 
-    h.cmd()
-        .args(["manifest", "list"])
-        .assert()
-        .success()
-        .stdout(contains(
+    h.cmd().args(["list"]).assert().success().stdout(contains(
         "npm-token  (bitwarden item 'npm-token', field 'password') -> NPM_TOKEN, NODE_AUTH_TOKEN",
     ));
 }
@@ -399,12 +398,12 @@ async fn e2e_manifest_resync_with_unchanged_source_is_a_noop() {
     h.write_source(&json!({"FOO": "v1", "BAR": "v2"}));
     h.mount_github(repo).await;
 
-    h.cmd().args(["manifest", "sync"]).assert().success();
+    h.cmd().args(["sync"]).assert().success();
     assert_eq!(h.put_bodies.lock().unwrap().len(), 2);
 
     // Second run, same values: should not PUT anything new.
     h.cmd()
-        .args(["manifest", "sync"])
+        .args(["sync"])
         .assert()
         .success()
         .stdout(contains("nothing to do"));
@@ -428,12 +427,12 @@ async fn e2e_manifest_source_change_repushes_only_that_secret() {
     h.write_source(&json!({"FOO": "v1", "BAR": "v2"}));
     h.mount_github(repo).await;
 
-    h.cmd().args(["manifest", "sync"]).assert().success();
+    h.cmd().args(["sync"]).assert().success();
     assert_eq!(h.put_bodies.lock().unwrap().len(), 2);
 
     // Update only FOO.
     h.write_source(&json!({"FOO": "v1-updated", "BAR": "v2"}));
-    h.cmd().args(["manifest", "sync"]).assert().success();
+    h.cmd().args(["sync"]).assert().success();
 
     // Expect exactly one additional PUT — for FOO.
     let bodies = h.put_bodies.lock().unwrap();

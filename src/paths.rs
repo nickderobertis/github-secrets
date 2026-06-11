@@ -4,7 +4,8 @@ use anyhow::{anyhow, Result};
 
 const HOME_ENV: &str = "GH_SECRETS_HOME";
 
-/// Resolves on-disk locations for the app config and per-profile config files.
+/// Resolves on-disk locations under the config root: the encrypted vault and
+/// the global config/state pair.
 ///
 /// Honors `GH_SECRETS_HOME` when set (used by tests to redirect at a tempdir)
 /// and otherwise falls back to the platform config directory.
@@ -31,22 +32,21 @@ impl Paths {
         &self.root
     }
 
-    pub fn app_file(&self) -> PathBuf {
-        self.root.join("app.json")
+    /// The encrypted vault: stored credentials (`gh-secrets auth`) plus the
+    /// global `local` store's secret values (`gh-secrets store`).
+    pub fn vault_file(&self) -> PathBuf {
+        self.root.join("vault.json")
     }
 
-    /// Profile-independent credential store for the manifest flow (GitHub token
-    /// and Bitwarden login). Lives at the config root, not under `profiles/`,
-    /// since `manifest sync` is independent of the active profile.
-    pub fn credentials_file(&self) -> PathBuf {
-        self.root.join("credentials.json")
+    /// The global config, used when the working directory has no
+    /// `gh-secrets.json` (or when `--global` forces it). Same schema as the
+    /// project-local manifest.
+    pub fn global_manifest_file(&self) -> PathBuf {
+        self.root.join("gh-secrets.json")
     }
 
-    pub fn profiles_dir(&self) -> PathBuf {
-        self.root.join("profiles")
-    }
-
-    pub fn profile_file(&self, name: &str) -> PathBuf {
-        self.profiles_dir().join(format!("{name}.json"))
+    /// Sync state for the global config.
+    pub fn global_state_file(&self) -> PathBuf {
+        self.root.join(".gh-secrets-state.json")
     }
 }
