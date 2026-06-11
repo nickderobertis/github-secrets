@@ -174,6 +174,11 @@ enum SecretCmd {
         name: String,
         repository: Option<String>,
     },
+    /// List secret names (never values), globally and per-repository.
+    List {
+        /// Optional repository; if omitted, lists global and every per-repo override.
+        repository: Option<String>,
+    },
     /// Push changed secrets to GitHub.
     Sync {
         /// Optional secret name; if omitted, syncs every defined secret.
@@ -328,6 +333,9 @@ pub fn run() -> Result<()> {
                     scope_label(repository.as_deref())
                 );
             }
+            SecretCmd::List { repository } => {
+                list_secrets(&profile, repository.as_deref());
+            }
             SecretCmd::Sync {
                 name,
                 repository,
@@ -467,6 +475,66 @@ fn scope_label(repo: Option<&str>) -> String {
     match repo {
         Some(r) => format!("repo '{r}'"),
         None => "global".to_string(),
+    }
+}
+
+/// Print the names of stored secrets, never their values. With `repository`
+/// set, only that repo's per-repo overrides are listed; otherwise the global
+/// secrets and every per-repo override are shown, each group sorted by name.
+fn list_secrets(profile: &ProfileConfig, repository: Option<&str>) {
+    let sorted = |names: Vec<&str>| -> Vec<String> {
+        let mut v: Vec<String> = names.into_iter().map(str::to_string).collect();
+        v.sort();
+        v
+    };
+
+    if let Some(repo) = repository {
+        let names = sorted(profile.repository_secrets.names_for(repo));
+        if names.is_empty() {
+            println!("secrets: none defined for {}", scope_label(Some(repo)));
+            return;
+        }
+        print_secret_group(&scope_label(Some(repo)), &names);
+        return;
+    }
+
+    let global = sorted(
+        profile
+            .global_secrets
+            .secrets
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect(),
+    );
+    let per_repo: Vec<(&String, Vec<String>)> = profile
+        .repository_secrets
+        .by_repo
+        .iter()
+        .filter(|(_, secrets)| !secrets.is_empty())
+        .map(|(repo, secrets)| {
+            (
+                repo,
+                sorted(secrets.iter().map(|s| s.name.as_str()).collect()),
+            )
+        })
+        .collect();
+
+    if global.is_empty() && per_repo.is_empty() {
+        println!("secrets: none defined");
+        return;
+    }
+    if !global.is_empty() {
+        print_secret_group("global", &global);
+    }
+    for (repo, names) in &per_repo {
+        print_secret_group(&scope_label(Some(repo)), names);
+    }
+}
+
+fn print_secret_group(label: &str, names: &[String]) {
+    println!("{label} ({}):", names.len());
+    for name in names {
+        println!("  - {name}");
     }
 }
 
