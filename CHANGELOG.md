@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/nickderobertis/github-secrets/compare/v1.0.1...v1.0.2) (2026-06-11)
+
+
+### Bug Fixes
+
+* stop empty release-please pr output from killing the release build ([#39](https://github.com/nickderobertis/github-secrets/issues/39)) ([012930e](https://github.com/nickderobertis/github-secrets/commit/012930ea4568cbd388916df351d414065dde4106))
+
 ## [1.0.1](https://github.com/nickderobertis/github-secrets/compare/v1.0.0...v1.0.1) (2026-06-11)
 
 
