@@ -175,9 +175,10 @@ async fn e2e_manifest_list_shows_declared_secrets() {
         .args(["list"])
         .assert()
         .success()
-        .stdout(contains(
-            "secrets (2, config: ./gh-secrets.json, source: bitwarden):",
-        ))
+        // Split around the config path: its separator is `/` on Unix and `\`
+        // on Windows (it's built via `cwd.join(...)`).
+        .stdout(contains("secrets (2, config: ."))
+        .stdout(contains("gh-secrets.json, source: bitwarden):"))
         // FOO: explicit item, inherits the source's default field.
         .stdout(contains(
             "FOO  (bitwarden item 'foo-bw-item', field 'api-key')",
