@@ -115,17 +115,17 @@ pub fn resolve_pipeline(
         ConfigOrigin::Args => None,
     };
 
-    let source = overrides
-        .source
-        .or_else(|| loaded.as_ref().map(|m| m.source.clone()))
-        .ok_or_else(|| {
-            anyhow!("no source configured: pass --from, or create a config with `gh-secrets init`")
-        })?;
+    // Take the loaded manifest apart so unoverridden sections move into the
+    // pipeline instead of being cloned.
+    let (loaded_source, loaded_secrets, loaded_destinations) = match loaded {
+        Some(m) => (Some(m.source), m.secrets, m.destinations),
+        None => (None, Vec::new(), Vec::new()),
+    };
+    let source = overrides.source.or(loaded_source).ok_or_else(|| {
+        anyhow!("no source configured: pass --from, or create a config with `gh-secrets init`")
+    })?;
     let destinations = if overrides.destinations.is_empty() {
-        loaded
-            .as_ref()
-            .map(|m| m.destinations.clone())
-            .unwrap_or_default()
+        loaded_destinations
     } else {
         overrides.destinations
     };
@@ -133,10 +133,7 @@ pub fn resolve_pipeline(
         bail!("no destinations configured: pass --to, or declare destinations in the config");
     }
     let mut secrets = if overrides.secrets.is_empty() {
-        loaded
-            .as_ref()
-            .map(|m| m.secrets.clone())
-            .unwrap_or_default()
+        loaded_secrets
     } else {
         overrides.secrets
     };
@@ -366,6 +363,10 @@ pub fn sync_with_source(
 ) -> Result<SyncReport> {
     let mut state = SyncState::load_or_default(&pipeline.state_path)?;
     let entries = fetch_entries(pipeline, source, &mut state)?;
+    let hash_by_name: HashMap<&str, &str> = entries
+        .iter()
+        .map(|e| (e.name.as_str(), e.current_hash.as_str()))
+        .collect();
 
     let mut report = SyncReport::default();
     for dest_cfg in &pipeline.destinations {
@@ -395,8 +396,8 @@ pub fn sync_with_source(
             .chain(dest_report.updated.iter())
             .chain(dest_report.unchanged.iter())
         {
-            if let Some(entry) = entries.iter().find(|e| &e.name == name) {
-                state.record_push(name, &dest_key, &entry.current_hash);
+            if let Some(hash) = hash_by_name.get(name.as_str()) {
+                state.record_push(name, &dest_key, hash);
             }
         }
         report.destinations.push(DestinationOutcome {
@@ -437,7 +438,7 @@ fn fan_out(
         .iter()
         .map(|f| (f.name.as_str(), f.value.as_str()))
         .collect();
-    let mut entries = Vec::new();
+    let mut entries = Vec::with_capacity(secrets.iter().map(|s| s.dest_names().len()).sum());
     for secret in secrets {
         let value = *fetched_by_name.get(secret.name.as_str()).ok_or_else(|| {
             anyhow!(

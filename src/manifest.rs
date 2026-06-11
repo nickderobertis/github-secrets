@@ -8,7 +8,7 @@
 //!   SHA-256 hashes so we can do "push only when something changed" without
 //!   ever persisting the plaintext value.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -52,11 +52,11 @@ impl ManifestSecret {
     /// The names this value is written under at each destination. Defaults to
     /// `[name]` when `destination_names` is omitted, so a secret that keeps the
     /// same name everywhere needs no extra config.
-    pub fn dest_names(&self) -> Vec<&str> {
+    pub fn dest_names(&self) -> &[String] {
         if self.destination_names.is_empty() {
-            vec![self.name.as_str()]
+            std::slice::from_ref(&self.name)
         } else {
-            self.destination_names.iter().map(String::as_str).collect()
+            &self.destination_names
         }
     }
 }
@@ -226,7 +226,7 @@ impl Manifest {
 /// last-writer-wins at every destination and thrash the state file, so we
 /// surface it as a config error instead of silently picking one.
 pub fn validate_unique_destination_names(secrets: &[ManifestSecret]) -> Result<()> {
-    let mut owner: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut owner: HashMap<&str, &str> = HashMap::with_capacity(secrets.len());
     for secret in secrets {
         for dest in secret.dest_names() {
             match owner.insert(dest, secret.name.as_str()) {
@@ -267,10 +267,13 @@ pub struct SecretSyncState {
 
 impl SyncState {
     pub fn load_or_default(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let bytes = fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => {
+                return Err(e).with_context(|| format!("reading {}", path.display()));
+            }
+        };
         serde_json::from_slice(&bytes).with_context(|| format!("parsing {}", path.display()))
     }
 
@@ -408,7 +411,7 @@ mod tests {
             field: None,
             destination_names: Vec::new(),
         };
-        assert_eq!(single.dest_names(), vec!["FOO"]);
+        assert_eq!(single.dest_names(), ["FOO"]);
 
         // Supplied: the value fans out to every listed destination name, which
         // can differ entirely from the source-side `name`.
@@ -418,7 +421,7 @@ mod tests {
             field: None,
             destination_names: vec!["NPM_TOKEN".into(), "NODE_AUTH_TOKEN".into()],
         };
-        assert_eq!(fanned.dest_names(), vec!["NPM_TOKEN", "NODE_AUTH_TOKEN"]);
+        assert_eq!(fanned.dest_names(), ["NPM_TOKEN", "NODE_AUTH_TOKEN"]);
     }
 
     fn secret(name: &str, dest_names: &[&str]) -> ManifestSecret {

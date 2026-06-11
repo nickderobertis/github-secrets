@@ -138,6 +138,10 @@ fn unquote(raw: &str) -> String {
 }
 
 fn unescape_double(inner: &str) -> String {
+    // Most values carry no escape at all; skip the char-by-char rebuild then.
+    if !inner.contains('\\') {
+        return inner.to_string();
+    }
     let mut out = String::with_capacity(inner.len());
     let mut chars = inner.chars();
     while let Some(c) = chars.next() {
