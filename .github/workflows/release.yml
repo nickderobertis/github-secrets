@@ -2,10 +2,13 @@
 #
 # Flow: every push to `master` runs release-please. It keeps an open "release
 # PR" that accumulates the pending changelog and the next `Cargo.toml` version
-# derived from the conventional commits since the last release. Merging that PR
-# bumps the version, tags `vX.Y.Z`, and cuts the GitHub Release. The same run
-# then builds the per-target binaries and attaches them (plus SHA-256 sums) to
-# that release, and publishes to crates.io when configured.
+# derived from the conventional commits since the last release. That PR has
+# auto-merge enabled (see the step below), so once its required checks pass it
+# merges itself with no human click; the merge bumps the version, tags
+# `vX.Y.Z`, and cuts the GitHub Release. The same run then builds the
+# per-target binaries and attaches them (plus SHA-256 sums) to that release,
+# and publishes to crates.io when configured. Net effect: merging one feature
+# or fix PR is the only manual step in shipping a release.
 #
 # This is deliberately a single workflow: a tag pushed by the default
 # GITHUB_TOKEN does NOT trigger a separate tag-listening workflow, so the build
@@ -48,6 +51,29 @@ jobs:
           # secret is unset (release PR then still works, but must be merged
           # manually). See "Releases and CI secrets" in AGENTS.md.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      # Turn on auto-merge for the open release PR so the whole release is
+      # hands-off: once the required checks pass, GitHub merges it, and that
+      # merge is what this workflow re-runs on to cut the tag/release. We must
+      # use the PAT, not GITHUB_TOKEN, for two linked reasons: the release PR's
+      # required checks only run because a real-user token opened it, and the
+      # eventual auto-merge has to be attributed to that same user so the push
+      # to `master` triggers `release` again — a GITHUB_TOKEN merge is ignored
+      # by Actions and would strand the release at "PR merged, never tagged".
+      # `pr` is set whenever release-please opened/updated a release PR this
+      # run; without the PAT we skip and the PR is merged by hand (the prior
+      # behavior). See "Releases and CI secrets" in AGENTS.md.
+      - name: Enable auto-merge on the release PR
+        if: ${{ steps.release.outputs.pr }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          PR_NUMBER: ${{ fromJson(steps.release.outputs.pr).number }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "RELEASE_PLEASE_TOKEN not set; leaving the release PR for a manual merge."
+            exit 0
+          fi
+          gh pr merge "$PR_NUMBER" --auto --squash --repo "$GITHUB_REPOSITORY"
 
   build:
     name: build (${{ matrix.target }})
