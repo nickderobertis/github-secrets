@@ -557,7 +557,9 @@ pub fn extract_field(item: &Value, field: &str) -> Result<String> {
             }
             Err(anyhow!("no custom field named '{target}'"))
         }
-        other => Err(anyhow!("unsupported field selector '{other}'")),
+        other => Err(anyhow!(
+            "unsupported field selector '{other}' (supported: password, username, notes, fields.<NAME>)"
+        )),
     }
 }
 
@@ -596,7 +598,17 @@ mod tests {
     #[test]
     fn extract_unsupported_field_is_an_error() {
         let item = json!({});
-        assert!(extract_field(&item, "totp").is_err());
+        let err = extract_field(&item, "totp").unwrap_err().to_string();
+        assert!(
+            err.contains("unsupported field selector 'totp'"),
+            "got: {err}"
+        );
+        // The error must name the supported selectors so the user knows what
+        // to try instead of just learning their guess was wrong.
+        assert!(
+            err.contains("password") && err.contains("fields.<NAME>"),
+            "got: {err}"
+        );
     }
 
     /// Mock CLI that tracks calls so we can assert the source did login/unlock
