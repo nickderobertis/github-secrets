@@ -20,18 +20,20 @@ use crate::github::GitHubClient;
 use crate::manifest::{EnvFileDestinationConfig, GithubDestinationConfig};
 
 /// One value the orchestrator wants pushed, with everything the destination
-/// needs to decide whether the push is a no-op.
-#[derive(Debug, Clone)]
-pub struct DestinationEntry {
-    pub name: String,
-    pub value: String,
-    pub current_hash: String,
-    pub last_pushed_hash: Option<String>,
+/// needs to decide whether the push is a no-op. Borrows from the engine's
+/// fetched entries (and the sync state for `last_pushed_hash`) so building a
+/// per-destination request never copies a secret value.
+#[derive(Debug, Clone, Copy)]
+pub struct DestinationEntry<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
+    pub current_hash: &'a str,
+    pub last_pushed_hash: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct DestinationRequest {
-    pub entries: Vec<DestinationEntry>,
+pub struct DestinationRequest<'a> {
+    pub entries: Vec<DestinationEntry<'a>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -51,7 +53,7 @@ impl DestinationReport {
 /// key on it) and apply a batch of updates.
 pub trait Destination {
     fn key(&self) -> String;
-    fn apply(&mut self, request: DestinationRequest) -> Result<DestinationReport>;
+    fn apply(&mut self, request: DestinationRequest<'_>) -> Result<DestinationReport>;
 }
 
 // ---- GitHub ----
@@ -100,13 +102,13 @@ impl Destination for GitHubDestination {
         format!("github:{}", self.repository)
     }
 
-    fn apply(&mut self, request: DestinationRequest) -> Result<DestinationReport> {
+    fn apply(&mut self, request: DestinationRequest<'_>) -> Result<DestinationReport> {
         let mut report = DestinationReport::default();
         // Lazily fetch the public key — only if we have at least one push.
         let mut public_key: Option<crate::github::RepoPublicKey> = None;
         for entry in &request.entries {
-            if entry.last_pushed_hash.as_deref() == Some(&entry.current_hash) {
-                report.unchanged.push(entry.name.clone());
+            if entry.last_pushed_hash == Some(entry.current_hash) {
+                report.unchanged.push(entry.name.to_string());
                 continue;
             }
             if public_key.is_none() {
@@ -117,16 +119,16 @@ impl Destination for GitHubDestination {
                 );
             }
             let key = public_key.as_ref().expect("public key set above");
-            let ct = crate::github::seal(&key.key, &entry.value)
+            let ct = crate::github::seal(&key.key, entry.value)
                 .with_context(|| format!("encrypting '{}' for {}", entry.name, self.repository))?;
             let created = self
                 .client
-                .put_secret(&self.repository, &entry.name, &ct, &key.key_id)
+                .put_secret(&self.repository, entry.name, &ct, &key.key_id)
                 .with_context(|| format!("uploading '{}' to {}", entry.name, self.repository))?;
             if created {
-                report.created.push(entry.name.clone());
+                report.created.push(entry.name.to_string());
             } else {
-                report.updated.push(entry.name.clone());
+                report.updated.push(entry.name.to_string());
             }
         }
         Ok(report)
@@ -160,7 +162,7 @@ impl Destination for EnvFileDestination {
         self.key.clone()
     }
 
-    fn apply(&mut self, request: DestinationRequest) -> Result<DestinationReport> {
+    fn apply(&mut self, request: DestinationRequest<'_>) -> Result<DestinationReport> {
         let existing = if self.path.exists() {
             fs::read_to_string(&self.path)
                 .with_context(|| format!("reading {}", self.path.display()))?
@@ -190,41 +192,41 @@ impl Destination for EnvFileDestination {
         let mut changed = false;
 
         for entry in &request.entries {
-            let new_line = format_env_line(&entry.name, &entry.value);
-            let already_present = key_to_index.contains_key(&entry.name);
+            let new_line = format_env_line(entry.name, entry.value);
+            let already_present = key_to_index.contains_key(entry.name);
             // We only treat this as truly unchanged when the file already has
             // the key AND the state says we last pushed this exact hash. Either
             // missing means the user (or another tool) edited the file out from
             // under us; rewrite.
-            let state_matches = entry.last_pushed_hash.as_deref() == Some(&entry.current_hash);
+            let state_matches = entry.last_pushed_hash == Some(entry.current_hash);
             if already_present && state_matches {
                 // Make sure the line is exactly what we'd write today — if not,
                 // overwrite (handles a user-edited line).
-                let idx = key_to_index[&entry.name];
+                let idx = key_to_index[entry.name];
                 if lines[idx] == new_line {
-                    report.unchanged.push(entry.name.clone());
+                    report.unchanged.push(entry.name.to_string());
                     continue;
                 }
                 lines[idx] = new_line;
-                report.updated.push(entry.name.clone());
+                report.updated.push(entry.name.to_string());
                 changed = true;
                 continue;
             }
 
-            match key_to_index.get(&entry.name).copied() {
+            match key_to_index.get(entry.name).copied() {
                 Some(idx) => {
                     if lines[idx] != new_line {
                         lines[idx] = new_line;
                         changed = true;
                     }
-                    report.updated.push(entry.name.clone());
+                    report.updated.push(entry.name.to_string());
                 }
                 None => {
                     lines.push(new_line);
                     // Update the index in case a later entry has the same name
                     // (shouldn't happen, but be safe).
-                    key_to_index.insert(entry.name.clone(), lines.len() - 1);
-                    report.created.push(entry.name.clone());
+                    key_to_index.insert(entry.name.to_string(), lines.len() - 1);
+                    report.created.push(entry.name.to_string());
                     changed = true;
                 }
             }
@@ -262,23 +264,25 @@ impl Destination for LocalStoreDestination {
         "local".to_string()
     }
 
-    fn apply(&mut self, request: DestinationRequest) -> Result<DestinationReport> {
+    fn apply(&mut self, request: DestinationRequest<'_>) -> Result<DestinationReport> {
         let mut data = crate::vault::load(&self.vault_path)?;
         let mut report = DestinationReport::default();
         let mut changed = false;
         for entry in &request.entries {
-            match data.secrets.get(&entry.name) {
-                Some(existing) if existing == &entry.value => {
-                    report.unchanged.push(entry.name.clone());
+            match data.secrets.get(entry.name) {
+                Some(existing) if existing == entry.value => {
+                    report.unchanged.push(entry.name.to_string());
                 }
                 Some(_) => {
-                    data.secrets.insert(entry.name.clone(), entry.value.clone());
-                    report.updated.push(entry.name.clone());
+                    data.secrets
+                        .insert(entry.name.to_string(), entry.value.to_string());
+                    report.updated.push(entry.name.to_string());
                     changed = true;
                 }
                 None => {
-                    data.secrets.insert(entry.name.clone(), entry.value.clone());
-                    report.created.push(entry.name.clone());
+                    data.secrets
+                        .insert(entry.name.to_string(), entry.value.to_string());
+                    report.created.push(entry.name.to_string());
                     changed = true;
                 }
             }
@@ -390,13 +394,35 @@ mod tests {
         assert_eq!(format_env_line("K", "a\nb\tc"), r#"K="a\nb\tc""#);
     }
 
-    fn entry(name: &str, value: &str, last: Option<&str>) -> DestinationEntry {
-        let current_hash = crate::manifest::value_hash(name, value);
-        DestinationEntry {
+    /// Owned fixture mirroring what the engine holds; `request` lends it out
+    /// as the borrowed entries `apply` takes, like `sync_with_source` does.
+    struct OwnedEntry {
+        name: String,
+        value: String,
+        current_hash: String,
+        last_pushed_hash: Option<String>,
+    }
+
+    fn entry(name: &str, value: &str, last: Option<&str>) -> OwnedEntry {
+        OwnedEntry {
             name: name.to_string(),
             value: value.to_string(),
-            current_hash,
+            current_hash: crate::manifest::value_hash(name, value),
             last_pushed_hash: last.map(String::from),
+        }
+    }
+
+    fn request(entries: &[OwnedEntry]) -> DestinationRequest<'_> {
+        DestinationRequest {
+            entries: entries
+                .iter()
+                .map(|e| DestinationEntry {
+                    name: &e.name,
+                    value: &e.value,
+                    current_hash: &e.current_hash,
+                    last_pushed_hash: e.last_pushed_hash.as_deref(),
+                })
+                .collect(),
         }
     }
 
@@ -408,11 +434,7 @@ mod tests {
             path: path.clone(),
             key: format!("env_file:{}", path.display()),
         };
-        let report = dest
-            .apply(DestinationRequest {
-                entries: vec![entry("FOO", "bar", None)],
-            })
-            .unwrap();
+        let report = dest.apply(request(&[entry("FOO", "bar", None)])).unwrap();
         assert_eq!(report.created, vec!["FOO"]);
         assert!(report.updated.is_empty());
         let content = fs::read_to_string(&path).unwrap();
@@ -435,9 +457,10 @@ mod tests {
             key: format!("env_file:{}", path.display()),
         };
         let report = dest
-            .apply(DestinationRequest {
-                entries: vec![entry("FOO", "new", None), entry("BAR", "added", None)],
-            })
+            .apply(request(&[
+                entry("FOO", "new", None),
+                entry("BAR", "added", None),
+            ]))
             .unwrap();
         assert_eq!(report.updated, vec!["FOO"]);
         assert_eq!(report.created, vec!["BAR"]);
@@ -459,9 +482,7 @@ mod tests {
             key: format!("env_file:{}", path.display()),
         };
         let report = dest
-            .apply(DestinationRequest {
-                entries: vec![entry("FOO", "bar", Some(&h))],
-            })
+            .apply(request(&[entry("FOO", "bar", Some(&h))]))
             .unwrap();
         assert_eq!(report.unchanged, vec!["FOO"]);
         assert!(!report.changed());
@@ -474,27 +495,15 @@ mod tests {
         let path = dir.path().join("vault.json");
         let mut dest = LocalStoreDestination::new(&path);
 
-        let report = dest
-            .apply(DestinationRequest {
-                entries: vec![entry("FOO", "v1", None)],
-            })
-            .unwrap();
+        let report = dest.apply(request(&[entry("FOO", "v1", None)])).unwrap();
         assert_eq!(report.created, vec!["FOO"]);
 
         // Same value again: unchanged, decided by the stored value itself.
-        let report = dest
-            .apply(DestinationRequest {
-                entries: vec![entry("FOO", "v1", None)],
-            })
-            .unwrap();
+        let report = dest.apply(request(&[entry("FOO", "v1", None)])).unwrap();
         assert_eq!(report.unchanged, vec!["FOO"]);
 
         // New value: updated, and readable back through the vault.
-        let report = dest
-            .apply(DestinationRequest {
-                entries: vec![entry("FOO", "v2", None)],
-            })
-            .unwrap();
+        let report = dest.apply(request(&[entry("FOO", "v2", None)])).unwrap();
         assert_eq!(report.updated, vec!["FOO"]);
         let data = crate::vault::load(&path).unwrap();
         assert_eq!(data.secrets.get("FOO").map(String::as_str), Some("v2"));
@@ -513,9 +522,7 @@ mod tests {
             key: format!("env_file:{}", path.display()),
         };
         let report = dest
-            .apply(DestinationRequest {
-                entries: vec![entry("FOO", "bar", Some(&h))],
-            })
+            .apply(request(&[entry("FOO", "bar", Some(&h))]))
             .unwrap();
         // The fact that state hash matches doesn't matter — file content
         // differs from canonical form, so we rewrite.

@@ -115,17 +115,17 @@ pub fn resolve_pipeline(
         ConfigOrigin::Args => None,
     };
 
-    let source = overrides
-        .source
-        .or_else(|| loaded.as_ref().map(|m| m.source.clone()))
-        .ok_or_else(|| {
-            anyhow!("no source configured: pass --from, or create a config with `gh-secrets init`")
-        })?;
+    // Take the loaded manifest apart so unoverridden sections move into the
+    // pipeline instead of being cloned.
+    let (loaded_source, loaded_secrets, loaded_destinations) = match loaded {
+        Some(m) => (Some(m.source), m.secrets, m.destinations),
+        None => (None, Vec::new(), Vec::new()),
+    };
+    let source = overrides.source.or(loaded_source).ok_or_else(|| {
+        anyhow!("no source configured: pass --from, or create a config with `gh-secrets init`")
+    })?;
     let destinations = if overrides.destinations.is_empty() {
-        loaded
-            .as_ref()
-            .map(|m| m.destinations.clone())
-            .unwrap_or_default()
+        loaded_destinations
     } else {
         overrides.destinations
     };
@@ -133,10 +133,7 @@ pub fn resolve_pipeline(
         bail!("no destinations configured: pass --to, or declare destinations in the config");
     }
     let mut secrets = if overrides.secrets.is_empty() {
-        loaded
-            .as_ref()
-            .map(|m| m.secrets.clone())
-            .unwrap_or_default()
+        loaded_secrets
     } else {
         overrides.secrets
     };
@@ -366,23 +363,30 @@ pub fn sync_with_source(
 ) -> Result<SyncReport> {
     let mut state = SyncState::load_or_default(&pipeline.state_path)?;
     let entries = fetch_entries(pipeline, source, &mut state)?;
+    let hash_by_name: HashMap<&str, &str> = entries
+        .iter()
+        .map(|e| (e.name.as_str(), e.hash.as_str()))
+        .collect();
 
     let mut report = SyncReport::default();
     for dest_cfg in &pipeline.destinations {
         let mut destination = build_destination(dest_cfg, creds, &pipeline.base_dir, paths)?;
         let dest_key = destination.key();
-        // Per-destination request: inject the last-pushed hash from state.
-        let mut req = DestinationRequest::default();
-        for entry in &entries {
-            req.entries.push(DestinationEntry {
-                name: entry.name.clone(),
-                value: entry.value.clone(),
-                current_hash: entry.current_hash.clone(),
-                last_pushed_hash: state
-                    .last_pushed_hash(&entry.name, &dest_key)
-                    .map(String::from),
-            });
-        }
+        // Per-destination request: lend the fetched entries out, injecting the
+        // last-pushed hash from state. Nothing is copied here — the borrow of
+        // `state` ends when `apply` consumes the request, before `record_push`
+        // needs it mutably.
+        let req = DestinationRequest {
+            entries: entries
+                .iter()
+                .map(|entry| DestinationEntry {
+                    name: &entry.name,
+                    value: &entry.value,
+                    current_hash: &entry.hash,
+                    last_pushed_hash: state.last_pushed_hash(&entry.name, &dest_key),
+                })
+                .collect(),
+        };
         let dest_report = destination
             .apply(req)
             .with_context(|| format!("applying to destination {dest_key}"))?;
@@ -395,8 +399,8 @@ pub fn sync_with_source(
             .chain(dest_report.updated.iter())
             .chain(dest_report.unchanged.iter())
         {
-            if let Some(entry) = entries.iter().find(|e| &e.name == name) {
-                state.record_push(name, &dest_key, &entry.current_hash);
+            if let Some(hash) = hash_by_name.get(name.as_str()) {
+                state.record_push(name, &dest_key, hash);
             }
         }
         report.destinations.push(DestinationOutcome {
@@ -408,11 +412,20 @@ pub fn sync_with_source(
     Ok(report)
 }
 
+/// One fanned-out (destination-name, value) pair with its content hash. Owned
+/// by the engine and lent to every destination as borrowed
+/// [`DestinationEntry`]s, so the value is held exactly once per sync.
+struct ResolvedEntry {
+    name: String,
+    value: String,
+    hash: String,
+}
+
 fn fetch_entries(
     pipeline: &Pipeline,
     source: &dyn SecretSource,
     state: &mut SyncState,
-) -> Result<Vec<DestinationEntry>> {
+) -> Result<Vec<ResolvedEntry>> {
     let fetched = source
         .fetch(&pipeline.secrets)
         .context("fetching from source")?;
@@ -432,12 +445,12 @@ fn fetch_entries(
 fn fan_out(
     secrets: &[ManifestSecret],
     fetched: &[crate::sources::FetchedSecret],
-) -> Result<Vec<DestinationEntry>> {
+) -> Result<Vec<ResolvedEntry>> {
     let fetched_by_name: HashMap<&str, &str> = fetched
         .iter()
         .map(|f| (f.name.as_str(), f.value.as_str()))
         .collect();
-    let mut entries = Vec::new();
+    let mut entries = Vec::with_capacity(secrets.iter().map(|s| s.dest_names().len()).sum());
     for secret in secrets {
         let value = *fetched_by_name.get(secret.name.as_str()).ok_or_else(|| {
             anyhow!(
@@ -446,11 +459,10 @@ fn fan_out(
             )
         })?;
         for dest_name in secret.dest_names() {
-            entries.push(DestinationEntry {
+            entries.push(ResolvedEntry {
                 name: dest_name.to_string(),
                 value: value.to_string(),
-                current_hash: value_hash(dest_name, value),
-                last_pushed_hash: None, // filled in per-destination
+                hash: value_hash(dest_name, value),
             });
         }
     }
@@ -502,7 +514,7 @@ pub fn check(paths: &Paths, pipeline: &Pipeline) -> Result<CheckReport> {
             up_to_date: Vec::new(),
         };
         for entry in &entries {
-            if state.last_pushed_hash(&entry.name, &dest_key) == Some(entry.current_hash.as_str()) {
+            if state.last_pushed_hash(&entry.name, &dest_key) == Some(entry.hash.as_str()) {
                 check.up_to_date.push(entry.name.clone());
             } else {
                 check.stale.push(entry.name.clone());
