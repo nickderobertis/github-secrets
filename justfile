@@ -7,9 +7,10 @@
 default:
     @just --list
 
-# Set up from a clean clone: fetch toolchain components + pre-fetch crates.
+# Set up from a clean clone: toolchain components, cargo-nextest, pre-fetch.
 bootstrap:
     rustup component add rustfmt clippy
+    sh scripts/install-nextest.sh
     cargo fetch --locked
 
 # Full quality gate: format check, clippy, unit + integration, and e2e.
