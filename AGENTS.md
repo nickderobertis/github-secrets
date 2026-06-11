@@ -320,13 +320,18 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   not hand-bump `version` or push tags. On every push to `master`,
   `.github/workflows/release.yml` runs release-please, which maintains an open
   "release PR" carrying the next `Cargo.toml`/`Cargo.lock` version bump and the
-  generated `CHANGELOG.md`. **Merging that release PR** is the release action:
-  it tags `vX.Y.Z`, cuts the GitHub Release, and the same workflow run then
-  builds binaries for x86_64 + aarch64 Linux, aarch64 macOS, and x86_64 Windows
-  (x86_64 macOS is intentionally omitted — see the matrix comment in
+  generated `CHANGELOG.md`. That PR has **auto-merge enabled by the workflow**
+  (the "Enable auto-merge on the release PR" step), so once its required checks
+  go green it merges itself with no human click. Merging it is the release
+  action: it tags `vX.Y.Z`, cuts the GitHub Release, and the same workflow run
+  then builds binaries for x86_64 + aarch64 Linux, aarch64 macOS, and x86_64
+  Windows (x86_64 macOS is intentionally omitted — see the matrix comment in
   `release.yml`), attaches each archive with a SHA-256 checksum, and (if
-  `CARGO_REGISTRY_TOKEN` is
-  configured) publishes to crates.io.
+  `CARGO_REGISTRY_TOKEN` is configured) publishes to crates.io. **Net effect:
+  merging one feature/fix PR is the only manual step in shipping a release** —
+  release PR, its CI, the merge, the tag, the binaries, and the crates.io
+  publish all follow automatically. (Auto-merge requires `RELEASE_PLEASE_TOKEN`
+  and the repo's "Allow auto-merge" setting; see below.)
 - release-please opens its release PR from the branch
   `release-please--branches--master--components--gh-secrets`, *not* the plain
   `release-please--branches--master`: the rust release-type appends the crate
@@ -341,20 +346,31 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   `release-please-manifest.json` is the source of truth for the current version
   — keep it equal to `Cargo.toml`.
 - The release PR opens under a PAT (`RELEASE_PLEASE_TOKEN`) when that repo secret
-  is set, falling back to `GITHUB_TOKEN` otherwise. This matters because a PR
-  opened by `GITHUB_TOKEN` does **not** trigger the `pull_request` CI/lint
-  workflows — GitHub suppresses that to avoid recursive runs — so its required
-  status checks never appear and **auto-merge can never fire**; the release PR
-  has to be merged by hand. A PAT-opened PR triggers CI like any human PR, so
-  branch protection is satisfied and auto-merge works. Set it with a PAT (a
-  fine-grained token with `contents: read/write` + `pull-requests: read/write`
-  on this repo, or a classic `repo` PAT):
+  is set, falling back to `GITHUB_TOKEN` otherwise. The PAT does **double duty**,
+  and both halves are why the release is fully automatic:
+  1. **It opens the release PR**, so the `pull_request` CI/lint workflows run
+     on it. A PR opened by `GITHUB_TOKEN` does **not** trigger those workflows
+     (GitHub suppresses that to avoid recursive runs), so its required status
+     checks never appear and auto-merge could never satisfy branch protection.
+  2. **The "Enable auto-merge on the release PR" step uses it** (not
+     `GITHUB_TOKEN`) to turn on auto-merge, so when GitHub later performs the
+     merge it is attributed to the PAT's user. That attribution is essential:
+     the resulting push to `master` must re-trigger `release` to cut the
+     tag/Release, and a push by `GITHUB_TOKEN` is ignored by Actions — it would
+     strand the release at "PR merged, never tagged".
+
+  Auto-merge also requires the repo's **"Allow auto-merge"** setting to be on
+  (Settings → General → Pull Requests) and a branch-protection rule with the
+  required status checks; both are already configured on this repo. Set the PAT
+  with a fine-grained token (owner of this repo, `contents: read/write` +
+  `pull-requests: read/write`) or a classic `repo` PAT:
   ```
   gh secret set RELEASE_PLEASE_TOKEN --repo <owner>/<repo>
   # paste the token when prompted
   ```
-  Without it nothing breaks — the workflow falls back to `GITHUB_TOKEN` and the
-  release PR is merged manually (squash, like any release PR).
+  Without it nothing breaks — the workflow falls back to `GITHUB_TOKEN`, the
+  auto-merge step logs that it's skipping, and the release PR is merged by hand
+  (squash, like any release PR).
 - Live e2e in CI is gated on a `GH_E2E_TOKEN` repo secret. Set it with a PAT
   that has `repo` scope on the account that should host the sandbox repo:
   ```
