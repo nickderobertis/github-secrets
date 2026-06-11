@@ -8,3 +8,7 @@ Cargo.lock.bak
 .DS_Store
 
 .env
+
+# gh-secrets manifest sync state (per-(secret,destination) SHA-256 hashes).
+# Safe to lose — losing it only forces a re-push — but never commit it.
+.gh-secrets-state.json
