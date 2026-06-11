@@ -24,10 +24,25 @@ pub struct FetchedSecret {
     pub value: String,
 }
 
+/// Identity metadata for one item available in a source. Carries no secret
+/// value — only what a user needs to discover an item and reference it from a
+/// manifest (its display name and stable id).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceItem {
+    pub name: String,
+    pub id: String,
+}
+
 /// Anything that can hand the orchestrator the current values for a list of
 /// manifest secrets.
 pub trait SecretSource {
     fn fetch(&self, secrets: &[ManifestSecret]) -> Result<Vec<FetchedSecret>>;
+
+    /// Enumerate the items available in the source (e.g. every entry in the
+    /// Bitwarden vault, optionally scoped by the source config). Returns
+    /// identity metadata only — never a secret value — so callers can discover
+    /// which item names exist to wire into a manifest.
+    fn list_available(&self) -> Result<Vec<SourceItem>>;
 }
 
 /// In-memory source used by tests and (eventually) by a `manifest dry-run`
@@ -67,6 +82,18 @@ impl SecretSource for StaticSource {
             });
         }
         Ok(out)
+    }
+
+    fn list_available(&self) -> Result<Vec<SourceItem>> {
+        // No real ids in a static map, so the key doubles as name and id.
+        Ok(self
+            .values
+            .keys()
+            .map(|k| SourceItem {
+                name: k.clone(),
+                id: k.clone(),
+            })
+            .collect())
     }
 }
 
@@ -154,6 +181,23 @@ pub trait BwCli {
     fn unlock(&self, password: &str) -> Result<String>;
     fn sync(&self, session: &str) -> Result<()>;
     fn get_item(&self, session: &str, identifier: &str) -> Result<Value>;
+    /// Enumerate items in the vault, optionally scoped to a collection and/or
+    /// organization. Returns identity metadata only (`name`, `id`).
+    fn list_items(
+        &self,
+        session: &str,
+        collection_id: Option<&str>,
+        organization_id: Option<&str>,
+    ) -> Result<Vec<SourceItem>>;
+}
+
+/// Minimal projection of a `bw list items` element: every Bitwarden item has a
+/// stable `id` and a display `name`; we ignore the rest (including any value
+/// fields) so nothing sensitive is deserialized here.
+#[derive(Debug, Deserialize)]
+struct BwListItem {
+    id: String,
+    name: String,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -249,6 +293,32 @@ impl BwCli for RealBwCli {
         Self::expect_success(&args, &out)?;
         serde_json::from_slice(&out.stdout)
             .with_context(|| format!("parsing `bw get item {identifier}` JSON"))
+    }
+
+    fn list_items(
+        &self,
+        session: &str,
+        collection_id: Option<&str>,
+        organization_id: Option<&str>,
+    ) -> Result<Vec<SourceItem>> {
+        let mut args: Vec<&str> = vec!["list", "items"];
+        if let Some(cid) = collection_id {
+            args.extend_from_slice(&["--collectionid", cid]);
+        }
+        if let Some(oid) = organization_id {
+            args.extend_from_slice(&["--organizationid", oid]);
+        }
+        let out = Self::run(&args, &[(BW_SESSION_ENV, session)])?;
+        Self::expect_success(&args, &out)?;
+        let items: Vec<BwListItem> =
+            serde_json::from_slice(&out.stdout).context("parsing `bw list items` JSON")?;
+        Ok(items
+            .into_iter()
+            .map(|i| SourceItem {
+                name: i.name,
+                id: i.id,
+            })
+            .collect())
     }
 }
 
@@ -351,6 +421,15 @@ impl<C: BwCli> SecretSource for BitwardenSource<C> {
         }
         Ok(out)
     }
+
+    fn list_available(&self) -> Result<Vec<SourceItem>> {
+        let session = self.ensure_session()?;
+        self.cli.list_items(
+            &session,
+            self.config.collection_id.as_deref(),
+            self.config.organization_id.as_deref(),
+        )
+    }
 }
 
 /// Pulls a field out of a Bitwarden item's JSON.
@@ -441,6 +520,7 @@ mod tests {
     struct MockBw {
         status: BwStatus,
         items: HashMap<String, Value>,
+        listed: Vec<SourceItem>,
         calls: RefCell<Vec<String>>,
     }
 
@@ -470,6 +550,19 @@ mod tests {
                 .cloned()
                 .ok_or_else(|| anyhow!("no mock item '{identifier}'"))
         }
+        fn list_items(
+            &self,
+            _session: &str,
+            collection_id: Option<&str>,
+            organization_id: Option<&str>,
+        ) -> Result<Vec<SourceItem>> {
+            self.calls.borrow_mut().push(format!(
+                "list_items:{}:{}",
+                collection_id.unwrap_or("-"),
+                organization_id.unwrap_or("-")
+            ));
+            Ok(self.listed.clone())
+        }
     }
 
     #[test]
@@ -479,6 +572,7 @@ mod tests {
         let mock = MockBw {
             status: BwStatus::Unauthenticated,
             items,
+            listed: Vec::new(),
             calls: RefCell::new(Vec::new()),
         };
         std::env::set_var(BW_CLIENTID_ENV, "id");
@@ -549,6 +643,7 @@ mod tests {
         let mock = MockBw {
             status: BwStatus::Unauthenticated,
             items,
+            listed: Vec::new(),
             calls: RefCell::new(Vec::new()),
         };
         // Only the BITWARDEN_* aliases are set; the native BW_* names are unset.
@@ -585,6 +680,7 @@ mod tests {
         let mock = MockBw {
             status: BwStatus::Unlocked,
             items,
+            listed: Vec::new(),
             calls: RefCell::new(Vec::new()),
         };
         let src = BitwardenSource::with_cli(
@@ -605,5 +701,64 @@ mod tests {
         let calls = src.cli.calls.borrow().clone();
         // No status/login/unlock/sync — straight to get_item.
         assert_eq!(calls, vec!["get_item:foo"]);
+    }
+
+    #[test]
+    fn bitwarden_source_lists_available_items_with_scope() {
+        let mock = MockBw {
+            status: BwStatus::Unlocked,
+            items: HashMap::new(),
+            listed: vec![
+                SourceItem {
+                    name: "Stripe API".into(),
+                    id: "id-1".into(),
+                },
+                SourceItem {
+                    name: "GitHub PAT".into(),
+                    id: "id-2".into(),
+                },
+            ],
+            calls: RefCell::new(Vec::new()),
+        };
+        let config = BitwardenSourceConfig {
+            collection_id: Some("coll-1".into()),
+            organization_id: Some("org-1".into()),
+            default_field: None,
+        };
+        let src = BitwardenSource::with_cli(
+            config,
+            mock,
+            BitwardenCredentials {
+                session: Some("S".into()),
+                ..Default::default()
+            },
+        );
+        let got = src.list_available().unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "Stripe API");
+        assert_eq!(got[0].id, "id-1");
+        // Session short-circuits auth; the collection/org scope is forwarded.
+        let calls = src.cli.calls.borrow().clone();
+        assert_eq!(calls, vec!["list_items:coll-1:org-1"]);
+    }
+
+    #[test]
+    fn static_source_lists_its_keys_as_items() {
+        let src = StaticSource::new([("FOO", "v1"), ("BAR", "v2")]);
+        let mut got = src.list_available().unwrap();
+        got.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(
+            got,
+            vec![
+                SourceItem {
+                    name: "BAR".into(),
+                    id: "BAR".into()
+                },
+                SourceItem {
+                    name: "FOO".into(),
+                    id: "FOO".into()
+                },
+            ]
+        );
     }
 }

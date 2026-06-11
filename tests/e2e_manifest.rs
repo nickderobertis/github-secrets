@@ -31,6 +31,7 @@ use assert_cmd::Command;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use common::fake_pubkey_b64;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -181,6 +182,40 @@ async fn e2e_manifest_list_shows_declared_secrets() {
         ))
         // BAR: item defaults to the secret name, explicit field overrides.
         .stdout(contains("BAR  (bitwarden item 'BAR', field 'password')"));
+}
+
+/// `source list` enumerates the items *available in the source* (here the
+/// static test source standing in for the Bitwarden vault) — distinct from
+/// `manifest list`, which only echoes what the manifest already declares. It
+/// prints each item's name and id and never leaks a value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_source_list_enumerates_available_items() {
+    let h = ManifestHarness::new().await;
+    // The manifest declares only FOO, but the source/vault holds more — the
+    // whole point of `source list` is to surface the ones you haven't wired up.
+    h.write_manifest(&json!({
+        "source": {"type": "bitwarden"},
+        "secrets": [{"name": "FOO"}],
+        "destinations": [{"type": "env_file", "path": ".env"}]
+    }));
+    h.write_source(&json!({
+        "FOO": "foo-secret",
+        "STRIPE_KEY": "stripe-secret",
+        "DB_PASSWORD": "db-secret"
+    }));
+
+    h.cmd()
+        .args(["source", "list"])
+        .assert()
+        .success()
+        .stdout(contains("source items (3):"))
+        .stdout(contains("STRIPE_KEY"))
+        .stdout(contains("DB_PASSWORD"))
+        .stdout(contains("FOO"))
+        // Never the values.
+        .stdout(contains("foo-secret").not())
+        .stdout(contains("stripe-secret").not())
+        .stdout(contains("db-secret").not());
 }
 
 /// A manifest with no declared secrets lists cleanly rather than erroring.

@@ -18,7 +18,9 @@ use crate::manifest::{
     value_hash, ManifestDestination, ManifestSource, RepoManifest, SyncState, DEFAULT_STATE_FILE,
 };
 use crate::paths::Paths;
-use crate::sources::{BitwardenCredentials, BitwardenSource, SecretSource, StaticSource};
+use crate::sources::{
+    BitwardenCredentials, BitwardenSource, SecretSource, SourceItem, StaticSource,
+};
 
 /// Test-only override: if set, points at a JSON file `{ "NAME": "value", ... }`
 /// that is used as a static source in place of the manifest's configured one.
@@ -71,6 +73,20 @@ pub fn sync_manifest(
     )?;
     state.save(&state_path)?;
     Ok(report)
+}
+
+/// Enumerate the items available in the manifest's source (e.g. the Bitwarden
+/// vault, scoped by the manifest's collection/organization), so a user can
+/// discover which item names exist to reference from `gh-secrets.json`. Reads
+/// only identity metadata — never a secret value. Resolves credentials the same
+/// way `sync_manifest` does (env over stored config), and unlocks the source.
+pub fn list_source_items(manifest_path: &Path) -> Result<Vec<SourceItem>> {
+    let manifest = RepoManifest::load(manifest_path)
+        .with_context(|| format!("loading manifest from {}", manifest_path.display()))?;
+    let stored = load_stored_credentials()?;
+    let resolved = ResolvedCredentials::resolve(&stored);
+    let source = resolve_source(&manifest.source, &resolved.bitwarden)?;
+    source.list_available()
 }
 
 /// Load the stored credential config from the resolved config root. Honors

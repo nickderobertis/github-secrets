@@ -16,15 +16,26 @@ secrets in bulk. It has two distinct workflows:
    the user keeps a local config of profiles, included/excluded repositories,
    and global + per-repository secret values; `gh-secrets secrets sync` then
    pushes only the secrets that have changed since the last sync.
+   `gh-secrets secrets list [repo]` reports stored secret names (global +
+   per-repo), never values.
 
-2. **Manifest-based** (`gh-secrets manifest init|sync`): a repo-local
-   `gh-secrets.json` declares an external `source` (today: Bitwarden) and one
-   or more `destinations` (today: GitHub Actions secrets, dotenv file).
-   `gh-secrets manifest sync` pulls every managed secret from the source and
-   pushes to each destination that doesn't already hold the current value.
-   Idempotent across runs via a co-located `.gh-secrets-state.json`
-   (gitignore it) that stores per-(secret, destination) SHA-256 hashes — the
-   plaintext value is never persisted there.
+2. **Manifest-based** (`gh-secrets manifest init|list|sync`,
+   `gh-secrets source list`): a repo-local `gh-secrets.json` declares an
+   external `source` (today: Bitwarden) and one or more `destinations` (today:
+   GitHub Actions secrets, dotenv file). `gh-secrets manifest sync` pulls every
+   managed secret from the source and pushes to each destination that doesn't
+   already hold the current value. Idempotent across runs via a co-located
+   `.gh-secrets-state.json` (gitignore it) that stores per-(secret,
+   destination) SHA-256 hashes — the plaintext value is never persisted there.
+   `gh-secrets manifest list` reports the secrets the manifest *declares* (each
+   name plus its resolved source item/field), reading only the checked-in file.
+   `gh-secrets source list` instead *enumerates the source itself* — it unlocks
+   the configured source (e.g. the Bitwarden vault, scoped by the manifest's
+   collection/organization) and prints every available item's name and id, so a
+   user can discover which item names exist to wire into the manifest. Both
+   honor the never-print-a-value invariant: `manifest list` reads only mapping
+   metadata, and `source list` requests item *identity* only, never field
+   values.
 
 ## Command surface
 

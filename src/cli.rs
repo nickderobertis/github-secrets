@@ -12,7 +12,9 @@ use crate::github::GitHubClient;
 use crate::manifest::{ManifestSource, RepoManifest, DEFAULT_MANIFEST_FILE};
 use crate::paths::Paths;
 use crate::secrets::Upsert;
-use crate::sources::{BW_CLIENTID_ENVS, BW_CLIENTSECRET_ENVS, BW_PASSWORD_ENVS, BW_SESSION_ENVS};
+use crate::sources::{
+    SourceItem, BW_CLIENTID_ENVS, BW_CLIENTSECRET_ENVS, BW_PASSWORD_ENVS, BW_SESSION_ENVS,
+};
 use crate::sync::{self, SyncReport};
 use crate::sync_manifest::{self, ManifestSyncReport};
 
@@ -62,6 +64,13 @@ enum Command {
     Manifest {
         #[command(subcommand)]
         command: ManifestCmd,
+    },
+    /// Inspect the external source a manifest pulls from (e.g. the Bitwarden
+    /// vault): discover which item names are available to reference. Reads the
+    /// manifest's source config and unlocks the source; never prints a value.
+    Source {
+        #[command(subcommand)]
+        command: SourceCmd,
     },
     /// Store credentials for the manifest flow (GitHub token, Bitwarden login)
     /// as the lowest-priority fallback. Resolution order is: shell env > .env >
@@ -134,6 +143,18 @@ enum ManifestCmd {
         /// next to the manifest.
         #[arg(long)]
         state: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SourceCmd {
+    /// List the items available in the manifest's source (e.g. every entry in
+    /// the Bitwarden vault, scoped by the manifest's collection/organization).
+    /// Prints each item's name and id — never a value.
+    List {
+        /// Path to the manifest file. Defaults to `./gh-secrets.json`.
+        #[arg(long, short)]
+        config: Option<PathBuf>,
     },
 }
 
@@ -403,6 +424,17 @@ pub fn run() -> Result<()> {
             }
         },
 
+        Command::Source { command } => match command {
+            SourceCmd::List { config } => {
+                // Same credential resolution as `manifest sync`: load
+                // `.env`/`.env.local` before unlocking the source.
+                envfile::load_dotenv_cwd();
+                let manifest_path = config.unwrap_or_else(|| PathBuf::from(DEFAULT_MANIFEST_FILE));
+                let items = sync_manifest::list_source_items(&manifest_path)?;
+                print_source_items(&items);
+            }
+        },
+
         Command::Auth { command } => {
             let creds_path = paths.credentials_file();
             let mut stored = StoredCredentials::load(&creds_path)?;
@@ -579,6 +611,21 @@ fn list_manifest_secrets(manifest: &RepoManifest) {
             s.source_item(),
             field
         );
+    }
+}
+
+/// Print the items available in a manifest's source (name + id), sorted by name
+/// for stable output. Identity metadata only — never a value.
+fn print_source_items(items: &[SourceItem]) {
+    if items.is_empty() {
+        println!("source: no items available");
+        return;
+    }
+    let mut sorted: Vec<&SourceItem> = items.iter().collect();
+    sorted.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+    println!("source items ({}):", sorted.len());
+    for item in sorted {
+        println!("  - {}  ({})", item.name, item.id);
     }
 }
 
