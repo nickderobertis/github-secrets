@@ -536,3 +536,238 @@ async fn e2e_source_list_enumerates_env_file_and_local_store() {
         .stdout(contains("GAMMA"))
         .stdout(contains("g-value").not());
 }
+
+/// An explicit `--config` path is honored wherever it lives: relative paths
+/// inside the config resolve against the config's directory (not the CWD),
+/// and the state file lands next to the config. A nonexistent path is an
+/// error, not a silent fall-through to another config.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_explicit_config_path_resolves_relative_to_itself() {
+    let h = Harness::new().await;
+    h.write(
+        "proj/config.json",
+        &serde_json::to_string_pretty(&json!({
+            "source": {"type": "env_file", "path": "src.env"},
+            "secrets": [{"name": "FOO"}],
+            "destinations": [{"type": "env_file", "path": "out.env"}],
+        }))
+        .unwrap(),
+    );
+    h.write("proj/src.env", "FOO=from-subdir\n");
+
+    h.cmd()
+        .args(["sync", "--config", "proj/config.json"])
+        .assert()
+        .success()
+        .stdout(contains("created 'FOO'"));
+    // Both the destination and the state resolved against proj/, not the CWD.
+    assert!(h.read("proj/out.env").contains("from-subdir"));
+    assert!(h.dir.path().join("proj/.gh-secrets-state.json").exists());
+    assert!(!h.dir.path().join(".gh-secrets-state.json").exists());
+
+    h.cmd()
+        .args(["check", "--config", "proj/config.json"])
+        .assert()
+        .success()
+        .stdout(contains("everything is up to date"));
+
+    h.cmd()
+        .args(["sync", "--config", "missing.json"])
+        .assert()
+        .failure()
+        .stderr(contains("does not exist"));
+}
+
+/// `--state` redirects the idempotency bookkeeping: the run writes exactly
+/// there, and a re-run against the same state is the usual no-op.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_state_flag_overrides_state_location() {
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=1\n");
+    let args = [
+        "sync",
+        "--from",
+        "env:source.env",
+        "--to",
+        "env:out.env",
+        "--secret",
+        "FOO",
+        "--state",
+        "custom/state.json",
+    ];
+    h.cmd().args(args).assert().success();
+    assert!(h.dir.path().join("custom/state.json").exists());
+    assert!(!h.dir.path().join(".gh-secrets-state.json").exists());
+    h.cmd()
+        .args(args)
+        .assert()
+        .success()
+        .stdout(contains("nothing to do"));
+}
+
+/// `init --path` writes the starter wherever asked, and `init --global`
+/// refuses to clobber an existing global config just like the local form.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_init_honors_path_and_refuses_global_overwrite() {
+    let h = Harness::new().await;
+    h.cmd()
+        .args(["init", "--path", "nested/custom.json"])
+        .assert()
+        .success()
+        .stdout(contains("nested/custom.json"));
+    let parsed: Value =
+        serde_json::from_str(&h.read("nested/custom.json")).expect("starter is valid JSON");
+    assert_eq!(parsed["source"]["type"], "bitwarden");
+
+    h.cmd().args(["init", "--global"]).assert().success();
+    h.cmd()
+        .args(["init", "--global"])
+        .assert()
+        .failure()
+        .stderr(contains("refusing to overwrite"));
+}
+
+/// `list --global` reads the global config even from inside a project, and
+/// renders the local-store source mapping.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_list_global_shows_local_store_mapping() {
+    let h = Harness::new().await;
+    fs::create_dir_all(h.home()).unwrap();
+    fs::write(
+        h.home().join("gh-secrets.json"),
+        serde_json::to_string_pretty(&json!({
+            "source": {"type": "local"},
+            "secrets": [{"name": "RENAMED", "item": "STORE_KEY"}, {"name": "PLAIN"}],
+            "destinations": [{"type": "github", "repository": "owner/repo1"}],
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    // A project-local config exists too; --global must skip it.
+    h.write(
+        "gh-secrets.json",
+        &serde_json::to_string_pretty(&json!({
+            "source": {"type": "bitwarden"},
+            "secrets": [{"name": "LOCAL_ONLY"}],
+            "destinations": [],
+        }))
+        .unwrap(),
+    );
+
+    h.cmd()
+        .args(["list", "--global"])
+        .assert()
+        .success()
+        .stdout(contains("source: local store"))
+        .stdout(contains("RENAMED  (local store key 'STORE_KEY')"))
+        .stdout(contains("PLAIN  (local store key 'PLAIN')"))
+        .stdout(contains("LOCAL_ONLY").not());
+}
+
+/// `--secret NAME=ITEM` remaps the destination name onto a different source
+/// key, all the way through a real sync.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_secret_item_mapping_renames_through_sync() {
+    let h = Harness::new().await;
+    h.write("source.env", "DB_URL=postgres://srv/db\n");
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "env:source.env",
+            "--to",
+            "env:out.env",
+            "--secret",
+            "DATABASE_URL=DB_URL",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("created 'DATABASE_URL'"));
+    assert!(h
+        .read("out.env")
+        .contains("DATABASE_URL=\"postgres://srv/db\""));
+}
+
+/// Error surfaces a user will actually hit: a declared secret missing from
+/// the source names the key, Bitwarden scoping flags on a non-bitwarden
+/// source are rejected (not silently dropped), and a pipeline with no
+/// declared secrets is a clean no-op.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_sync_error_and_noop_edges() {
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=1\n");
+
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "env:source.env",
+            "--to",
+            "env:out.env",
+            "--secret",
+            "NOPE",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("has no value for 'NOPE'"));
+
+    h.cmd()
+        .args([
+            "sync",
+            "--from",
+            "env:source.env",
+            "--to",
+            "env:out.env",
+            "--secret",
+            "FOO",
+            "--collection-id",
+            "coll-1",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("--from bitwarden"));
+
+    // No secrets declared anywhere: nothing to do, and no files appear.
+    h.cmd()
+        .args(["sync", "--from", "env:source.env", "--to", "env:out.env"])
+        .assert()
+        .success()
+        .stdout(contains("nothing to do"));
+    assert!(!h.dir.path().join("out.env").exists());
+
+    // The store rejects an empty name before touching the vault.
+    h.cmd()
+        .args(["store", "set", "", "value"])
+        .assert()
+        .failure()
+        .stderr(contains("name cannot be empty"));
+}
+
+/// `check` works with a pure-argument pipeline too (no config file at all).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_check_with_pure_args() {
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=1\n");
+    let args = [
+        "check",
+        "--from",
+        "env:source.env",
+        "--to",
+        "env:out.env",
+        "--secret",
+        "FOO",
+    ];
+    h.cmd()
+        .args(args)
+        .assert()
+        .success()
+        .stdout(contains("check (config: arguments):"))
+        .stdout(contains("1 to push (FOO)"));
+    // Check writes nothing — not even state — so it stays pending.
+    assert!(!h.dir.path().join(".gh-secrets-state.json").exists());
+    h.cmd()
+        .args(args)
+        .assert()
+        .success()
+        .stdout(contains("1 to push (FOO)"));
+}

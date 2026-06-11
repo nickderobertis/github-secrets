@@ -211,13 +211,18 @@ Project-local layout and credentials:
 - The main wiremock e2e suite (`tests/e2e.rs`) covers the unified surface: a
   pure-argument pipeline (`--from env:… --to github:… --secret …`) with a
   no-op re-sync and single-secret repush on change; `--to` replacing a
-  config's destinations; `--only` filtering; the `--from github:` write-only
-  rejection; the `store` group round-tripping through the encrypted vault
-  (and asserting the file leaks neither names nor values); the local store as
-  both source and destination; `check` reporting pending-then-clean without a
-  GitHub token or a single PUT; global-config fallback and `--global`;
-  `init`/`init --global`; and the structural sealed-box assertion on the PUT
-  body so a broken seal step can't slip through.
+  config's destinations; `--only` filtering; `--secret NAME=ITEM` remapping
+  through a real sync; the `--from github:` write-only rejection; the `store`
+  group round-tripping through the encrypted vault (and asserting the file
+  leaks neither names nor values); the local store as both source and
+  destination; `check` reporting pending-then-clean without a GitHub token or
+  a single PUT (config-driven and pure-args); explicit `--config` (with
+  config-relative path/state resolution and a missing-path error) and
+  `--state` overrides; global-config fallback, `--global`, and `list
+  --global`; `init` / `--path` / `--global` incl. overwrite refusals; error
+  edges (source missing a declared value, Bitwarden scoping flags on a
+  non-bitwarden source, empty store name); and the structural sealed-box
+  assertion on the PUT body so a broken seal step can't slip through.
 - The live e2e suite (`tests/e2e_live.rs`) round-trips the same `sync`
   pipeline (env-file source → real `github:` destination) against the real
   GitHub API: a secret becomes visible via the API after sync, a resync is a

@@ -479,3 +479,58 @@ async fn e2e_unlock_requires_passphrase_and_a_vault() {
         .failure()
         .stderr(contains("GH_SECRETS_PASSPHRASE"));
 }
+
+/// The vault passphrase follows the same dotenv layering as every other
+/// credential: with nothing in the shell, `GH_SECRETS_PASSPHRASE` in `.env`
+/// unlocks the vault.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_passphrase_resolves_from_dotenv() {
+    let h = AuthHarness::new().await;
+    h.cmd().args(["auth", "github", "ghp_x"]).assert().success();
+
+    h.write_file(".env", "GH_SECRETS_PASSPHRASE=auth-e2e-passphrase\n");
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["auth", "status"])
+        .assert()
+        .success()
+        .stdout(contains("GitHub token: set (from stored config)"));
+
+    // A wrong passphrase in .env fails the same way as a wrong shell one.
+    h.write_file(".env", "GH_SECRETS_PASSPHRASE=wrong\n");
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["auth", "status"])
+        .assert()
+        .failure()
+        .stderr(contains("could not decrypt"));
+}
+
+/// `auth unlock --days` controls the session length, reflected in `auth
+/// status`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_unlock_days_flag_sets_session_length() {
+    let h = AuthHarness::new().await;
+    h.cmd().args(["auth", "github", "ghp_x"]).assert().success();
+    h.cmd()
+        .args(["auth", "unlock", "--days", "2"])
+        .assert()
+        .success()
+        .stdout(contains("unlocked for 2 day(s)"));
+    h.cmd()
+        .env_remove("GH_SECRETS_PASSPHRASE")
+        .args(["auth", "status"])
+        .assert()
+        .success()
+        // ~2d 0h when status runs within the unlock's second, ~1d 23h after.
+        .stdout(
+            contains("Vault session: active (~1d 23h left")
+                .or(contains("Vault session: active (~2d 0h left")),
+        );
+
+    // Out-of-range values are rejected by the CLI parser.
+    h.cmd()
+        .args(["auth", "unlock", "--days", "0"])
+        .assert()
+        .failure();
+}

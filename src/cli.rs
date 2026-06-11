@@ -156,6 +156,9 @@ struct PipelineOpts {
 
 impl PipelineOpts {
     fn overrides(&self) -> Result<PipelineOverrides> {
+        let bitwarden_flags = self.collection_id.is_some()
+            || self.organization_id.is_some()
+            || self.default_field.is_some();
         let source = match &self.from {
             Some(spec) => Some(parse_source_spec(
                 spec,
@@ -163,16 +166,13 @@ impl PipelineOpts {
                 self.organization_id.clone(),
                 self.default_field.clone(),
             )?),
-            None => {
-                if self.collection_id.is_some()
-                    || self.organization_id.is_some()
-                    || self.default_field.is_some()
-                {
-                    bail!("--collection-id/--organization-id/--default-field require `--from bitwarden`");
-                }
-                None
-            }
+            None => None,
         };
+        // Only the bitwarden source consumes these flags; anywhere else they
+        // would be silently dropped, which is worse than an error.
+        if bitwarden_flags && !matches!(source, Some(ManifestSource::Bitwarden(_))) {
+            bail!("--collection-id/--organization-id/--default-field require `--from bitwarden`");
+        }
         let destinations = self
             .to
             .iter()
@@ -802,6 +802,31 @@ mod tests {
 
         assert!(parse_secret_spec("=item").is_err());
         assert!(parse_secret_spec("FOO=").is_err());
+    }
+
+    #[test]
+    fn bitwarden_scoping_flags_reject_non_bitwarden_sources() {
+        let opts = |from: Option<&str>| PipelineOpts {
+            from: from.map(String::from),
+            to: vec![],
+            secrets: vec![],
+            only: vec![],
+            collection_id: Some("coll-1".into()),
+            organization_id: None,
+            default_field: None,
+        };
+        // With a bitwarden source, the flag lands in the config.
+        match opts(Some("bitwarden")).overrides().unwrap().source {
+            Some(ManifestSource::Bitwarden(c)) => {
+                assert_eq!(c.collection_id.as_deref(), Some("coll-1"));
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        // With any other source it must error, never be silently dropped.
+        let err = opts(Some("env:.env")).overrides().unwrap_err().to_string();
+        assert!(err.contains("--from bitwarden"), "got: {err}");
+        let err = opts(None).overrides().unwrap_err().to_string();
+        assert!(err.contains("--from bitwarden"), "got: {err}");
     }
 
     #[test]
