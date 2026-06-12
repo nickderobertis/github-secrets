@@ -62,6 +62,28 @@ list` instead *enumerates the source itself* (unlocking it if needed) and
 prints item names/ids so a user can discover what to wire in. All of these
 honor the never-print-a-value invariant.
 
+## Stack and composition
+
+How this repo was built up from the create-repo reference pieces, recorded so
+the next maintainer can see why the tooling is what it is.
+
+- **Product shape:** `cli` — a single-binary Rust CLI (`gh-secrets`), installed
+  and run as one executable.
+- **Language(s):** `rust`.
+- **References composed:** `shapes/cli.md` + `languages/rust.md` + `ci.md`.
+  `ci.md` always applies; it drives the clean-checkout → `just bootstrap` →
+  `just check` gate, the cross-platform matrix, and the install-path smoke job.
+- **Excluded, and why:**
+  - `monorepo.md` — one deliverable (a single binary), so no Nx orchestration
+    or affected-only CI.
+  - `intersections/rust-cli.md` — no such reference exists yet; the Rust-CLI
+    overlap (snapshot-testing the compiled binary, cross-platform release
+    artifacts) is handled inline here. Create the intersection if that overlap
+    grows.
+  - asdf/direnv/`src`-layout template baggage — not idiomatic for a Cargo
+    crate. A release pipeline is *not* excluded: release-please + the release
+    workflow ship the binary, per principle 11.
+
 ## Command surface
 
 Use the `just` recipes; do not hand-roll equivalent commands.
