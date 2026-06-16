@@ -62,6 +62,27 @@ list` instead *enumerates the source itself* (unlocking it if needed) and
 prints item names/ids so a user can discover what to wire in. All of these
 honor the never-print-a-value invariant.
 
+## Two standing goals on every task
+
+The user drives product features and their request is the priority — but carry
+two goals into *every* task. When either is the lowest-error path to what the
+user asked, fold it into the same task without asking first; surface the rest as
+follow-ups (see "After the main task").
+
+1. **Engineer the context for next time.** Make the next agent (and you) see
+   more for less: realistic end-to-end tests that exercise what the user
+   actually sees — especially when they report a bug existing tests missed —
+   scripts and skills that automate repetitive steps and shrink their output to
+   signal, and terse `AGENTS.md` notes capturing what the code doesn't make
+   obvious.
+2. **Engineer the codebase and environment.** Be the engineer the user isn't:
+   prioritize the technical initiatives that keep the codebase clean,
+   maintainable, and repeatable, and keep environment setup automated and
+   consistent (`just bootstrap` from a clean clone). Strict quality gates plus
+   local/CI parity (same checks, same pinned toolchain) make results
+   repeatable — not "works on my machine." A clean base and a reproducible
+   environment are usually how the user's feature ships with a low error rate.
+
 ## Stack and composition
 
 How this repo was built up from the create-repo reference pieces, recorded so
