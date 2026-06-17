@@ -46,7 +46,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 # plotters/gnuplot/rayon stack out of the build; `cargo_bench_support` is the
 # only feature the harness needs, and critcmp reads the JSON Criterion writes
 # regardless.
-criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 
 [[bench]]
 name = "engine"
