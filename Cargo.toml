@@ -25,7 +25,7 @@ base64 = "0.22"
 chacha20poly1305 = "0.10"
 clap = { version = "4.5", features = ["derive", "env"] }
 crypto_box = { version = "0.9", features = ["seal"] }
-dirs = "5.0"
+dirs = "6.0"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
 rpassword = "7.3"
 serde = { version = "1.0", features = ["derive"] }
