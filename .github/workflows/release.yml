@@ -107,7 +107,7 @@ jobs:
             archive: zip
     steps:
       # Build the exact tagged commit rather than master's HEAD.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
@@ -174,7 +174,7 @@ jobs:
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
