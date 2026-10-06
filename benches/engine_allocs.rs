@@ -30,17 +30,27 @@ struct CountingAlloc;
 static CALLS: AtomicU64 = AtomicU64::new(0);
 static BYTES: AtomicU64 = AtomicU64::new(0);
 
+// SAFETY: every method forwards to `System` with the exact arguments it was
+// given, so `CountingAlloc` upholds `GlobalAlloc`'s contract precisely as far as
+// `System` does; the only extra work is relaxed atomic increments, which never
+// allocate, unwind, or touch the memory being managed.
 unsafe impl GlobalAlloc for CountingAlloc {
+    // SAFETY: the caller's `layout` guarantees (non-zero size) pass straight
+    // through to `System.alloc`, which upholds the same contract.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         CALLS.fetch_add(1, Ordering::Relaxed);
         BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
         System.alloc(layout)
     }
 
+    // SAFETY: `ptr`/`layout` came from this allocator, i.e. from `System`, so
+    // returning them to `System.dealloc` satisfies its contract.
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         System.dealloc(ptr, layout)
     }
 
+    // SAFETY: `ptr`/`layout` came from `System` (see `alloc`) and the caller's
+    // `new_size` guarantees pass straight through to `System.realloc`.
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         CALLS.fetch_add(1, Ordering::Relaxed);
         BYTES.fetch_add(

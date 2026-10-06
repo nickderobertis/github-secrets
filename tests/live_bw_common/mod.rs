@@ -204,7 +204,6 @@ impl BwLiveSession {
     /// carries a username, password, notes, and one hidden custom field so the
     /// field-selector tests can pull each one back out. Records the created id
     /// for `Drop` cleanup.
-    #[allow(clippy::too_many_arguments)]
     pub fn seed_login(
         &self,
         leaf: &str,

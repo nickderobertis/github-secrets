@@ -1,0 +1,4 @@
+# CI runs a Windows leg: keep text files LF on every checkout so rustfmt, the
+# shell scripts, and the byte-exact e2e fixtures see the same bytes everywhere.
+* text=auto eol=lf
+*.png binary
