@@ -97,3 +97,32 @@ test.skipIf(skip)("a step with the wrong argument count is a usage error", () =>
     expect(r.stderr).toContain("usage: scripts/coverage/coverage.sh");
   }
 });
+
+// The Windows routing, exercised on Linux/macOS by setting OS=Windows_NT and
+// putting a recording `cargo` first on PATH.
+test.skipIf(process.platform === "win32")("on Windows a crate's tests run uninstrumented and the report is skipped", () => {
+  const w = scratch();
+  try {
+    const bin = join(w.dir, "bin");
+    mkdirSync(bin);
+    const calls = join(w.dir, "calls");
+    writeFileSync(
+      join(bin, "cargo"),
+      `#!/bin/sh\necho "$*" >> "${calls}"\ncase "$1" in\n  metadata) echo '{"packages":[{"name":"gh-secrets","version":"0.1.0"}]}' ;;\n  nextest) [ \"$2\" = \"--version\" ] && exit 0; exit 7 ;;\n  *) exit 0 ;;\nesac\n`,
+    );
+    ok("chmod", ["+x", join(bin, "cargo")]);
+    mkdirSync(join(w.dir, "scripts/coverage"), { recursive: true });
+    copyFileSync(join(REPO, "scripts/coverage/coverage.sh"), join(w.dir, "scripts/coverage/coverage.sh"));
+    const env = { ...process.env, OS: "Windows_NT", PATH: [bin, "/usr/bin", "/bin"].join(":") };
+    const t = run("bash", ["scripts/coverage/coverage.sh", "test", "gh-secrets"], { cwd: w.dir, env });
+    expect(t.code).toBe(7);
+    expect(t.stderr).toContain("Windows — running gh-secrets's tests uninstrumented");
+    expect(readFileSync(calls, "utf8")).toContain("nextest run -p gh-secrets --locked");
+    expect(readFileSync(calls, "utf8")).not.toContain("llvm-cov");
+    const rep = run("bash", ["scripts/coverage/coverage.sh", "report"], { cwd: w.dir, env });
+    expect(rep.code).toBe(0);
+    expect(rep.stderr).toContain("report skipped on Windows");
+  } finally {
+    w.cleanup();
+  }
+});

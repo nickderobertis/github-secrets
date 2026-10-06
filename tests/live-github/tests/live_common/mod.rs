@@ -73,6 +73,7 @@ pub fn ensure_sandbox_repo() {
             .expect("POST /user/repos");
         let status = resp.status().as_u16();
         // 201 Created, 202 Accepted, or 422 (already exists / name taken).
+        // llmlint: ignore[boundary_inputs_validated] creating the sandbox is idempotent by design and 422 is GitHub's answer for an existing name; if that name is not a usable sandbox, the very next call (its public-key GET in every test) fails loudly with the status, so nothing proceeds on a bad repo.
         if status != 201 && status != 202 && status != 422 {
             let body = resp.text().unwrap_or_default();
             panic!("creating sandbox repo failed: HTTP {status}: {body}");
@@ -142,7 +143,7 @@ impl LiveSession {
     }
 
     /// List the names of every secret currently on the sandbox repo.
-    // llmlint: ignore[names_match_behavior] the sandbox repo only ever holds this suite's per-test-prefixed secrets, which Drop deletes, so one 100-item page is all of them; the empty-on-error fallback serves the Drop cleanup below, which must never panic while unwinding, and asserting callers fail on the missing name anyway.
+    // llmlint: ignore-block[names_match_behavior, boundary_inputs_validated] the sandbox repo only ever holds this suite's per-test-prefixed secrets, which Drop deletes, so one 100-item page is all of them; the empty-on-error fallback serves the Drop cleanup below, which must never panic while unwinding, and asserting callers fail on the missing name anyway.
     pub fn remote_secret_names(&self) -> Vec<String> {
         let path = format!("/repos/{}/actions/secrets?per_page=100", self.repo);
         let v: Value = match http_get(&path) {
@@ -158,6 +159,7 @@ impl LiveSession {
             })
             .unwrap_or_default()
     }
+    // llmlint: ignore-end[names_match_behavior, boundary_inputs_validated]
 
     /// Fetch a single secret's metadata (`name`, `created_at`, `updated_at`).
     /// Returns `None` if the secret does not exist.

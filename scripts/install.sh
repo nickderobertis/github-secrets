@@ -184,8 +184,13 @@ main() {
             --version=*) version="${1#*=}"; shift ;;
             --to | --bin-dir) bindir="${2:?--to needs a value}"; shift 2 ;;
             --to=* | --bin-dir=*) bindir="${1#*=}"; shift ;;
-            --from-dir) archive_dir="${2:?--from-dir needs a value}"; shift 2 ;;
-            --from-dir=*) archive_dir="${1#*=}"; [ -n "$archive_dir" ] || err "--from-dir needs a value"; shift ;;
+            --from-dir)
+                [ $# -ge 2 ] && [ -n "$2" ] || err "--from-dir needs the directory holding the packaged archive (see --help)"
+                archive_dir="$2"; shift 2 ;;
+            --from-dir=*)
+                archive_dir="${1#*=}"
+                [ -n "$archive_dir" ] || err "--from-dir needs the directory holding the packaged archive (see --help)"
+                shift ;;
             -h | --help) usage; exit 0 ;;
             *) err "unknown option: $1 (try --help)" ;;
         esac

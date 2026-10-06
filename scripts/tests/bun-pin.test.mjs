@@ -204,3 +204,32 @@ test.skipIf(isWindows || process.getuid?.() === 0)("an unwritable tool cache nam
   expect(r.code).toBe(1);
   expect(r.stderr).toContain("make it writable or point GH_SECRETS_TOOLS_DIR elsewhere");
 });
+
+test.skipIf(isWindows)("a missing or extra mode argument is refused", () => {
+  const t = setup({ pathBunVersion: PIN });
+  for (const args of [[], ["path", "extra"]]) {
+    const r = run("bash", ["scripts/bun.sh", ...args], { cwd: t.repo, env: { ...process.env, PATH: [t.pathDir, "/usr/bin", "/bin"].join(":") } });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("expected exactly one mode");
+  }
+});
+
+test.skipIf(isWindows)("verification falls back to shasum, and refuses with neither tool", () => {
+  const withShasum = scratch();
+  cleanups.push(withShasum.cleanup);
+  const noSha256sum = BASICS.filter((n) => n !== "sha256sum");
+  // shasum is a perl script: keep perl, and give the checksum command the PATH it needs.
+  const t = setup({ systemDirs: toolsOnly(withShasum.dir, [...noSha256sum, "curl", "unzip", "perl"]) });
+  publishRelease(t.dir);
+  const viaShasum = t.bunSh("ensure");
+  expect(viaShasum.code).toBe(0);
+
+  const neither = scratch();
+  cleanups.push(neither.cleanup);
+  const t2 = setup({ systemDirs: toolsOnly(neither.dir, [...noSha256sum.filter((n) => n !== "shasum"), "curl", "unzip"]) });
+  publishRelease(t2.dir);
+  const r = t2.bunSh("ensure");
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("no SHA-256 tool to verify the download");
+  expect(existsSync(join(t2.tools, `bun-${PIN}`, "bin", "bun"))).toBe(false);
+});

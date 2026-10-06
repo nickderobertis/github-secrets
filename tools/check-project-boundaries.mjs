@@ -14,7 +14,8 @@
 // Exit status: 0 (quiet) when every edge is allowed; 1 with each violation
 // printed; 2 on a usage error.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 
 // Project dirs relative to the root, always with `/` (git ls-files spells them
@@ -75,7 +76,6 @@ try {
   fail([`'cargo metadata' failed: ${err.stderr || err.message}`, "fix the manifests so it resolves, then re-run."]);
 }
 
-// Projects, from every project.json git tracks (plus untracked ones in this tree).
 const errors = [];
 
 const projectFiles = execFileSync(
@@ -138,9 +138,14 @@ const typeTag = (name) => {
   return tags[0];
 };
 
-// Cargo members -> projects, and their path-dependency edges.
 const edges = []; // [from, to, how]
 const memberDirs = new Map(); // manifest dir (relative) -> project name
+const isPkg = (p) =>
+  p !== null && typeof p === "object" && typeof p.name === "string" && typeof p.manifest_path === "string" &&
+  Array.isArray(p.dependencies) && p.dependencies.every((d) => d !== null && typeof d === "object" && typeof d.name === "string" && (d.path === undefined || typeof d.path === "string"));
+if (!Array.isArray(metadata?.packages) || !metadata.packages.every(isPkg)) {
+  fail(["'cargo metadata' returned packages of an unexpected shape; check the cargo version, then re-run."]);
+}
 for (const pkg of metadata.packages) {
   const dir = rel(root, dirname(pkg.manifest_path));
   const name = byDir.get(dir);
@@ -159,8 +164,32 @@ for (const pkg of metadata.packages) {
     if (to && to !== from) edges.push([from, to, `Cargo ${dep.kind ?? "normal"} dependency ${dep.name}`]);
   }
 }
+const implicitEdges = new Set();
 for (const [name, project] of projects) {
-  for (const dep of expandImplicit(name, project.implicit)) edges.push([name, dep, "implicitDependencies"]);
+  for (const dep of expandImplicit(name, project.implicit)) {
+    edges.push([name, dep, "implicitDependencies"]);
+    implicitEdges.add(`${name} -> ${dep}`);
+  }
+}
+
+// Drift gate: this reading of implicitDependencies must match the graph Nx
+// itself resolves, whenever Nx is installed in the tree being checked.
+if (existsSync(join(root, "node_modules/.bin/nx"))) {
+  const graphFile = join(mkdtempSync(join(tmpdir(), "nx-graph-")), "graph.json");
+  try {
+    execFileSync("bash", ["scripts/nx", "graph", `--file=${graphFile}`], { cwd: root, stdio: ["ignore", "ignore", "pipe"] });
+  } catch (err) {
+    fail([`'nx graph' failed: ${err.stderr || err.message}`, "run 'just bootstrap', then re-run."]);
+  }
+  const nxEdges = new Set(
+    Object.entries(JSON.parse(readFileSync(graphFile, "utf8")).graph.dependencies).flatMap(([from, deps]) =>
+      deps.filter((d) => d.type === "implicit").map((d) => `${from} -> ${d.target}`),
+    ),
+  );
+  rmSync(dirname(graphFile), { recursive: true, force: true });
+  const only = (a, b) => [...a].filter((e) => !b.has(e));
+  for (const e of only(nxEdges, implicitEdges)) errors.push(`Nx resolves ${e}, which this checker did not; teach expandImplicit that pattern.`);
+  for (const e of only(implicitEdges, nxEdges)) errors.push(`this checker resolves ${e}, which Nx does not; align expandImplicit with Nx.`);
 }
 
 for (const name of projects.keys()) typeTag(name);

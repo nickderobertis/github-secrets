@@ -31,15 +31,16 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 usage() {
+  echo "coverage: $1" >&2
   echo "usage: scripts/coverage/coverage.sh clear | test <crate> | report" >&2
   exit 2
 }
 
-[ $# -ge 1 ] || usage
+[ $# -ge 1 ] || usage "no step given"
 readonly STEP="$1"
 case "$STEP" in
-  clear | report) [ $# -eq 1 ] || usage ;;
-  test) [ $# -eq 2 ] || usage ;;
+  clear | report) [ $# -eq 1 ] || usage "'$STEP' takes no arguments (got $(($# - 1)))" ;;
+  test) [ $# -eq 2 ] || usage "'test' takes exactly one crate name (got $(($# - 1)) arguments)" ;;
 esac
 
 is_windows() {
@@ -57,7 +58,8 @@ require() {
 }
 
 # The crate selector must name a real workspace member: unchecked, a typo would
-# measure nothing and pass. Only plain package names are accepted.
+# measure nothing and pass. Only plain package names are accepted; with
+# --no-deps, `cargo metadata` lists exactly the workspace members.
 validate_crate() {
   local crate="$1"
   if ! printf '%s' "$crate" | grep -Eq '^[a-z0-9][a-z0-9-]*$'; then
@@ -140,6 +142,6 @@ case "$STEP" in
     ;;
 
   *)
-    usage
+    usage "unknown step '$STEP'"
     ;;
 esac

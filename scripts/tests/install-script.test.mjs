@@ -93,7 +93,7 @@ test.skipIf(isWindows)("an empty --from-dir= is refused rather than silently dow
   const r = release();
   const res = install(["--version", TAG, "--from-dir=", "--to", r.to]);
   expect(res.code).not.toBe(0);
-  expect(res.stderr).toContain("--from-dir needs a value");
+  expect(res.stderr).toContain("--from-dir needs the directory holding the packaged archive (see --help)");
 });
 
 test.skipIf(isWindows || process.getuid?.() === 0)("an unreadable local archive fails with what to check", () => {

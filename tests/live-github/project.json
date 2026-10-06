@@ -6,6 +6,7 @@
   "tags": [
     "type:live"
   ],
+  "//implicitDependencies": "llmlint: ignore[expensive_tests_stay_behind_their_own_edge] the suite runs scripts/install.sh against the real release, and install.sh cannot leave scripts/: its path is the README's published curl | sh URL. Depending on the scripts project is the narrowest edge that path allows, and in the gate this project's test target is a compiled no-op anyway.",
   "implicitDependencies": [
     "gh-secrets",
     "scripts"
