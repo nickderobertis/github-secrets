@@ -111,10 +111,11 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      # rust-toolchain.toml pins the channel, components and every release
+      # target in this matrix, so the toolchain comes from the tagged tree.
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        shell: bash
+        run: rustup toolchain install || rustup show
 
       - name: Cache Cargo registry + build
         uses: Swatinem/rust-cache@v2
@@ -178,8 +179,8 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install || rustup show
 
       - name: Publish (if configured)
         env:

@@ -39,11 +39,23 @@ jobs:
           # Full history so the PR base commit is available for the comparison.
           fetch-depth: 0
 
-      - name: Install just
-        uses: extractions/setup-just@v2
+      - name: Read tool pins (.tool-versions)
+        id: pins
+        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install just (pinned)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@${{ steps.pins.outputs.just }}
+
+      # `just bench-cli` / `bench-instructions` run through Nx (the bench project).
+      - name: Install bun (pinned)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install || rustup show
 
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -71,7 +83,7 @@ jobs:
       - name: Allocation counts (deterministic)
         run: |
           mkdir -p target/bench
-          just bench-allocs | tee target/bench/allocs.md
+          cargo bench --locked --quiet --workspace --bench engine_allocs | tee target/bench/allocs.md
 
       - name: Instruction counts (cachegrind)
         run: just bench-instructions

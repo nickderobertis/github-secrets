@@ -1,9 +1,21 @@
-# Prove the artifact from a clean checkout: bootstrap, then the full gate.
+# Prove the artifact from a clean checkout: bootstrap, then the gate — at the
+# tier this run is for.
 #
-# CI must reproduce what a future maintainer or user hits on a fresh machine —
-# not a developer's warm local environment. The single required gate is
-# `just bootstrap` (clean install) then `just check` (format check, clippy,
-# unit + integration, and e2e).
+# Every `check` leg runs the SAME `just check` recipe; the tier is a flag on it,
+# chosen by scripts/ci-gate-tier.mjs (AGENTS.md "Commits, releases, and merging"):
+#
+#   * ordinary pull requests and pushes to master run the AFFECTED tier — the Nx
+#     projects the change can reach, keyed off an explicitly derived base (the
+#     merge base with origin/master on a PR, the previous master tip on a push);
+#   * the release-please release PR runs the BROADER tier — one full sweep over
+#     every project. This repo batches releases behind that PR, so the commit that
+#     ships is swept there, at release-prep, and nowhere else.
+#
+# release.yml builds and publishes an already-swept commit; it re-gates nothing.
+#
+# Fixed status-check contexts (branch protection names them): `check (<os>)`,
+# `build (<os>)`, `live-e2e`, `live-e2e-bitwarden`, `llmlint` — keep these job
+# ids and matrix values. tools/check-workflow-contract.mjs enforces it.
 
 name: ci
 
@@ -16,6 +28,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: read-only by default; no job here needs more.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -27,21 +43,36 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
+      # Full history: the affected tier resolves its base from it.
       - uses: actions/checkout@v4
-
-      - name: Install just
-        uses: extractions/setup-just@v2
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          fetch-depth: 0
 
-      - name: Install cargo-nextest
+      - name: Read tool pins (.tool-versions)
+        id: pins
+        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+
+      - name: Install just (pinned)
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest
+          tool: just@${{ steps.pins.outputs.just }}
+
+      - name: Install bun (pinned)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install || rustup show
+
+      - name: Install cargo-nextest + cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-llvm-cov
 
       - name: Cache Cargo registry + build
         uses: Swatinem/rust-cache@v2
@@ -49,8 +80,20 @@ jobs:
       - name: Bootstrap
         run: just bootstrap
 
+      - name: Choose the gate tier
+        id: tier
+        run: bun scripts/ci-gate-tier.mjs
+
       - name: Check
-        run: just check
+        env:
+          TIER: ${{ steps.tier.outputs.tier }}
+          BASE: ${{ steps.tier.outputs.base }}
+        run: |
+          if [ "$TIER" = "affected" ]; then
+            NX_BASE="$BASE" just check affected
+          else
+            just check all
+          fi
 
   build:
     needs: check
@@ -59,21 +102,248 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Read tool pins (.tool-versions)
+        id: pins
+        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+
+      - name: Install just (pinned)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@${{ steps.pins.outputs.just }}
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install || rustup show
 
       - name: Cache Cargo registry + build
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: just release
+
+  # The end-user install path, on the release platforms: build the release
+  # archive from THIS commit with the release workflow's own packaging steps
+  # (kept identical — tools/check-workflow-contract.mjs compares them), install
+  # it through scripts/install.sh exactly as the README tells users to (only the
+  # archive comes from disk instead of the GitHub release), then run what got
+  # installed. Separate from the dev gate: `just bootstrap` is not how users get
+  # the binary.
+  install:
+    name: install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read tool pins (.tool-versions)
+        id: pins
+        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+
+      - name: Install just (pinned)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@${{ steps.pins.outputs.just }}
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install || rustup show
+
+      - name: Cache Cargo registry + build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Version this commit would ship as
+        id: version
+        run: echo "tag=v$(cargo pkgid -p gh-secrets | sed 's/.*[#@]//')" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: just release ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.tag }}
+        run: |
+          dist="gh-secrets-${VERSION}-${{ matrix.target }}"
+          mkdir "$dist"
+          cp "target/${{ matrix.target }}/release/gh-secrets" "$dist/"
+          cp README.md LICENSE "$dist/"
+          tar czf "${dist}.tar.gz" "$dist"
+          shasum -a 256 "${dist}.tar.gz" > "${dist}.tar.gz.sha256"
+
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $dist = "gh-secrets-$($env:VERSION)-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/gh-secrets.exe" "$dist/"
+          Copy-Item README.md, LICENSE "$dist/"
+          Compress-Archive -Path $dist -DestinationPath "${dist}.zip"
+          $hash = (Get-FileHash "${dist}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${dist}.zip" | Out-File -Encoding ascii "${dist}.zip.sha256"
+        env:
+          VERSION: ${{ steps.version.outputs.tag }}
+
+      - name: Install through scripts/install.sh
+        env:
+          VERSION: ${{ steps.version.outputs.tag }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/bin"
+          mv gh-secrets-"$VERSION"-* "$RUNNER_TEMP/release/"
+          sh scripts/install.sh --version "$VERSION" --from-dir "$RUNNER_TEMP/release" --to "$RUNNER_TEMP/bin"
+
+      - name: Run the installed binary
+        env:
+          VERSION: ${{ steps.version.outputs.tag }}
+        run: |
+          out="$("$RUNNER_TEMP/bin/gh-secrets" --version)"
+          echo "$out"
+          [ "$out" = "gh-secrets ${VERSION#v}" ]
+          "$RUNNER_TEMP/bin/gh-secrets" --help >/dev/null
+
+  # Supply chain: cargo-deny (advisories, licenses, bans, sources) and
+  # cargo-machete (unused dependencies). Platform-independent, so Linux only.
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read tool pins (.tool-versions)
+        id: pins
+        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+
+      - name: Install just (pinned)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@${{ steps.pins.outputs.just }}
+
+      - name: Install bun (pinned)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install || rustup show
+
+      - name: Install cargo-deny + cargo-machete
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,cargo-machete
+
+      - name: Supply chain
+        run: just supply-chain
+
+  # The declared MSRV (rust-version in Cargo.toml) is a promise; build it.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read tool pins (.tool-versions)
+        id: pins
+        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+
+      - name: Install just (pinned)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@${{ steps.pins.outputs.just }}
+
+      - name: Cache Cargo registry + build
+        uses: Swatinem/rust-cache@v2
+
+      - name: MSRV
+        run: just msrv
+
+  # LLM-judge tier (llmlint): a PR check SEPARATE from the deterministic `check`
+  # gate, scoped to the files this PR changed (merge-base diff with master). The
+  # model-free `llmlint validate` runs first; the judge then needs the codex
+  # harness (oneharness.toml's primary) authenticated from the OPENAI_API_KEY
+  # repository secret, and fails fast naming that secret when it is absent —
+  # never a green no-op. Fork PRs are gated by the repo's
+  # require-approval-for-fork-workflows setting, not here.
+  llmlint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # The PR head (not the synthetic merge ref), with full history so the
+      # merge base with master resolves.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fetch master (diff base)
+        run: git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
+
+      - name: Read tool pins (.tool-versions)
+        id: pins
+        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+
+      - name: Install just (pinned)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@${{ steps.pins.outputs.just }}
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install llmlint + oneharness
+        run: |
+          ./scripts/setup-llmlint.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/llmlint" --version
+
+      # Deterministic, model-free gate first: no credential, no harness call.
+      - name: Validate llmlint config (no model)
+        run: just lint-llm-validate --diff-base origin/master
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # oneharness drives the real codex CLI, which must be installed AND
+      # authenticated; codex does not read OPENAI_API_KEY from the environment,
+      # so it is logged in explicitly.
+      - name: Install and authenticate the codex harness
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::error::llmlint needs the OPENAI_API_KEY repository secret to authenticate its codex harness (Settings → Secrets and variables → Actions). Fork PRs are gated by the require-approval-for-fork-workflows setting." >&2
+            exit 1
+          fi
+          npm install -g @openai/codex
+          printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key
+
+      - name: Lint changed files
+        run: just lint-llm-diff origin/master
 
   # Live e2e tests against the real GitHub API. Only runs when the repo has a
   # `GH_E2E_TOKEN` secret available (it's not on PRs from forks). One OS is
   # enough — the live suite proves real network behavior, not portability.
+  # Standing deviation from the skill's live-tier rule (AGENTS.md): this stays
+  # in the PR workflow and finishes green without its secret.
   live-e2e:
     needs: check
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -81,18 +351,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install just
-        uses: extractions/setup-just@v2
+      - name: Read tool pins (.tool-versions)
+        id: pins
+        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Install cargo-nextest
+      - name: Install just (pinned)
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest
+          tool: just@${{ steps.pins.outputs.just }}
+
+      - name: Install bun (pinned)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install || rustup show
+
+      - name: Install cargo-nextest + cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-llvm-cov
 
       - name: Cache Cargo registry + build
         uses: Swatinem/rust-cache@v2
@@ -123,18 +402,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install just
-        uses: extractions/setup-just@v2
+      - name: Read tool pins (.tool-versions)
+        id: pins
+        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Install cargo-nextest
+      - name: Install just (pinned)
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest
+          tool: just@${{ steps.pins.outputs.just }}
+
+      - name: Install bun (pinned)
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install || rustup show
+
+      - name: Install cargo-nextest + cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-llvm-cov
 
       - name: Cache Cargo registry + build
         uses: Swatinem/rust-cache@v2
