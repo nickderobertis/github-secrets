@@ -10,9 +10,9 @@
     "lint": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "for f in scripts/*.sh scripts/nx; do bash -n \"$f\" || exit 1; done && sh -n scripts/install.sh && sh -n scripts/install-nextest.sh"
+        "command": "bash scripts/lint.sh"
       },
-      "//": "Syntax-checks every script with the shell that runs it (install.sh and install-nextest.sh are POSIX sh)."
+      "//": "Syntax-checks every script with the shell that runs it (scripts/lint.sh; install.sh and install-nextest.sh are POSIX sh). A script, not an inline loop, because Nx runs inline commands through cmd.exe on Windows."
     },
     "test": {
       "executor": "nx:run-commands",
