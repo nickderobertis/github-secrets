@@ -25,7 +25,6 @@ use live_bw_common::BwLiveSession;
 use predicates::str::contains;
 use tempfile::TempDir;
 
-/// Read this session's env-file destination back as a string.
 fn dest_body(s: &BwLiveSession) -> String {
     std::fs::read_to_string(s.dir.path().join("out.env")).expect("read out.env destination")
 }

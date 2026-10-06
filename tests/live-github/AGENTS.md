@@ -12,9 +12,9 @@ latest release. Live contact puts it outside the deterministic gate's real runs:
   scope and creates (idempotently) a private sandbox repo
   `gh-secrets-e2e-sandbox` on the authenticated account. Do not run it from an
   agent session.
-- `scripts/install.sh` is root-owned, so any change to it selects this project
-  in the affected tier; `live_install_script_downloads_and_verifies_release`
-  is what catches release-asset naming drift against the real release.
+- `live_install_script_downloads_and_verifies_release` runs `scripts/install.sh`
+  against the real release, which is what catches release-asset naming drift
+  for users; the `install (<os>)` CI job proves the same path offline per PR.
 
 <!-- llmlint: ignore-block[agents_md_durable_and_terse] this is the suite's coverage map — the one place a reader learns what is and is not proven here without reading every test — so it is kept whole beside the suite it describes. -->
 - `tests/e2e_live.rs` round-trips the same `sync`

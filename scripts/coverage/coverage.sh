@@ -51,8 +51,10 @@ is_windows() {
 }
 
 require() {
-  if ! cargo "$1" --version >/dev/null 2>&1; then
-    echo "coverage: cargo-$1 is not installed; run 'just bootstrap' (or 'cargo binstall cargo-$1')." >&2
+  local out
+  if ! out="$(cargo "$1" --version 2>&1)"; then
+    printf '%s\n' "$out" >&2
+    echo "coverage: 'cargo $1 --version' failed (above) — cargo-$1 is missing or broken; run 'just bootstrap' (or 'cargo binstall cargo-$1')." >&2
     exit 1
   fi
 }
