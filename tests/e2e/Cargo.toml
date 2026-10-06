@@ -15,7 +15,17 @@ publish = false
 assert_cmd.workspace = true
 base64.workspace = true
 predicates.workspace = true
-serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 wiremock.workspace = true
+
+# A stand-in `bw` the Bitwarden journeys put first on PATH (see
+# tests/e2e_bitwarden.rs). A real subprocess double rather than a mock of the
+# code under test: gh-secrets spawns it exactly as it spawns the real CLI.
+[[bin]]
+name = "fake-bw"
+path = "support/fake_bw.rs"
+test = false
+
+[dependencies]
+serde_json.workspace = true

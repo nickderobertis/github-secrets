@@ -484,6 +484,72 @@ async fn e2e_init_scaffolds_local_and_global() {
     assert_eq!(global["source"]["type"], "local");
 }
 
+/// `--global` without a global config is an error that names the missing file
+/// and the command that creates it — unless the arguments spell out the whole
+/// pipeline, which needs no config at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_global_without_global_config_errors_unless_args_suffice() {
+    let h = Harness::new().await;
+    h.write("source.env", "FOO=global-args-value\n");
+    h.cmd()
+        .args(["sync", "--global"])
+        .assert()
+        .failure()
+        .stderr(contains("no global config at").and(contains("gh-secrets init --global")));
+
+    h.cmd()
+        .args([
+            "sync",
+            "--global",
+            "--from",
+            "env:source.env",
+            "--to",
+            "env:out.env",
+            "--secret",
+            "FOO",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("1 created"));
+    assert!(h.read("out.env").contains("FOO=\"global-args-value\""));
+}
+
+/// Without `GH_SECRETS_HOME`, the config root is the platform config
+/// directory (`$XDG_CONFIG_HOME/gh-secrets` on Linux, `~/Library/Application
+/// Support/gh-secrets` on macOS). Both are redirected into the tempdir here, so
+/// the user's real config is never touched. Not run on Windows, whose config
+/// directory comes from the known-folder API and cannot be redirected by env.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_config_root_defaults_to_the_platform_config_dir() {
+    let h = Harness::new().await;
+    let fake_home = h.dir.path().join("user-home");
+    let expected_root = if cfg!(target_os = "macos") {
+        fake_home.join("Library/Application Support/gh-secrets")
+    } else {
+        h.dir.path().join("xdg-config/gh-secrets")
+    };
+    let cmd = |args: &[&str]| {
+        let mut c = h.cmd();
+        c.env_remove("GH_SECRETS_HOME")
+            .env("HOME", &fake_home)
+            .env("XDG_CONFIG_HOME", h.dir.path().join("xdg-config"))
+            .args(args);
+        c
+    };
+    cmd(&["init", "--global"])
+        .assert()
+        .success()
+        .stdout(contains(
+            expected_root.join("gh-secrets.json").display().to_string(),
+        ));
+    cmd(&["store", "set", "ROOT_PROBE", "probe-value"])
+        .assert()
+        .success();
+    assert!(expected_root.join("vault.json").exists());
+    assert!(!h.home().exists(), "nothing may land under GH_SECRETS_HOME");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2e_list_shows_mapping_for_env_file_source() {
     let h = Harness::new().await;
