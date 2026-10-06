@@ -35,12 +35,13 @@ function setupLlmlint({ uv = "ok", doctor = 0 } = {}) {
     exe(join(bin, "uv"), `echo "$*" >> "${uvCalls}"\necho "error: no network" >&2\nexit 1`);
   }
   const envFile = join(s.dir, "claude-env");
+  const pathDirs = [bin, "/usr/bin", "/bin"];
   const go = (extraEnv = {}) =>
     run("bash", [join(REPO, "scripts/setup-llmlint.sh")], {
-      env: { ...process.env, HOME: home, PATH: [bin, "/usr/bin", "/bin"].join(":"), CLAUDE_ENV_FILE: "", ...extraEnv },
+      env: { ...process.env, HOME: home, PATH: pathDirs.join(":"), CLAUDE_ENV_FILE: "", ...extraEnv },
     });
   const calls = () => (existsSync(uvCalls) ? readFileSync(uvCalls, "utf8").trim() : "");
-  return { home, envFile, go, calls };
+  return { home, envFile, pathDirs, go, calls };
 }
 
 test.skipIf(isWindows)("installs llmlint-cli at the floor via uv tool, checks doctor, persists PATH into the session", () => {
@@ -103,4 +104,20 @@ test.skipIf(isWindows)("session-setup hands off to setup-llmlint and survives it
   expect(r.code).toBe(0);
   expect(readFileSync(handoff, "utf8").trim()).toBe("called");
   expect(r.stderr).toContain("setup-llmlint.sh exited non-zero (its log is above); retry with 'just setup-llmlint'");
+});
+
+test.skipIf(isWindows)("a session that already resolves ~/.local/bin gets no duplicate export", () => {
+  const t = setupLlmlint();
+  const r = t.go({ CLAUDE_ENV_FILE: t.envFile, PATH: [join(t.home, ".local/bin"), ...t.pathDirs].join(":") });
+  expect(r.code).toBe(0);
+  expect(r.stderr).toContain("already on the session PATH");
+  expect(existsSync(t.envFile)).toBe(false);
+});
+
+test.skipIf(isWindows)("an unwritable session env file is reported, not claimed as exported", () => {
+  const t = setupLlmlint();
+  const r = t.go({ CLAUDE_ENV_FILE: join(t.home, "no-such-dir", "env") });
+  expect(r.code).toBe(0);
+  expect(r.stderr).toContain("could not write");
+  expect(r.stderr).not.toContain("exported PATH");
 });

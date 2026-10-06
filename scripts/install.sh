@@ -185,7 +185,7 @@ main() {
             --to | --bin-dir) bindir="${2:?--to needs a value}"; shift 2 ;;
             --to=* | --bin-dir=*) bindir="${1#*=}"; shift ;;
             --from-dir) archive_dir="${2:?--from-dir needs a value}"; shift 2 ;;
-            --from-dir=*) archive_dir="${1#*=}"; shift ;;
+            --from-dir=*) archive_dir="${1#*=}"; [ -n "$archive_dir" ] || err "--from-dir needs a value"; shift ;;
             -h | --help) usage; exit 0 ;;
             *) err "unknown option: $1 (try --help)" ;;
         esac

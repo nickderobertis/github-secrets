@@ -57,9 +57,13 @@ ensure_toolchain() {
 # No-op outside a session.
 persist_session_env() {
   [ -n "${CLAUDE_ENV_FILE:-}" ] || { log "no CLAUDE_ENV_FILE (not a session); skipping env"; return 0; }
-  {
-    case ":${ORIG_PATH}:" in *":${BIN_DIR}:"*) ;; *) printf 'export PATH=%q\n' "${BIN_DIR}:${ORIG_PATH}";; esac
-  } >> "$CLAUDE_ENV_FILE"
+  case ":${ORIG_PATH}:" in
+    *":${BIN_DIR}:"*) log "${BIN_DIR} already on the session PATH"; return 0 ;;
+  esac
+  if ! printf 'export PATH=%q\n' "${BIN_DIR}:${ORIG_PATH}" >> "$CLAUDE_ENV_FILE"; then
+    log "could not write $CLAUDE_ENV_FILE; add ${BIN_DIR} to PATH yourself for this session"
+    return 0
+  fi
   log "exported PATH"
 }
 

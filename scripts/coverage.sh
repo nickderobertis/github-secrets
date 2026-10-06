@@ -53,12 +53,17 @@ require() {
 validate_crate() {
   local crate="$1"
   if ! printf '%s' "$crate" | grep -Eq '^[a-z0-9][a-z0-9-]*$'; then
-    echo "coverage: '$crate' is not a valid crate name." >&2
+    echo "coverage: '$crate' is not a valid crate name; pass a workspace package name (lowercase letters, digits, -)." >&2
     exit 2
   fi
-  if ! cargo metadata --format-version 1 --no-deps --locked 2>/dev/null \
-    | grep -q "\"name\":\"$crate\",\"version\""; then
-    echo "coverage: '$crate' is not a member of this Cargo workspace; pass one of: $(cargo metadata --format-version 1 --no-deps --locked 2>/dev/null | grep -o '"name":"[^"]*","version"' | cut -d'"' -f4 | tr '\n' ' ')" >&2
+  local metadata
+  if ! metadata="$(cargo metadata --format-version 1 --no-deps --locked 2>&1)"; then
+    printf '%s\n' "$metadata" >&2
+    echo "coverage: 'cargo metadata' failed (above); fix the manifests so it resolves, then re-run." >&2
+    exit 1
+  fi
+  if ! printf '%s' "$metadata" | grep -q "\"name\":\"$crate\",\"version\""; then
+    echo "coverage: '$crate' is not a member of this Cargo workspace; pass one of: $(printf '%s' "$metadata" | grep -o '"name":"[^"]*","version"' | cut -d'"' -f4 | tr '\n' ' ')" >&2
     exit 2
   fi
 }

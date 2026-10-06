@@ -15,6 +15,8 @@
 //      a release ships.
 //   4. rust-toolchain.toml's `targets` are exactly release.yml's build matrix
 //      targets, so the pinned toolchain always carries what a release builds.
+//   5. The llmlint job installs the harness oneharness.toml lists first (its
+//      primary), so CI authenticates the harness llmlint will actually try.
 //
 // Usage: bun tools/check-workflow-contract.mjs [--root <dir>]
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -199,6 +201,20 @@ export function checkContract(root) {
     errors.push(
       `rust-toolchain.toml targets [${sorted(toolchainTargets)}] differ from release.yml's build matrix [${sorted(releaseTargets)}]; keep them equal.`,
     );
+  }
+  // The llmlint job installs oneharness.toml's primary harness.
+  const HARNESS_PACKAGES = { codex: "@openai/codex", "claude-code": "@anthropic-ai/claude-code" };
+  let primary;
+  try {
+    primary = Bun.TOML.parse(readFileSync(join(root, "oneharness.toml"), "utf8")).harnesses?.[0];
+  } catch (err) {
+    errors.push(`oneharness.toml is not readable TOML: ${err.message}`);
+  }
+  const pkg = HARNESS_PACKAGES[primary];
+  if (!pkg) {
+    errors.push(`oneharness.toml's primary harness ${JSON.stringify(primary)} has no known CI install; extend HARNESS_PACKAGES here and the llmlint job together.`);
+  } else if (!(ci?.jobs?.llmlint?.steps ?? []).some((s) => String(s.run ?? "").includes(`npm install -g ${pkg}`))) {
+    errors.push(`ci.yml:llmlint must install oneharness.toml's primary harness (${primary}: npm install -g ${pkg}).`);
   }
   return errors;
 }

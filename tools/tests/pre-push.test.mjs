@@ -5,7 +5,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { chmodSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
-import { REPO, gitRepo, ok, run, scratch } from "./helpers.mjs";
+import { REPO, gitRepo, ok, run, scratch } from "../../scripts/tests/helpers.mjs";
 
 const isWindows = process.platform === "win32";
 let cleanups = [];

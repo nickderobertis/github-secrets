@@ -3,16 +3,25 @@
   "name": "gh-secrets-live-bitwarden",
   "//": "The live Bitwarden suite (a real, isolated Bitwarden account through the real bw CLI). The test target compiles it and runs it as a no-op (no GH_SECRETS_LIVE_TEST); the live target is the real run, used by the live-e2e-bitwarden CI job via just test-live-bitwarden. Serial (-j1): every test logs in to the one isolated account.",
   "projectType": "application",
-  "tags": ["type:live"],
-  "implicitDependencies": ["gh-secrets"],
+  "tags": [
+    "type:live"
+  ],
+  "implicitDependencies": [
+    "gh-secrets",
+    "scripts"
+  ],
   "targets": {
     "format": {
       "executor": "nx:run-commands",
-      "options": { "command": "cargo fmt -p gh-secrets-live-bitwarden" }
+      "options": {
+        "command": "cargo fmt -p gh-secrets-live-bitwarden"
+      }
     },
     "format-check": {
       "executor": "nx:run-commands",
-      "options": { "command": "cargo fmt -p gh-secrets-live-bitwarden -- --check" }
+      "options": {
+        "command": "cargo fmt -p gh-secrets-live-bitwarden -- --check"
+      }
     },
     "lint": {
       "executor": "nx:run-commands",
@@ -22,15 +31,26 @@
     },
     "test": {
       "executor": "nx:run-commands",
-      "dependsOn": ["gh-secrets:build", "workspace:coverage-clear"],
-      "options": { "command": "bash scripts/coverage.sh test gh-secrets-live-bitwarden" },
-      "outputs": ["{workspaceRoot}/target/llvm-cov-target/*.profraw"]
+      "dependsOn": [
+        "gh-secrets:build",
+        "workspace:coverage-clear"
+      ],
+      "options": {
+        "command": "bash scripts/coverage.sh test gh-secrets-live-bitwarden"
+      },
+      "outputs": [
+        "{workspaceRoot}/target/llvm-cov-target/*.profraw"
+      ]
     },
     "live": {
       "executor": "nx:run-commands",
-      "dependsOn": ["gh-secrets:build"],
+      "dependsOn": [
+        "gh-secrets:build"
+      ],
       "cache": false,
-      "options": { "command": "GH_SECRETS_LIVE_TEST=1 cargo nextest run -j1 -p gh-secrets-live-bitwarden --no-fail-fast" }
+      "options": {
+        "command": "GH_SECRETS_LIVE_TEST=1 cargo nextest run -j1 -p gh-secrets-live-bitwarden --no-fail-fast"
+      }
     }
   }
 }

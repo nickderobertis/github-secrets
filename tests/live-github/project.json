@@ -3,16 +3,25 @@
   "name": "gh-secrets-live-github",
   "//": "The live GitHub suite (real GitHub API, and scripts/install.sh against the real release). The test target compiles it and runs it as a no-op (no GH_SECRETS_LIVE_TEST); the live target is the real run, used by the live-e2e CI job via just test-live.",
   "projectType": "application",
-  "tags": ["type:live"],
-  "implicitDependencies": ["gh-secrets"],
+  "tags": [
+    "type:live"
+  ],
+  "implicitDependencies": [
+    "gh-secrets",
+    "scripts"
+  ],
   "targets": {
     "format": {
       "executor": "nx:run-commands",
-      "options": { "command": "cargo fmt -p gh-secrets-live-github" }
+      "options": {
+        "command": "cargo fmt -p gh-secrets-live-github"
+      }
     },
     "format-check": {
       "executor": "nx:run-commands",
-      "options": { "command": "cargo fmt -p gh-secrets-live-github -- --check" }
+      "options": {
+        "command": "cargo fmt -p gh-secrets-live-github -- --check"
+      }
     },
     "lint": {
       "executor": "nx:run-commands",
@@ -22,15 +31,26 @@
     },
     "test": {
       "executor": "nx:run-commands",
-      "dependsOn": ["gh-secrets:build", "workspace:coverage-clear"],
-      "options": { "command": "bash scripts/coverage.sh test gh-secrets-live-github" },
-      "outputs": ["{workspaceRoot}/target/llvm-cov-target/*.profraw"]
+      "dependsOn": [
+        "gh-secrets:build",
+        "workspace:coverage-clear"
+      ],
+      "options": {
+        "command": "bash scripts/coverage.sh test gh-secrets-live-github"
+      },
+      "outputs": [
+        "{workspaceRoot}/target/llvm-cov-target/*.profraw"
+      ]
     },
     "live": {
       "executor": "nx:run-commands",
-      "dependsOn": ["gh-secrets:build"],
+      "dependsOn": [
+        "gh-secrets:build"
+      ],
       "cache": false,
-      "options": { "command": "GH_SECRETS_LIVE_TEST=1 cargo nextest run -p gh-secrets-live-github --no-fail-fast" }
+      "options": {
+        "command": "GH_SECRETS_LIVE_TEST=1 cargo nextest run -p gh-secrets-live-github --no-fail-fast"
+      }
     }
   }
 }

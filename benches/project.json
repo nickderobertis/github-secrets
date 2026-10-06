@@ -1,22 +1,15 @@
 {
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "name": "gh-secrets-bench",
-  "//": "The informational performance suite: never a gate, so `check` reaches only its format-check and lint (which compiles the benches). The bench* targets are what `just bench*` and the Performance workflow run. scripts/bench*.sh drive the release binary, so they are its inputs too.",
+  "//": "The informational performance suite: never a gate, so `check` reaches only its format-check and lint (which compiles the benches). The bench* targets are what `just bench*` and the Performance workflow run; scripts/bench*.sh (in the scripts project, a dependency) drive the release binary.",
   "projectType": "application",
   "tags": [
     "type:bench"
   ],
   "implicitDependencies": [
-    "gh-secrets"
+    "gh-secrets",
+    "scripts"
   ],
-  "namedInputs": {
-    "default": [
-      "{projectRoot}/**/*",
-      "{workspaceRoot}/scripts/bench.sh",
-      "{workspaceRoot}/scripts/bench-instructions.sh",
-      "sharedGlobals"
-    ]
-  },
   "targets": {
     "format": {
       "executor": "nx:run-commands",

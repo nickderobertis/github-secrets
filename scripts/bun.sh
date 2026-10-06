@@ -88,11 +88,15 @@ install_pinned() {
   actual="$(sha256_of "$tmp/$asset.zip")"
   [ -n "$expected" ] && [ "$expected" = "$actual" ] \
     || fail "checksum mismatch for $asset.zip (expected '${expected}', got '${actual}'); not installing. Re-run 'just bootstrap' (a truncated download heals); if it persists, report it — do not bypass the check."
-  unzip -q "$tmp/$asset.zip" -d "$tmp"
-  mkdir -p "$CACHE_DIR/bin"
-  mv "$tmp/$asset/bun" "$CACHE_DIR/bin/bun.partial"
-  chmod +x "$CACHE_DIR/bin/bun.partial"
-  mv "$CACHE_DIR/bin/bun.partial" "$CACHE_DIR/bin/bun"
+  unzip -q "$tmp/$asset.zip" -d "$tmp" \
+    || fail "could not unpack $asset.zip (above); re-run 'just bootstrap', and report it if it persists."
+  [ -f "$tmp/$asset/bun" ] \
+    || fail "$asset.zip holds no $asset/bun (the release layout changed); install bun $VERSION first on PATH instead, and report it."
+  { mkdir -p "$CACHE_DIR/bin" \
+    && mv "$tmp/$asset/bun" "$CACHE_DIR/bin/bun.partial" \
+    && chmod +x "$CACHE_DIR/bin/bun.partial" \
+    && mv "$CACHE_DIR/bin/bun.partial" "$CACHE_DIR/bin/bun"; } \
+    || fail "could not install into $CACHE_DIR (above); make it writable or point GH_SECRETS_TOOLS_DIR elsewhere, then re-run 'just bootstrap'."
 }
 
 case "$MODE" in

@@ -13,10 +13,10 @@ always see a complete set of profiles.
   `check-coverage-floor.mjs` (every restated floor equals `MIN_LINES`). When
   you add a project, give it exactly one `type:*` tag; when you rename a CI job
   or add a condition to one that reports a fixed context, these tell you.
-- `test` runs `bun test tools/tests`: the repo's own tooling driven as real
-  subprocesses in scratch repositories, with only the external tool at the far
-  end (Nx, bun's release, uv, git remotes) replaced. Keep new tooling covered
-  the same way; the bash-script tests skip on Windows.
+- `test` runs `bun test tools/tests`: these checkers, the justfile's gate
+  recipes (with only `scripts/nx` replaced by a recorder) and the pre-push hook
+  (real `git push`es), each in a scratch repository. The scripts' own tests
+  live in the `scripts` project.
 - `coverage-clear` / `coverage` are steps one and three of
   `scripts/coverage.sh` (each crate's `test` target is step two). `coverage`
   depends on `^test` — the `test` of every project, since `implicitDependencies`

@@ -9,7 +9,8 @@
 //! `FAKE_BW_STATE`, and appends one line per invocation (the argv) to
 //! `FAKE_BW_LOG` so a test can assert which calls were made.
 //!
-//! Fixture shape (every field optional except `items`):
+//! Fixture shape (`client_id`, `client_secret`, `password`, `session` and
+//! `items` required; the rest optional):
 //! `{ "status": "unauthenticated"|"locked"|"unlocked", "client_id", "client_secret",
 //!    "password", "session", "status_raw", "unlock_raw", "items": [<bw item>...] }`
 //! `status_raw` / `unlock_raw` replace the normal stdout of those commands, to
@@ -42,6 +43,15 @@ fn main() -> ExitCode {
     }
     let raw = fs::read_to_string(&state_path).expect("fake bw: read state");
     let mut state: Value = serde_json::from_str(&raw).expect("fake bw: parse state");
+    // A fixture missing a credential must not let an unset env var "match" it.
+    for key in ["client_id", "client_secret", "password", "session"] {
+        if !state.get(key).is_some_and(Value::is_string) {
+            return fail(&format!("fake bw: fixture must set \"{key}\" to a string"));
+        }
+    }
+    if !state.get("items").is_some_and(Value::is_array) {
+        return fail("fake bw: fixture must set \"items\" to an array");
+    }
     let field = |s: &Value, k: &str| s.get(k).and_then(Value::as_str).map(String::from);
     let session_ok = || env::var("BW_SESSION").ok() == field(&state, "session");
 

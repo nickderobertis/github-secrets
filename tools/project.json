@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "name": "workspace",
-  "//": "Repo-level targets: the coverage aggregate over every crate's test profiles, the supply-chain check, the project-boundary and workflow-contract checks (lint), and the tests of the repo's own tooling. It depends on every other project (\"*\"), so any change selects it \u2014 which is what makes the coverage aggregate always see a complete set of profiles.",
+  "//": "Repo-level targets: the coverage aggregate over every crate's test profiles, the supply-chain check, and the reconciling checks over root-owned files (lint: project boundaries, the CI workflow contract, the restated coverage floor) with their tests (the justfile's gate recipes, the pre-push hook, the checkers). It depends on every other project (\"*\"), so any change selects it \u2014 which is what makes the coverage aggregate always see a complete set of profiles. The scripts' own tests live in the scripts project.",
   "projectType": "library",
   "tags": [
     "type:workspace"

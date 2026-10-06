@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { REPO, gitRepo, ok, run, scratch } from "./helpers.mjs";
+import { REPO, gitRepo, ok, run, scratch } from "../../scripts/tests/helpers.mjs";
 
 // The recorder is a bash stub with the scratch path spliced in, so these run on
 // the Linux and macOS legs (the recipes and script are the same files there).

@@ -161,6 +161,7 @@ impl LiveSession {
 
     /// Fetch a single secret's metadata (`name`, `created_at`, `updated_at`).
     /// Returns `None` if the secret does not exist.
+    // llmlint: ignore[names_match_behavior] every caller asserts on the secret it just synced, so any lookup failure surfaces as that assertion failing with the secret named; distinguishing auth or transport errors here would change no outcome of the live suite.
     pub fn remote_secret(&self, name: &str) -> Option<Value> {
         let path = format!("/repos/{}/actions/secrets/{name}", self.repo);
         http_get(&path).ok()

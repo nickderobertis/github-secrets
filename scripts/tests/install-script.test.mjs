@@ -88,3 +88,20 @@ test.skipIf(isWindows)("a --from-dir that does not exist is refused", () => {
   expect(res.code).not.toBe(0);
   expect(res.stderr).toContain("--from-dir: no such directory");
 });
+
+test.skipIf(isWindows)("an empty --from-dir= is refused rather than silently downloading", () => {
+  const r = release();
+  const res = install(["--version", TAG, "--from-dir=", "--to", r.to]);
+  expect(res.code).not.toBe(0);
+  expect(res.stderr).toContain("--from-dir needs a value");
+});
+
+test.skipIf(isWindows || process.getuid?.() === 0)("an unreadable local archive fails with what to check", () => {
+  const r = release();
+  chmodSync(join(r.dir, `${r.dist}.tar.gz`), 0o000);
+  const res = install(["--version", TAG, "--from-dir", r.dir, "--to", r.to]);
+  chmodSync(join(r.dir, `${r.dist}.tar.gz`), 0o644);
+  expect(res.code).not.toBe(0);
+  expect(res.stderr).toContain("check that it is readable");
+  expect(existsSync(join(r.to, "gh-secrets"))).toBe(false);
+});

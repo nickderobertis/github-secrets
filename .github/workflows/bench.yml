@@ -55,7 +55,7 @@ jobs:
           bun-version-file: .tool-versions
 
       - name: Install Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: just toolchain
 
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2

@@ -3,7 +3,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkCoverageFloor } from "../check-coverage-floor.mjs";
-import { REPO, gitRepo, scratch } from "./helpers.mjs";
+import { REPO, gitRepo, scratch } from "../../scripts/tests/helpers.mjs";
 
 let cleanups = [];
 afterEach(() => {

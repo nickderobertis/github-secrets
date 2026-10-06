@@ -66,7 +66,7 @@ main() {
   # one that pays the download cost. Non-fatal: the build would fetch anyway.
   cargo fetch --locked >/dev/null 2>&1 || true
   log "ready (just $(just --version 2>/dev/null | awk '{print $2}'), $(cargo-nextest --version 2>/dev/null | head -1))"
-  # The llmlint tier, from its own idempotent installer (also `just setup-llmlint`).
+  # llmlint: ignore[work_goes_through_command_surface] the SessionStart hook runs before `just` is guaranteed to exist (installing it is this script's job), so the hand-off calls the installer `just setup-llmlint` wraps directly.
   "$(dirname "$0")/setup-llmlint.sh" \
     || log "setup-llmlint.sh exited non-zero (its log is above); retry with 'just setup-llmlint' — continuing, the deterministic gate does not need it"
 }

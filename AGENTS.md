@@ -127,8 +127,7 @@ recorded so the next maintainer can see why the tooling is what it is.
     (`benches/AGENTS.md`).
   - *Tier thresholds are `ci.md`'s starting defaults* (10 min p95 for the
     affected tier, 5 min for lint/unit) until CI history under the graph gives
-    per-target p50/p95. A full affected run measured well under a minute on a
-    warm build cache, so nothing is promoted out of the affected tier.
+    per-target p50/p95; until then nothing is promoted out of the affected tier.
 
 ## Command surface
 
@@ -167,14 +166,17 @@ nested `AGENTS.md` for its own rules.
 | `gh-secrets-live-github` | `tests/live-github` | `type:live` | real GitHub API + `install.sh` vs the real release |
 | `gh-secrets-live-bitwarden` | `tests/live-bitwarden` | `type:live` | real isolated Bitwarden account |
 | `gh-secrets-bench` | `benches` | `type:bench` | informational benchmarks |
-| `workspace` | `tools` | `type:workspace` | coverage aggregate, supply chain, boundary + workflow-contract checks |
+| `scripts` | `scripts` | `type:tooling` | the repo's scripts (toolchain, gate, installers) and their tests |
+| `workspace` | `tools` | `type:workspace` | coverage aggregate, supply chain, reconciling checks over root files |
 
-- The root project owns every file no other project claims (`scripts/`,
-  `.github/`, docs), so a change there selects everything; its own inputs are
+- The root project owns every file no other project claims (`.github/`, the
+  justfile, docs), so a change there selects everything; its own inputs are
   narrowed to `src/` and the manifests, so lint/format replay from cache.
+  `scripts/` is its own project, so script changes reach only what uses them.
 - Boundaries: `tools/project-boundaries.json`, enforced in `workspace:lint` over
   Cargo *and* Nx edges. `type:app` may depend only on `type:app`, so the
-  published crate can never be made to depend on a test, live or bench project.
+  published crate can never be made to depend on a test, live, bench or
+  tooling project.
 - Coverage: each crate's `test` target runs under cargo-llvm-cov
   (`--no-report`, profiles in `target/llvm-cov-target`); `workspace:coverage`
   merges them and fails below **95%** lines over the gh-secrets crate's `src/`.

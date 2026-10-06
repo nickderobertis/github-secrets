@@ -12,8 +12,8 @@ in `project.json`, and its `test` target `dependsOn` `gh-secrets:build`.
   journeys put first on `PATH`. That is a real subprocess double of an
   external tool, not a mock of the code under test: `gh-secrets` spawns it
   exactly as it spawns the real CLI. Never `#[ignore]` a test here.
-- Under `just check` the suite runs instrumented (`scripts/coverage.sh test
-  gh-secrets-e2e`): it drives the instrumented copy of the binary in
+- Under `just check` (and `just test-e2e`) the suite runs instrumented: it
+  drives the instrumented copy of the binary in
   `target/llvm-cov-target`, so the lines it reaches count toward the 95% floor
   over the `gh-secrets` crate. A behaviour you add to `src/` is usually covered
   best by a journey here.

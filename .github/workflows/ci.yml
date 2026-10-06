@@ -59,7 +59,7 @@ jobs:
           bun-version-file: .tool-versions
 
       - name: Install Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: just toolchain
 
       - name: Install cargo-nextest + cargo-llvm-cov
         uses: taiki-e/install-action@v2
@@ -110,7 +110,7 @@ jobs:
           tool: just@${{ steps.pins.outputs.just }}
 
       - name: Install Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: just toolchain
 
       - name: Cache Cargo registry + build
         uses: Swatinem/rust-cache@v2
@@ -157,7 +157,7 @@ jobs:
           tool: just@${{ steps.pins.outputs.just }}
 
       - name: Install Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: just toolchain
 
       - name: Cache Cargo registry + build
         uses: Swatinem/rust-cache@v2
@@ -237,7 +237,7 @@ jobs:
           bun-version-file: .tool-versions
 
       - name: Install Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: just toolchain
 
       - name: Install cargo-deny + cargo-machete
         uses: taiki-e/install-action@v2
@@ -358,7 +358,7 @@ jobs:
           bun-version-file: .tool-versions
 
       - name: Install Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: just toolchain
 
       - name: Install cargo-nextest + cargo-llvm-cov
         uses: taiki-e/install-action@v2
@@ -411,7 +411,7 @@ jobs:
           bun-version-file: .tool-versions
 
       - name: Install Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+        run: just toolchain
 
       - name: Install cargo-nextest + cargo-llvm-cov
         uses: taiki-e/install-action@v2

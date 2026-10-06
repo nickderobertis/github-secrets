@@ -434,6 +434,7 @@ async fn e2e_manifest_source_change_repushes_only_that_secret() {
     h.cmd().args(["sync"]).assert().success();
     assert_eq!(h.put_bodies.lock().unwrap().len(), 2);
 
+    // llmlint: ignore-block[comments_earn_their_place] phase headers in a multi-step journey, marking the update, the GitHub expectation and the env-file expectation.
     // Update only FOO.
     h.write_source(&json!({"FOO": "v1-updated", "BAR": "v2"}));
     h.cmd().args(["sync"]).assert().success();
@@ -447,4 +448,5 @@ async fn e2e_manifest_source_change_repushes_only_that_secret() {
     let content = fs::read_to_string(h.env_file()).unwrap();
     assert!(content.contains("FOO=\"v1-updated\""));
     assert!(content.contains("BAR=\"v2\""));
+    // llmlint: ignore-end[comments_earn_their_place]
 }

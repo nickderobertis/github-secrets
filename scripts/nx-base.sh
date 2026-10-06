@@ -20,10 +20,10 @@ fail() {
 
 if [ -n "${NX_BASE+set}" ]; then
   case "$NX_BASE" in
-    "" | -* | *..*) fail "NX_BASE must be a plain git ref name or commit SHA (got '$NX_BASE')." ;;
+    "" | -* | *..*) fail "NX_BASE must be a plain git ref name or commit SHA (got '$NX_BASE'); set it to e.g. origin/master or a SHA, or unset it to use the merge base with origin/master." ;;
   esac
   printf '%s' "$NX_BASE" | grep -Eq '^[A-Za-z0-9._/-]+$' \
-    || fail "NX_BASE must be a plain git ref name or commit SHA — letters, digits and . _ / - only (got '$NX_BASE')."
+    || fail "NX_BASE must be a plain git ref name or commit SHA — letters, digits and . _ / - only (got '$NX_BASE'); set it to e.g. origin/master or a SHA, or unset it."
   git rev-parse --verify --quiet "$NX_BASE^{commit}" >/dev/null \
     || fail "NX_BASE '$NX_BASE' does not resolve to a commit in this clone; fetch it or unset NX_BASE."
   echo "nx-base: affected since $NX_BASE (NX_BASE)" >&2

@@ -22,8 +22,7 @@ default:
 # rust-toolchain.toml), cargo-nextest and cargo-llvm-cov (CI provides both
 # prebuilt), the pinned bun + the locked Nx install, the git hooks, the
 # llmlint tier (best effort; CI's llmlint job installs it itself), and a crate pre-fetch.
-bootstrap:
-    rustup toolchain install
+bootstrap: toolchain
     sh scripts/install-nextest.sh
     @cargo llvm-cov --version >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
     bash scripts/bun.sh ensure
@@ -31,6 +30,10 @@ bootstrap:
     git config core.hooksPath .githooks
     @[ -n "${CI:-}" ] || bash scripts/setup-llmlint.sh
     cargo fetch --locked
+
+# Install the Rust toolchain rust-toolchain.toml pins (channel, components, release targets).
+toolchain:
+    rustup toolchain install
 
 # Full quality gate: format check, clippy (-D warnings), build, every project's
 # tests (unit, offline e2e, the compiled no-op live suites) under coverage, and
@@ -117,9 +120,11 @@ upgrade:
     bun update
     @just check all
 
-# Build a release binary (for the host, or for one target triple).
+# Build a release binary (for the host, or for one target triple like x86_64-unknown-linux-gnu).
+[positional-arguments]
 release target="":
-    cargo build --release --locked {{ if target == "" { "" } else { "--target " + target } }}
+    @[ -z "$1" ] || printf '%s' "$1" | grep -Eq '^[a-z0-9_]+(-[a-z0-9_]+){2,3}$' || { echo "release: '$1' is not a target triple (e.g. x86_64-unknown-linux-gnu)" >&2; exit 1; }
+    cargo build --release --locked ${1:+--target "$1"}
 
 # The llmlint (LLM-judge) recipes below are kept OUT of `check`: they drive a
 # real coding harness (non-deterministic, credentialed, networked). The `llmlint`

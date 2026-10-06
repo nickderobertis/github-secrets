@@ -4,7 +4,7 @@ import { afterEach, expect, test } from "bun:test";
 import { cpSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkContract } from "../check-workflow-contract.mjs";
-import { REPO, scratch } from "./helpers.mjs";
+import { REPO, scratch } from "../../scripts/tests/helpers.mjs";
 
 let cleanups = [];
 afterEach(() => {
@@ -17,6 +17,7 @@ function mutated(file, from, to) {
   cleanups.push(s.cleanup);
   cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
   cpSync(join(REPO, "rust-toolchain.toml"), join(s.dir, "rust-toolchain.toml"));
+  cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
   const path = join(s.dir, ".github/workflows", file);
   const text = readFileSync(path, "utf8");
   expect(text).toContain(from);
@@ -65,6 +66,7 @@ test("a release target missing from rust-toolchain.toml is caught", () => {
   const toolchain = readFileSync(join(REPO, "rust-toolchain.toml"), "utf8");
   expect(toolchain).toContain('    "aarch64-apple-darwin",\n');
   writeFileSync(join(s.dir, "rust-toolchain.toml"), toolchain.replace('    "aarch64-apple-darwin",\n', ""));
+  cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
   expect(checkContract(s.dir).join("\n")).toContain("differ from release.yml's build matrix");
 });
 
@@ -81,4 +83,9 @@ test("a matrix of an unexpected shape is reported, not crashed on", () => {
 test("a pull_request types list that drops synchronize is caught", () => {
   const errors = mutated("pr-lint.yml", "types: [opened, edited, reopened, synchronize]", "types: [opened, edited]");
   expect(errors.join("\n")).toContain("pr-lint.yml does not run on every pull request");
+});
+
+test("the llmlint job installing a harness other than oneharness.toml's primary is caught", () => {
+  const errors = mutated("ci.yml", "npm install -g @openai/codex", "npm install -g @anthropic-ai/claude-code");
+  expect(errors.join("\n")).toContain("ci.yml:llmlint must install oneharness.toml's primary harness (codex: npm install -g @openai/codex)");
 });
