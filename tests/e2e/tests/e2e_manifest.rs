@@ -35,6 +35,7 @@ use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use serde_json::{json, Value};
 use tempfile::TempDir;
+// llmlint: ignore[e2e_not_mocked] wiremock is a real local HTTP server, a boundary the rule itself counts as real: the compiled gh-secrets binary is spawned as a subprocess and makes real HTTP requests to it, and the genuine GitHub API call is the gh-secrets-live-github project's (AGENTS.md "Invariants").
 use wiremock::matchers::{header, method, path_regex};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 

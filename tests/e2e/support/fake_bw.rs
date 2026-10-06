@@ -1,3 +1,4 @@
+// llmlint: ignore[e2e_not_mocked] bw is the third-party Bitwarden CLI, not the code under test: this stand-in is spawned by the real gh-secrets binary through the real subprocess contract (argv, env, exit code, stdout), and the genuine bw call is the gh-secrets-live-bitwarden project's.
 //! A stand-in for the Bitwarden CLI (`bw`), used by `tests/e2e_bitwarden.rs`.
 //!
 //! The offline suite copies this binary into a tempdir as `bw` (`bw.exe` on
