@@ -418,7 +418,6 @@ async fn e2e_manifest_resync_with_unchanged_source_is_a_noop() {
         "no new PUTs on the no-op resync"
     );
 
-    // Env file unchanged on disk.
     let content = fs::read_to_string(h.env_file()).unwrap();
     assert_eq!(
         content, env_after_first_sync,

@@ -142,7 +142,6 @@ impl AuthHarness {
 async fn e2e_auth_status_reports_unset_then_stored() {
     let h = AuthHarness::new().await;
 
-    // Nothing configured anywhere.
     h.cmd()
         .args(["auth", "status"])
         .assert()
@@ -194,7 +193,6 @@ async fn e2e_auth_bitwarden_stores_only_selected_fields() {
         .stdout(contains("Bitwarden client secret: not set"))
         .stdout(contains("user.abc").not());
 
-    // No flags at all is a usage error.
     h.cmd()
         .args(["auth", "bitwarden"])
         .assert()

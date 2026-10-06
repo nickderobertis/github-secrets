@@ -12,7 +12,8 @@ import { join, resolve } from "node:path";
 
 // Self-contained on purpose: importing the scripts project's test helpers would
 // make this (slow) project depend on that one, and every script edit would rerun it.
-const REPO = resolve(import.meta.dir, "../..");
+// This file is scripts/coverage/coverage.test.mjs, so two levels up is the repository root.
+const REPO = resolve(import.meta.dir, "..", "..");
 const run = (cmd, args, opts = {}) => {
   const r = spawnSync(cmd, args, { encoding: "utf8", ...opts });
   if (r.error) throw r.error;
