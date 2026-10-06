@@ -14,7 +14,7 @@
 # .tool-versions), so `ensure` finds it on PATH there and installs nothing.
 #
 # GH_SECRETS_BUN_DOWNLOAD_BASE replaces the release URL prefix (any curl URL,
-# e.g. file://) so tools/tests can drive the download-and-verify path offline;
+# e.g. file://) so scripts/tests can drive the download-and-verify path offline;
 # like GH_SECRETS_API_BASE it exists for tests only.
 #
 # Exit status: 0 the pinned bun is available (`path` prints it); 1 it is not and

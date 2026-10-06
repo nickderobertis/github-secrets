@@ -182,8 +182,9 @@ if (existsSync(join(root, "node_modules/.bin/nx"))) {
     fail([`'nx graph' failed: ${err.stderr || err.message}`, "run 'just bootstrap', then re-run."]);
   }
   const deps = JSON.parse(readFileSync(graphFile, "utf8"))?.graph?.dependencies;
+  const isRecord = deps !== undefined && deps !== null && typeof deps === "object" && !Array.isArray(deps);
   const wellFormed =
-    deps !== null && typeof deps === "object" &&
+    isRecord &&
     Object.values(deps).every((list) => Array.isArray(list) && list.every((d) => typeof d?.target === "string" && typeof d?.type === "string"));
   if (!wellFormed) fail(["'nx graph' produced a graph of an unexpected shape; check the Nx version in package.json, then re-run."]);
   const nxEdges = new Set(

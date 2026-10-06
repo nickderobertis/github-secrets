@@ -129,8 +129,8 @@ pub fn parse_manifest(bytes: &[u8]) -> Manifest {
     manifest
 }
 
-/// The repo's checked-in `gh-secrets.json` — the same fixture the e2e manifest
-/// suite loads, used as the realistic floor for the load benches.
+/// The repo's own checked-in `gh-secrets.json`, used as the realistic floor
+/// for the load benches.
 pub fn example_manifest_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../gh-secrets.json")
 }

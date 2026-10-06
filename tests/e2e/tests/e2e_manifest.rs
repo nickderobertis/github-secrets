@@ -404,6 +404,7 @@ async fn e2e_manifest_resync_with_unchanged_source_is_a_noop() {
 
     h.cmd().args(["sync"]).assert().success();
     assert_eq!(h.put_bodies.lock().unwrap().len(), 2);
+    let env_after_first_sync = fs::read_to_string(h.env_file()).unwrap();
 
     // Second run, same values: should not PUT anything new.
     h.cmd()
@@ -419,6 +420,10 @@ async fn e2e_manifest_resync_with_unchanged_source_is_a_noop() {
 
     // Env file unchanged on disk.
     let content = fs::read_to_string(h.env_file()).unwrap();
+    assert_eq!(
+        content, env_after_first_sync,
+        "no-op resync rewrote the env file"
+    );
     assert!(content.contains("FOO=\"v1\""));
     assert!(content.contains("BAR=\"v2\""));
 }
