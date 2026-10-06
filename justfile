@@ -103,7 +103,7 @@ format:
 
 # Every crate's tests under cargo-llvm-cov, then the 95% line floor over the union.
 coverage:
-    bash scripts/nx run workspace:coverage
+    bash scripts/nx run coverage-aggregate:coverage
 
 # Supply chain: cargo-deny (advisories, licenses, bans, sources) + cargo-machete.
 # Linux-only in CI, in its own job. Needs cargo-deny and cargo-machete installed.

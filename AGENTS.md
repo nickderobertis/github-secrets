@@ -168,7 +168,8 @@ nested `AGENTS.md` for its own rules.
 | `gh-secrets-bench` | `benches` | `type:bench` | informational benchmarks |
 | `scripts` | `scripts` | `type:tooling` | the repo's scripts (toolchain, gate, installers) and their tests |
 | `coverage` | `scripts/coverage` | `type:tooling` | the coverage driver and its end-to-end test |
-| `workspace` | `tools` | `type:workspace` | coverage aggregate, supply chain, reconciling checks over root files |
+| `workspace` | `tools` | `type:workspace` | supply chain, reconciling checks over root and cross-project facts |
+| `coverage-aggregate` | `tools/coverage-aggregate` | `type:workspace` | the coverage gate: merges every crate's profiles, enforces the floor |
 
 - The root project owns every file no other project claims (`.github/`, the
   justfile, docs), so a change there selects everything; its own inputs are
@@ -179,7 +180,7 @@ nested `AGENTS.md` for its own rules.
   published crate can never be made to depend on a test, live, bench or
   tooling project.
 - Coverage: each crate's `test` target runs under cargo-llvm-cov
-  (`--no-report`, profiles in `target/llvm-cov-target`); `workspace:coverage`
+  (`--no-report`, profiles in `target/llvm-cov-target`); `coverage-aggregate:coverage`
   merges them and fails below **95%** lines over the gh-secrets crate's `src/`.
   The offline e2e journeys count toward it (they drive the instrumented
   binary), which is how the `bw` wrapper and `main` are covered.
@@ -213,7 +214,7 @@ nested `AGENTS.md` for its own rules.
   passphrase — see "Config and paths".)
 - Cross-platform: build and test on Linux, macOS, and Windows in CI.
 - Coverage is a gate: 95% lines over the gh-secrets crate, enforced by
-  `workspace:coverage` inside `just check`. Never exclude product code to meet it.
+  `coverage-aggregate:coverage` inside `just check`. Never exclude product code to meet it.
 - Do not commit secrets, credentials, PII, or customer data.
 
 ## Config and paths

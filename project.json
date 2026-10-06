@@ -43,7 +43,7 @@
     "test": {
       "executor": "nx:run-commands",
       "dependsOn": [
-        "workspace:coverage-clear"
+        "coverage-aggregate:coverage-clear"
       ],
       "options": {
         "command": "bash scripts/coverage/coverage.sh test gh-secrets"
@@ -51,7 +51,7 @@
       "outputs": [
         "{workspaceRoot}/target/llvm-cov-target/*.profraw"
       ],
-      "//": "Unit tests under cargo-llvm-cov (--no-report): raw profiles land in target/llvm-cov-target for workspace:coverage to merge. Uncached: cargo-llvm-cov names every profile after the workspace, not the crate, so a replay would restore siblings' stale profiles."
+      "//": "Unit tests under cargo-llvm-cov (--no-report): raw profiles land in target/llvm-cov-target for coverage-aggregate:coverage to merge. Uncached: cargo-llvm-cov names every profile after the workspace, not the crate, so a replay would restore siblings' stale profiles."
     }
   }
 }

@@ -6,8 +6,8 @@
 #   coverage.sh test <crate>   run one crate's tests instrumented, keep the profiles
 #   coverage.sh report         merge every crate's profiles; fail below the floor
 #
-# Each project's `test` target is step two, `workspace:coverage-clear` is step one
-# and `workspace:coverage` is step three, so the floor is enforced once over the
+# Each project's `test` target is step two, `coverage-aggregate:coverage-clear` is step one
+# and `coverage-aggregate:coverage` is step three, so the floor is enforced once over the
 # union of every crate's run — the e2e crate's journeys count toward the lines of
 # the gh-secrets crate they drive. `--no-report` is what lets the crates share the
 # directory: a reporting run clears every profile in it first.
@@ -20,6 +20,10 @@
 # notice: cargo-llvm-cov there does not attribute the coverage of the binary the
 # e2e journeys spawn, so the number would understate the crate and mean nothing.
 # The floor is enforced on the Linux and macOS legs of the same gate.
+#
+# Exit status: 0 success; 1 a test run, the report, or the floor failed; 2 a
+# usage error (unknown step, wrong argument count, or a crate that is not a
+# workspace member).
 set -euo pipefail
 
 readonly MIN_LINES=95
@@ -33,6 +37,10 @@ usage() {
 
 [ $# -ge 1 ] || usage
 readonly STEP="$1"
+case "$STEP" in
+  clear | report) [ $# -eq 1 ] || usage ;;
+  test) [ $# -eq 2 ] || usage ;;
+esac
 
 is_windows() {
   case "${OS:-}${OSTYPE:-}" in
@@ -123,7 +131,12 @@ case "$STEP" in
       fi
       exit 1
     fi
-    printf '%s\n' "$out" | grep '^TOTAL ' | awk -v min="$MIN_LINES" '{ print "coverage: " $(NF-3) " lines covered (floor " min "%)" }' >&2
+    if ! total="$(printf '%s\n' "$out" | grep '^TOTAL ')"; then
+      printf '%s\n' "$out" >&2
+      echo "coverage: the report passed but has no TOTAL row (format above); check the cargo-llvm-cov version against scripts/coverage/coverage.sh." >&2
+      exit 1
+    fi
+    printf '%s\n' "$total" | awk -v min="$MIN_LINES" '{ print "coverage: " $(NF-3) " lines covered (floor " min "%)" }' >&2
     ;;
 
   *)

@@ -16,6 +16,9 @@
 # GH_SECRETS_BUN_DOWNLOAD_BASE replaces the release URL prefix (any curl URL,
 # e.g. file://) so tools/tests can drive the download-and-verify path offline;
 # like GH_SECRETS_API_BASE it exists for tests only.
+#
+# Exit status: 0 the pinned bun is available (`path` prints it); 1 it is not and
+# could not be installed, or the invocation was wrong (the message says which).
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,6 +29,8 @@ fail() {
   exit 1
 }
 
+[ $# -eq 1 ] || fail "expected exactly one mode; usage: scripts/bun.sh ensure | path"
+[ -r "$ROOT/.tool-versions" ] || fail "cannot read $ROOT/.tool-versions; restore it (it pins bun) from git."
 VERSION="$(awk '$1 == "bun" { print $2 }' "$ROOT/.tool-versions")"
 readonly VERSION
 printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
@@ -62,8 +67,10 @@ asset_name() {
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
-  else
+  elif command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
+  else
+    fail "no SHA-256 tool to verify the download; install coreutils (sha256sum) or perl (shasum), then re-run 'just bootstrap'."
   fi
 }
 
@@ -74,7 +81,7 @@ install_pinned() {
     || fail "curl is required to install bun $VERSION; install it with your package manager (e.g. 'apt-get install curl'), then re-run 'just bootstrap'."
   command -v unzip >/dev/null 2>&1 \
     || fail "unzip is required to install bun $VERSION; install it with your package manager (e.g. 'apt-get install unzip'), then re-run 'just bootstrap'."
-  tmp="$(mktemp -d)"
+  tmp="$(mktemp -d)" || fail "could not create a temporary directory; check TMPDIR is writable, then re-run 'just bootstrap'."
   # Expanded now (quoted for the shell): the EXIT trap fires after this
   # function's locals are gone.
   # shellcheck disable=SC2064

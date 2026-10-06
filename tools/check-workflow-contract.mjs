@@ -19,6 +19,8 @@
 //      primary), so CI authenticates the harness llmlint will actually try.
 //
 // Usage: bun tools/check-workflow-contract.mjs [--root <dir>]
+// Exit status: 0 (quiet) when the contract holds; 1 with each breach printed; 2
+// on a usage error.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 

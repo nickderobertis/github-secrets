@@ -6,6 +6,9 @@
 # `msrv` must agree with it so clippy flags too-new APIs at the same floor. The
 # toolchain is installed on demand (minimal profile) and used only for this check
 # — `cargo +<msrv>` ignores rust-toolchain.toml.
+#
+# Exit status: 1 when the MSRV cannot be read, disagrees with clippy.toml, or its
+# toolchain cannot be installed; otherwise cargo check's own status.
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,6 +27,7 @@ print(next((p.get("rust_version") or "") for p in packages if p["name"] == "gh-s
 printf '%s' "$msrv" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' \
   || fail "could not read gh-secrets' rust-version from cargo metadata (got '${msrv}'); run 'cargo metadata --no-deps --locked' to see why, fix the manifest, then re-run 'just msrv'."
 
+[ -r clippy.toml ] || fail "cannot read clippy.toml; restore it from git (its msrv must equal the crate's rust-version)."
 clippy_msrv="$(sed -n 's/^msrv *= *"\([^"]*\)".*/\1/p' clippy.toml)"
 [ "$clippy_msrv" = "$msrv" ] \
   || fail "clippy.toml msrv '${clippy_msrv}' differs from the crate's rust-version '${msrv}'; make them equal."

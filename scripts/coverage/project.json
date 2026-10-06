@@ -1,7 +1,7 @@
 {
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "name": "coverage",
-  "//": "The line-coverage driver (coverage.sh: clear / test <crate> / report) every crate's test target and workspace:coverage call, with its end-to-end test, which builds a scratch crate under cargo-llvm-cov. Its own project so only an edit to the driver reruns that slow test.",
+  "//": "The line-coverage driver (coverage.sh: clear / test <crate> / report) every crate's test target and coverage-aggregate:coverage call, with its end-to-end test, which builds a scratch crate under cargo-llvm-cov. Its own project so only an edit to the driver reruns that slow test.",
   "projectType": "library",
   "tags": ["type:tooling"],
   "targets": {

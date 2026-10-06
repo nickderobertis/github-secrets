@@ -81,5 +81,5 @@ token, so they fall back to the job summary + uploaded artifact), keyed by the
 When you add or rename a CLI verb or a hot path, extend the matching layer (a
 Criterion group / allocs row for engine code, a hyperfine + cachegrind `measure`
 row for a new offline command) so the numbers keep tracking what the binary
-runs. The bench-fixture conventions are below.
+runs. The bench-fixture conventions are above.
 <!-- llmlint: ignore-end[agents_md_durable_and_terse] -->

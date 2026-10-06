@@ -4,12 +4,10 @@
   "//": "The live Bitwarden suite (a real, isolated Bitwarden account through the real bw CLI). The test target compiles it and runs it as a no-op (no GH_SECRETS_LIVE_TEST); the live target is the real run, used by the live-e2e-bitwarden CI job via just test-live-bitwarden. Serial (-j1): every test logs in to the one isolated account.",
   "projectType": "application",
   "tags": [
-    "type:live",
-    "coverage:profiles"
+    "type:live"
   ],
   "implicitDependencies": [
-    "gh-secrets",
-    "scripts"
+    "gh-secrets"
   ],
   "targets": {
     "format": {
@@ -34,7 +32,7 @@
       "executor": "nx:run-commands",
       "dependsOn": [
         "gh-secrets:build",
-        "workspace:coverage-clear"
+        "coverage-aggregate:coverage-clear"
       ],
       "options": {
         "command": "bash scripts/coverage/coverage.sh test gh-secrets-live-bitwarden"

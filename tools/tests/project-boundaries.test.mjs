@@ -90,3 +90,12 @@ test("a project.json holding JSON null, or a bad --root, is refused with a messa
   expect(r.code).toBe(2);
   expect(r.stderr).toContain("usage:");
 });
+
+test("tag: implicit dependencies resolve to the tagged projects", () => {
+  const dir = workspace();
+  writeFileSync(join(dir, "e2e/project.json"), JSON.stringify({ name: "app-e2e", tags: ["type:e2e", "suite"] }));
+  writeFileSync(join(dir, "project.json"), JSON.stringify({ name: "app", tags: ["type:app"], implicitDependencies: ["tag:suite"] }));
+  const r = check(dir);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("app (type:app) may not depend on app-e2e (type:e2e) — found implicitDependencies");
+});

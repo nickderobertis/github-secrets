@@ -11,6 +11,7 @@
 #     default branch (fetch origin/master first in a clone that lacks it).
 #
 # Prints the base on stdout and one line saying where it came from on stderr.
+# Exit status: 0 with a base; 1 when NX_BASE is refused or no base can be derived.
 set -euo pipefail
 
 fail() {

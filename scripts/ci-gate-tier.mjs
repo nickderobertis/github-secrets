@@ -7,6 +7,8 @@
 // lines to GITHUB_OUTPUT when that is set.
 //
 // Usage: bun scripts/ci-gate-tier.mjs
+// Exit status: 0 with a decision; 1 when no decision can be made (the message
+// names the cause and the next action).
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,7 +17,15 @@ import { join } from "node:path";
 // it releases from>` (plus a component suffix), so the prefix is derived from the
 // branch release.yml runs on rather than restated here.
 function releaseBranchPrefix() {
-  const release = Bun.YAML.parse(readFileSync(join(import.meta.dir, "../.github/workflows/release.yml"), "utf8"));
+  let release;
+  try {
+    release = Bun.YAML.parse(readFileSync(join(import.meta.dir, "../.github/workflows/release.yml"), "utf8"));
+  } catch (err) {
+    throw new RoutingError(
+      `cannot read .github/workflows/release.yml: ${err.message}`,
+      "check out the full repository (the release-PR branch name is derived from release.yml).",
+    );
+  }
   const branches = release?.on?.push?.branches;
   if (!Array.isArray(branches) || branches.length !== 1 || typeof branches[0] !== "string") {
     throw new RoutingError(

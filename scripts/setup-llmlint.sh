@@ -12,12 +12,7 @@
 #      the prebuilt binary and depends on `oneharness-cli`, so one dependency
 #      resolution fetches both wheels — no Rust toolchain and no github.com
 #      reachability (works in restricted-egress sessions where PyPI is reachable).
-#      `uv tool` links only the *requested* package's executable onto PATH, but
-#      llmlint >= 0.3.23 finds `oneharness` beside its own binary in the tool venv —
-#      so this one install is a complete setup; no separate oneharness install /
-#      PATH entry. `--upgrade` bumps an older cached tool, honouring the floor below
-#      (`just lint-llm-diff` needs the changed-file-scoped `--diff` and three-dot
-#      `--diff-base` default; `just lint-llm-validate` needs the `validate` gate).
+#      `--upgrade` lifts an older cached tool to the floor below.
 #   2. In a Claude Code session, persists PATH (so the freshly installed binary
 #      resolves) into CLAUDE_ENV_FILE so later Bash calls inherit it.
 #

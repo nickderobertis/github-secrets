@@ -80,3 +80,12 @@ test.skipIf(isWindows)("an unknown tier is refused and runs nothing", () => {
   expect(r.stderr).toContain("unknown tier 'sometimes'");
   expect(r.nx).toBeNull();
 });
+
+test.skipIf(isWindows)("bench forwards a plain baseline and Criterion options, and refuses anything else", () => {
+  expect(just(["bench", "pr", "--measurement-time", "3"]).nx).toBe("run gh-secrets-bench:bench --baseline=pr --criterion=--measurement-time 3");
+  const r = just(["bench", "pr", "x;touch pwned"]);
+  expect(r.code).not.toBe(0);
+  expect(r.stderr).toContain("bench: argument 'x;touch pwned' is not a plain baseline name or Criterion option");
+  expect(r.nx).toBeNull();
+  expect(existsSync(join(repo, "pwned"))).toBe(false);
+});

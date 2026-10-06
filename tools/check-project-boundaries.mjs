@@ -11,8 +11,8 @@
 // allowed by the constraint for the source project's tag.
 //
 // Usage: bun tools/check-project-boundaries.mjs [--root <workspace dir>]
-// Exits 0 quietly when every edge is allowed; prints each violation and exits 1
-// otherwise.
+// Exit status: 0 (quiet) when every edge is allowed; 1 with each violation
+// printed; 2 on a usage error.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -106,17 +106,21 @@ for (const file of projectFiles) {
   byDir.set(dir, json.name);
 }
 
-// implicitDependencies the way Nx reads them: names, `*` globs, and `!` exclusions.
+// implicitDependencies the way Nx reads them: names, `*` globs, `tag:<tag>`, and `!` exclusions.
 function expandImplicit(name, patterns) {
   const glob = (p) => new RegExp(`^${p.split("*").map((x) => x.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`);
+  const matching = (p) =>
+    p.startsWith("tag:")
+      ? [...projects].filter(([, project]) => project.tags.includes(p.slice(4))).map(([n]) => n)
+      : [...projects.keys()].filter((n) => glob(p).test(n));
   const selected = new Set();
   for (const p of patterns.filter((x) => !x.startsWith("!"))) {
-    const matches = [...projects.keys()].filter((n) => glob(p).test(n));
+    const matches = matching(p);
     if (matches.length === 0) errors.push(`${name} names unknown implicit dependency ${p}.`);
     for (const m of matches) if (m !== name) selected.add(m);
   }
   for (const p of patterns.filter((x) => x.startsWith("!"))) {
-    for (const n of [...selected]) if (glob(p.slice(1)).test(n)) selected.delete(n);
+    for (const n of matching(p.slice(1))) selected.delete(n);
   }
   return [...selected];
 }

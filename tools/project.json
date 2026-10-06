@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "name": "workspace",
-  "//": "Repo-level targets: the coverage aggregate over every crate's test profiles, the supply-chain check, and the reconciling checks over root-owned files (lint: project boundaries, the CI workflow contract, the restated coverage floor) with their tests (the justfile's gate recipes, the pre-push hook, the checkers). It depends on every other project (\"*\"), so any change selects it \u2014 which is what makes the coverage aggregate always see a complete set of profiles. The scripts' own tests live in the scripts project.",
+  "//": "Repo-level checks: the reconciling lint over root-owned and cross-project facts (project boundaries, the CI workflow contract, restated coverage floor and MSRV), their tests (plus the justfile's gate recipes and the pre-push hook), and the supply-chain check. It depends on every other project (\"*\") so any change re-runs these cheap checks; lint and test are uncached because they read files across the whole tree. The coverage gate is the coverage-aggregate project.",
   "projectType": "library",
   "tags": [
     "type:workspace"
@@ -24,9 +24,6 @@
   "targets": {
     "lint": {
       "executor": "nx:run-commands",
-      "inputs": [
-        "default"
-      ],
       "options": {
         "commands": [
           "bun tools/check-project-boundaries.mjs",
@@ -34,35 +31,15 @@
           "bun tools/check-restated-facts.mjs"
         ],
         "parallel": false
-      }
+      },
+      "cache": false
     },
     "test": {
       "executor": "nx:run-commands",
       "options": {
         "command": "bun test tools/tests"
-      }
-    },
-    "coverage-clear": {
-      "executor": "nx:run-commands",
-      "cache": false,
-      "options": {
-        "command": "bash scripts/coverage/coverage.sh clear"
-      }
-    },
-    "coverage": {
-      "executor": "nx:run-commands",
-      "dependsOn": [
-        {
-          "projects": [
-            "tag:coverage:profiles"
-          ],
-          "target": "test"
-        }
-      ],
-      "options": {
-        "command": "bash scripts/coverage/coverage.sh report"
       },
-      "//": "Runs the test target of every project tagged coverage:profiles (the crates whose tests write cargo-llvm-cov profiles; a new crate joins by carrying the tag), then merges the raw profiles and enforces the line floor over the gh-secrets crate's own sources (src/), once. The scripts project's tests are not prerequisites: they contribute no product coverage."
+      "cache": false
     },
     "supply-chain": {
       "executor": "nx:run-commands",

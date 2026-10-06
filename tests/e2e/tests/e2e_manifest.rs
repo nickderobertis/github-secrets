@@ -5,8 +5,8 @@
 //! `GH_SECRETS_TEST_SOURCE_FILE`). This exercises the orchestrator, source
 //! abstraction, env-file destination, and GitHub destination together — same
 //! plumbing the user hits when running `gh-secrets sync` in their
-//! repo, minus only the Bitwarden CLI call (which is covered by unit tests
-//! against a mock `BwCli`).
+//! repo, minus only the Bitwarden CLI call (driven through a stand-in `bw` in
+//! `e2e_bitwarden.rs`).
 //!
 //! What's covered:
 //! - `init` writes a usable starter manifest.

@@ -2,7 +2,7 @@
 // so a restatement cannot drift from what is enforced:
 //
 //   * the line-coverage floor — source: MIN_LINES in scripts/coverage/coverage.sh (what
-//     `workspace:coverage` enforces); restated as `NN%` on lines about lines,
+//     `coverage-aggregate:coverage` enforces); restated as `NN%` on lines about lines,
 //     coverage or the floor in the AGENTS.md files, the justfile and project.json
 //     files;
 //   * the MSRV — source: `rust-version` in Cargo.toml's [workspace.package];
@@ -10,6 +10,8 @@
 //     floor) and as "MSRV is X.Y" in the AGENTS.md files.
 //
 // Usage: bun tools/check-restated-facts.mjs [--root <dir>]
+// Exit status: 0 (quiet) when every restatement agrees; 1 with each drift
+// printed; 2 on a usage error.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";

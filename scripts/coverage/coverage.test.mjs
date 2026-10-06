@@ -89,3 +89,11 @@ test.skipIf(skip)("an unknown crate is refused with the members to choose from",
   expect(r.stderr).toContain("is not a member of this Cargo workspace; pass one of: ");
   expect(r.stderr).toContain("gh-secrets");
 });
+
+test.skipIf(skip)("a step with the wrong argument count is a usage error", () => {
+  for (const args of [["clear", "extra"], ["report", "x"], ["test"], ["test", "a", "b"], ["bogus"]]) {
+    const r = cov(...args);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("usage: scripts/coverage/coverage.sh");
+  }
+});
