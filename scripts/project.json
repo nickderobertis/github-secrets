@@ -1,9 +1,11 @@
 {
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "name": "scripts",
-  "//": "The repository's scripts — the toolchain and gate plumbing (bun.sh, nx, nx-base.sh, coverage.sh, msrv.sh), CI's tier router, the installers (install.sh, setup-llmlint.sh, session-setup.sh) and the bench drivers — with their subprocess tests in tests/. Its own project so a change to the crate never reruns these tests (one of them builds a scratch crate under cargo-llvm-cov), and so install.sh reaches the live GitHub project without dragging the crate along.",
+  "//": "The repository's scripts \u2014 toolchain and gate plumbing (bun.sh, nx, nx-base.sh, msrv.sh), CI's tier router, the installers (install.sh, setup-llmlint.sh, session-setup.sh) and the bench drivers \u2014 with their subprocess tests in tests/. Its own project so a crate change never reruns these tests, and so install.sh reaches the live GitHub project without dragging the crate along. coverage/ is a project of its own nested inside.",
   "projectType": "library",
-  "tags": ["type:tooling"],
+  "tags": [
+    "type:tooling"
+  ],
   "targets": {
     "lint": {
       "executor": "nx:run-commands",
@@ -14,7 +16,9 @@
     },
     "test": {
       "executor": "nx:run-commands",
-      "options": { "command": "bun test --timeout 600000 scripts/tests" }
+      "options": {
+        "command": "bun test --timeout 600000 scripts/tests"
+      }
     }
   }
 }

@@ -40,7 +40,7 @@
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "command": "mkdir -p target/bench && cargo bench --locked --quiet -p gh-secrets-bench --bench engine_allocs | tee target/bench/allocs.md"
+        "command": "bash scripts/bench-allocs.sh"
       }
     },
     "bench-cli": {

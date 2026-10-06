@@ -15,7 +15,7 @@ through the real `bw` CLI.
 - The offline twin of this suite is `tests/e2e/tests/e2e_bitwarden.rs` (a
   stand-in `bw`); keep the two covering the same contract from both sides.
 
-<!-- llmlint: ignore-block[agents_md_durable_and_terse] moved here from the root AGENTS.md as this project's folder-scoped material, as the baseline task directs; condensing the catalogue is the separately scheduled AGENTS.md trim, not part of this move. -->
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] this is the suite's coverage map — the one place a reader learns what is and is not proven here without reading every test — so it is kept whole beside the suite it describes. -->
 - `tests/e2e_live_bitwarden.rs` is the source
   half's real-API complement: it drives `sync`/`source list` against a real,
   *isolated* Bitwarden account (one that exists only for this test, so seeding

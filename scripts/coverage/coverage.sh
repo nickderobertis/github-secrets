@@ -23,11 +23,11 @@
 set -euo pipefail
 
 readonly MIN_LINES=95
-readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 usage() {
-  echo "usage: scripts/coverage.sh clear | test <crate> | report" >&2
+  echo "usage: scripts/coverage/coverage.sh clear | test <crate> | report" >&2
   exit 2
 }
 
@@ -85,7 +85,7 @@ case "$STEP" in
     validate_crate "$CRATE"
     require nextest
     if is_windows; then
-      echo "coverage: Windows — running $CRATE's tests uninstrumented (see scripts/coverage.sh)." >&2
+      echo "coverage: Windows — running $CRATE's tests uninstrumented (see scripts/coverage/coverage.sh)." >&2
       exec cargo nextest run -p "$CRATE" --locked
     fi
     require llvm-cov

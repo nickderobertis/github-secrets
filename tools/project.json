@@ -46,7 +46,7 @@
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "command": "bash scripts/coverage.sh clear"
+        "command": "bash scripts/coverage/coverage.sh clear"
       }
     },
     "coverage": {
@@ -60,7 +60,7 @@
         }
       ],
       "options": {
-        "command": "bash scripts/coverage.sh report"
+        "command": "bash scripts/coverage/coverage.sh report"
       },
       "//": "Runs the test target of every project tagged coverage:profiles (the crates whose tests write cargo-llvm-cov profiles; a new crate joins by carrying the tag), then merges the raw profiles and enforces the line floor over the gh-secrets crate's own sources (src/), once. The scripts project's tests are not prerequisites: they contribute no product coverage."
     },

@@ -125,3 +125,14 @@ test("a JSON array payload is not an event", () => {
   expect(r.code).toBe(1);
   expect(r.stderr).toContain("not a JSON object");
 });
+
+test("an unwritable GITHUB_OUTPUT fails with the next action", () => {
+  const event = join(s.dir, "dispatch.json");
+  writeFileSync(event, "{}");
+  const r = run("bun", [SCRIPT], {
+    cwd: repo,
+    env: { ...process.env, GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_EVENT_PATH: event, GITHUB_OUTPUT: join(s.dir, "no-such-dir", "out") },
+  });
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("could not append to GITHUB_OUTPUT");
+});

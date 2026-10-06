@@ -1,7 +1,7 @@
 // Facts that have one source but are restated elsewhere for readers, reconciled
 // so a restatement cannot drift from what is enforced:
 //
-//   * the line-coverage floor — source: MIN_LINES in scripts/coverage.sh (what
+//   * the line-coverage floor — source: MIN_LINES in scripts/coverage/coverage.sh (what
 //     `workspace:coverage` enforces); restated as `NN%` on lines about lines,
 //     coverage or the floor in the AGENTS.md files, the justfile and project.json
 //     files;
@@ -32,14 +32,14 @@ function eachLine(root, files, visit) {
 }
 
 export function checkCoverageFloor(root) {
-  const source = readFileSync(join(root, "scripts/coverage.sh"), "utf8").match(/^readonly MIN_LINES=(\d+)$/m);
-  if (!source) return ["scripts/coverage.sh no longer declares `readonly MIN_LINES=<n>`; restore it (it is the floor's one source)."];
+  const source = readFileSync(join(root, "scripts/coverage/coverage.sh"), "utf8").match(/^readonly MIN_LINES=(\d+)$/m);
+  if (!source) return ["scripts/coverage/coverage.sh no longer declares `readonly MIN_LINES=<n>`; restore it (it is the floor's one source)."];
   const floor = source[1];
   const errors = [];
   eachLine(root, tracked(root, ["*AGENTS.md", "justfile", "*project.json"]), (file, n, line) => {
     if (!/\b(lines?|coverage|floor)\b/i.test(line)) return;
     for (const m of line.matchAll(/\b(\d{1,3})%/g)) {
-      if (m[1] !== floor) errors.push(`${file}:${n} states a ${m[1]}% coverage floor; scripts/coverage.sh enforces ${floor}%.`);
+      if (m[1] !== floor) errors.push(`${file}:${n} states a ${m[1]}% coverage floor; scripts/coverage/coverage.sh enforces ${floor}%.`);
     }
   });
   return errors;

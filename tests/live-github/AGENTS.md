@@ -16,7 +16,7 @@ latest release. Live contact puts it outside the deterministic gate's real runs:
   in the affected tier; `live_install_script_downloads_and_verifies_release`
   is what catches release-asset naming drift against the real release.
 
-<!-- llmlint: ignore-block[agents_md_durable_and_terse] moved here from the root AGENTS.md as this project's folder-scoped material, as the baseline task directs; condensing the catalogue is the separately scheduled AGENTS.md trim, not part of this move. -->
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] this is the suite's coverage map — the one place a reader learns what is and is not proven here without reading every test — so it is kept whole beside the suite it describes. -->
 - `tests/e2e_live.rs` round-trips the same `sync`
   pipeline (env-file source → real `github:` destination) against the real
   GitHub API: a secret becomes visible via the API after sync, a resync is a

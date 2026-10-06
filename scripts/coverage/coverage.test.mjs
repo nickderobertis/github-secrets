@@ -1,13 +1,32 @@
-// scripts/coverage.sh end to end on a scratch Cargo workspace shaped like this
+// scripts/coverage/coverage.sh end to end on a scratch Cargo workspace shaped like this
 // one: a `gh-secrets` crate (lib + bin) and an e2e member crate whose test spawns
 // the binary. Real cargo-llvm-cov and nextest run; the cases show that the
 // spawned binary's profiles join the union (the floor passes only with them),
 // that sources under tests/ are left out, and that an untested product line
 // fails the floor.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { REPO, ok, run, scratch } from "./helpers.mjs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+// Self-contained on purpose: importing the scripts project's test helpers would
+// make this (slow) project depend on that one, and every script edit would rerun it.
+const REPO = resolve(import.meta.dir, "../..");
+const run = (cmd, args, opts = {}) => {
+  const r = spawnSync(cmd, args, { encoding: "utf8", ...opts });
+  if (r.error) throw r.error;
+  return { code: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+};
+const ok = (cmd, args, opts = {}) => {
+  const r = run(cmd, args, opts);
+  if (r.code !== 0) throw new Error(`${cmd} ${args.join(" ")} exited ${r.code}: ${r.stderr}`);
+  return r.stdout.trim();
+};
+const scratch = () => {
+  const dir = mkdtempSync(join(tmpdir(), "ghs-coverage-"));
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+};
 
 const skip = process.platform === "win32" || run("cargo", ["llvm-cov", "--version"]).code !== 0;
 let s, ws;
@@ -16,7 +35,7 @@ const write = (path, text) => {
   mkdirSync(join(ws, path, ".."), { recursive: true });
   writeFileSync(join(ws, path), text);
 };
-const cov = (...args) => run("bash", ["scripts/coverage.sh", ...args], { cwd: ws, env: { ...process.env, CARGO_TARGET_DIR: join(ws, "target") } });
+const cov = (...args) => run("bash", ["scripts/coverage/coverage.sh", ...args], { cwd: ws, env: { ...process.env, CARGO_TARGET_DIR: join(ws, "target") } });
 
 beforeAll(() => {
   if (skip) return;
@@ -30,8 +49,8 @@ beforeAll(() => {
   // Never called: proves sources under tests/ stay out of the report.
   write("tests/e2e/src/lib.rs", `pub fn unused_helper(x: u32) -> u32 {\n    let y = x + 1;\n    y * 2\n}\n`);
   write("tests/e2e/tests/run.rs", `#[test]\nfn binary_prints_banner() {\n    let exe = std::env::current_exe().unwrap();\n    let bin = exe.parent().unwrap().parent().unwrap().join("gh-secrets");\n    let out = std::process::Command::new(bin).output().unwrap();\n    assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), "banner:hi");\n}\n`);
-  mkdirSync(join(ws, "scripts"));
-  copyFileSync(join(REPO, "scripts/coverage.sh"), join(ws, "scripts/coverage.sh"));
+  mkdirSync(join(ws, "scripts/coverage"), { recursive: true });
+  copyFileSync(join(REPO, "scripts/coverage/coverage.sh"), join(ws, "scripts/coverage/coverage.sh"));
   ok("cargo", ["generate-lockfile", "--offline"], { cwd: ws });
 });
 afterAll(() => s?.cleanup());

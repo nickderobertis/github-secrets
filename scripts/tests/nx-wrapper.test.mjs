@@ -59,13 +59,16 @@ test.skipIf(isWindows)("a fresh checkout gets the locked install once, then Nx r
   expect(t.installs()).toHaveLength(1);
 });
 
-test.skipIf(isWindows)("a bun.lock newer than the last install reinstalls", () => {
+test.skipIf(isWindows)("a bun.lock or package.json newer than the last install reinstalls", () => {
   const t = setup();
   expect(t.nx("--version").code).toBe(0);
-  const future = new Date(Date.now() + 60_000);
-  utimesSync(join(t.repo, "bun.lock"), future, future);
-  expect(t.nx("--version").code).toBe(0);
-  expect(t.installs()).toHaveLength(2);
+  let n = 1;
+  for (const file of ["bun.lock", "package.json"]) {
+    const future = new Date(Date.now() + 60_000 * ++n);
+    utimesSync(join(t.repo, file), future, future);
+    expect(t.nx("--version").code).toBe(0);
+    expect(t.installs()).toHaveLength(n);
+  }
 });
 
 test.skipIf(isWindows)("a failing locked install stops before Nx, with bun's reason and the next action", () => {

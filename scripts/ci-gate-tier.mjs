@@ -109,5 +109,13 @@ if (import.meta.main) {
   console.error(`ci-gate-tier: ${decision.tier} — ${decision.why}`);
   const lines = `tier=${decision.tier}\nbase=${decision.base}\n`;
   process.stdout.write(lines);
-  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, lines);
+  if (process.env.GITHUB_OUTPUT) {
+    try {
+      appendFileSync(process.env.GITHUB_OUTPUT, lines);
+    } catch (err) {
+      console.error(`ci-gate-tier: could not append to GITHUB_OUTPUT (${process.env.GITHUB_OUTPUT}): ${err.message}`);
+      console.error("ci-gate-tier: next: run this inside a GitHub Actions step (it provides a writable GITHUB_OUTPUT), or unset it.");
+      process.exit(1);
+    }
+  }
 }

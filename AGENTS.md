@@ -167,6 +167,7 @@ nested `AGENTS.md` for its own rules.
 | `gh-secrets-live-bitwarden` | `tests/live-bitwarden` | `type:live` | real isolated Bitwarden account |
 | `gh-secrets-bench` | `benches` | `type:bench` | informational benchmarks |
 | `scripts` | `scripts` | `type:tooling` | the repo's scripts (toolchain, gate, installers) and their tests |
+| `coverage` | `scripts/coverage` | `type:tooling` | the coverage driver and its end-to-end test |
 | `workspace` | `tools` | `type:workspace` | coverage aggregate, supply chain, reconciling checks over root files |
 
 - The root project owns every file no other project claims (`.github/`, the

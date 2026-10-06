@@ -38,7 +38,7 @@ release binary and are listed in this project's inputs.
   warning-clean so they cannot rot. `harness = false` keeps them out of the test
   runner and coverage.
 
-<!-- llmlint: ignore-block[agents_md_durable_and_terse] moved here from the root AGENTS.md as this project's folder-scoped material, as the baseline task directs; condensing the catalogue is the separately scheduled AGENTS.md trim, not part of this move. -->
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] the four measurement layers and how their numbers may be read are what a reader needs before trusting any delta, and they are kept here beside the suite that produces them. -->
 ## The four layers
 
 It has four layers, each measuring a different thing and chosen so that the

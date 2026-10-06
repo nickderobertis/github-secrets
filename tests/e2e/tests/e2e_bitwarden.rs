@@ -89,9 +89,10 @@ impl Harness {
         }));
         let bin = h.dir.path().join("bin");
         fs::create_dir_all(&bin).unwrap();
-        // llmlint: ignore[e2e_not_mocked] bw is the third-party Bitwarden CLI, not the code under test: gh-secrets is driven as the real binary and spawns this stand-in through the real subprocess contract, and the live Bitwarden project makes the genuine call.
+        // llmlint: ignore-block[e2e_not_mocked] bw is the third-party Bitwarden CLI, not the code under test: gh-secrets is driven as the real binary and spawns this stand-in through the real subprocess contract, and the live Bitwarden project makes the genuine call.
         let exe = format!("bw{}", std::env::consts::EXE_SUFFIX);
         fs::copy(env!("CARGO_BIN_EXE_fake-bw"), bin.join(exe)).expect("install fake bw");
+        // llmlint: ignore-end[e2e_not_mocked]
         h
     }
 

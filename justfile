@@ -44,7 +44,7 @@ check tier="affected":
     case {{ quote(tier) }} in
         affected) base="$(bash scripts/nx-base.sh)"; exec bash scripts/nx affected --base="$base" -t format-check lint build test coverage ;;
         all) exec bash scripts/nx run-many --all -t format-check lint build test coverage ;;
-        *) echo "unknown tier {{ quote(tier) }} — use 'affected' (the default) or 'all'" >&2; exit 1 ;;
+        *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
     esac
 
 # The test targets alone (each writes its coverage profiles; no floor).
@@ -54,7 +54,7 @@ test tier="affected":
     case {{ quote(tier) }} in
         affected) base="$(bash scripts/nx-base.sh)"; exec bash scripts/nx affected --base="$base" -t test ;;
         all) exec bash scripts/nx run-many --all -t test ;;
-        *) echo "unknown tier {{ quote(tier) }} — use 'affected' (the default) or 'all'" >&2; exit 1 ;;
+        *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
     esac
 
 # The offline e2e suite in isolation (also run by `check`). Builds the binary first.
@@ -84,7 +84,7 @@ lint tier="affected":
     case {{ quote(tier) }} in
         affected) base="$(bash scripts/nx-base.sh)"; exec bash scripts/nx affected --base="$base" -t lint ;;
         all) exec bash scripts/nx run-many --all -t lint ;;
-        *) echo "unknown tier {{ quote(tier) }} — use 'affected' (the default) or 'all'" >&2; exit 1 ;;
+        *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
     esac
 
 # Format check (used by the gate; does not write files).
@@ -94,7 +94,7 @@ format-check tier="affected":
     case {{ quote(tier) }} in
         affected) base="$(bash scripts/nx-base.sh)"; exec bash scripts/nx affected --base="$base" -t format-check ;;
         all) exec bash scripts/nx run-many --all -t format-check ;;
-        *) echo "unknown tier {{ quote(tier) }} — use 'affected' (the default) or 'all'" >&2; exit 1 ;;
+        *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
     esac
 
 # Format every project in place.
@@ -165,6 +165,7 @@ lint-llm-diff base="origin/master" *args:
 # Engine micro-benchmarks (Criterion) saved as BASELINE (default `current`); extra args go to Criterion.
 [positional-arguments]
 bench baseline="current" *criterion_args:
+    @for a in "$@"; do printf '%s' "$a" | grep -Eq '^[A-Za-z0-9_./=:-]+$' || { printf "bench: argument '%s' is not a plain baseline name or Criterion option\n" "$a" >&2; exit 1; }; done
     bash scripts/nx run gh-secrets-bench:bench --baseline="$1" --criterion="${*:2}"
 
 # Save current engine benchmarks as the `base` baseline (run on the comparison point).

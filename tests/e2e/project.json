@@ -36,12 +36,12 @@
         "workspace:coverage-clear"
       ],
       "options": {
-        "command": "bash scripts/coverage.sh test gh-secrets-e2e"
+        "command": "bash scripts/coverage/coverage.sh test gh-secrets-e2e"
       },
       "outputs": [
         "{workspaceRoot}/target/llvm-cov-target/*.profraw"
       ],
-      "//": "dependsOn gh-secrets:build so a broken binary build fails here, named, before any journey runs. Under coverage the journeys then drive the instrumented copy scripts/coverage.sh builds into target/llvm-cov-target, so their lines count toward workspace:coverage; on Windows they drive gh-secrets:build's binary directly."
+      "//": "dependsOn gh-secrets:build so a broken binary build fails here, named, before any journey runs. Under coverage the journeys then drive the instrumented copy scripts/coverage/coverage.sh builds into target/llvm-cov-target, so their lines count toward workspace:coverage; on Windows they drive gh-secrets:build's binary directly."
     }
   }
 }

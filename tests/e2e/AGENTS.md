@@ -24,7 +24,7 @@ in `project.json`, and its `test` target `dependsOn` `gh-secrets:build`.
 - `tests/common/mod.rs` holds the shared harness; the `mod.rs` form keeps cargo
   from building it as a test binary of its own.
 
-<!-- llmlint: ignore-block[agents_md_durable_and_terse] moved here from the root AGENTS.md as this project's folder-scoped material, as the baseline task directs; condensing the catalogue is the separately scheduled AGENTS.md trim, not part of this move. -->
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] this is the suite's coverage map — the one place a reader learns what is and is not proven here without reading every test — so it is kept whole beside the suite it describes. -->
 What each suite covers:
 
 - The main wiremock suite (`tests/e2e.rs`) covers the unified surface: a

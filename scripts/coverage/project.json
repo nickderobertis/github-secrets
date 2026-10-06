@@ -1,0 +1,17 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "coverage",
+  "//": "The line-coverage driver (coverage.sh: clear / test <crate> / report) every crate's test target and workspace:coverage call, with its end-to-end test, which builds a scratch crate under cargo-llvm-cov. Its own project so only an edit to the driver reruns that slow test.",
+  "projectType": "library",
+  "tags": ["type:tooling"],
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": { "command": "bash -n scripts/coverage/coverage.sh" }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "bun test --timeout 600000 scripts/coverage" }
+    }
+  }
+}

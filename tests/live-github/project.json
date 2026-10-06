@@ -37,7 +37,7 @@
         "workspace:coverage-clear"
       ],
       "options": {
-        "command": "bash scripts/coverage.sh test gh-secrets-live-github"
+        "command": "bash scripts/coverage/coverage.sh test gh-secrets-live-github"
       },
       "outputs": [
         "{workspaceRoot}/target/llvm-cov-target/*.profraw"
