@@ -193,6 +193,9 @@ main() {
 
     [ -n "$bindir" ] || bindir="${HOME}/.local/bin"
 
+    case "$version" in
+        */* | *..*) err "invalid --version '$version': expected a release tag like v1.2.3" ;;
+    esac
     if [ -n "$archive_dir" ]; then
         [ -n "$version" ] || err "--from-dir needs --version (there is no release to resolve 'latest' from)"
         [ -d "$archive_dir" ] || err "--from-dir: no such directory: $archive_dir (pass the directory holding the packaged archive and its .sha256)"
@@ -225,7 +228,7 @@ main() {
     fetch_asset "$archive" "${tmp}/${archive}"
     fetch_asset "$sumfile" "${tmp}/${sumfile}"
 
-    say "verifying checksum..."
+    [ -n "$archive_dir" ] || say "verifying checksum..."
     expected="$(awk '{print $1}' "${tmp}/${sumfile}")"
     actual="$(sha256_of "${tmp}/${archive}")"
     [ -n "$expected" ] || err "empty checksum file for ${archive}"

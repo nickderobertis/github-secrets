@@ -53,7 +53,7 @@ function setup({ pin = PIN, pathBunVersion = null, systemDirs = ["/usr/bin", "/b
  * Lay out a fake bun release. `corrupt` publishes a wrong checksum, `noSums`
  * none at all, `reports` the version the packed bun claims, `empty` packs no bun.
  */
-function publishRelease(dir, { corrupt = false, noSums = false, reports = PIN, empty = false } = {}) {
+function publishRelease(dir, { corrupt = false, noSums = false, reports = PIN, empty = false, garbage = false } = {}) {
   const rel = join(dir, "release", `bun-v${PIN}`);
   const stage = join(dir, "stage", ASSET);
   mkdirSync(rel, { recursive: true });
@@ -61,6 +61,7 @@ function publishRelease(dir, { corrupt = false, noSums = false, reports = PIN, e
   if (empty) writeFileSync(join(stage, "README"), "no bun here\n");
   else fakeBun(join(stage, "bun"), reports);
   ok("python3", ["-I", "-c", `import shutil; shutil.make_archive(${JSON.stringify(join(rel, ASSET))}, "zip", ${JSON.stringify(join(dir, "stage"))}, ${JSON.stringify(ASSET)})`]);
+  if (garbage) writeFileSync(join(rel, `${ASSET}.zip`), "this is not a zip archive\n");
   const sum = ok("bash", ["-c", `(sha256sum "${ASSET}.zip" 2>/dev/null || shasum -a 256 "${ASSET}.zip") | awk '{print $1}'`], { cwd: rel });
   if (!noSums) writeFileSync(join(rel, "SHASUMS256.txt"), `${corrupt ? "0".repeat(64) : sum}  ${ASSET}.zip\n`);
 }
@@ -183,4 +184,23 @@ test.skipIf(isWindows)("on Windows it asks for the pin on PATH instead of instal
   const r = t.bunSh("ensure");
   expect(r.code).toBe(1);
   expect(r.stderr).toContain(`install bun ${PIN} first on PATH`);
+});
+
+test.skipIf(isWindows)("a checksum-valid archive unzip cannot read is refused with the next action", () => {
+  const t = setup();
+  publishRelease(t.dir, { garbage: true });
+  const r = t.bunSh("ensure");
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain(`could not unpack ${ASSET}.zip`);
+});
+
+test.skipIf(isWindows || process.getuid?.() === 0)("an unwritable tool cache names the override", () => {
+  const t = setup();
+  publishRelease(t.dir);
+  mkdirSync(t.tools);
+  chmodSync(t.tools, 0o555);
+  const r = t.bunSh("ensure");
+  chmodSync(t.tools, 0o755);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("make it writable or point GH_SECRETS_TOOLS_DIR elsewhere");
 });

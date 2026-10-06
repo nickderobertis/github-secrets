@@ -4,7 +4,8 @@
   "//": "The live GitHub suite (real GitHub API, and scripts/install.sh against the real release). The test target compiles it and runs it as a no-op (no GH_SECRETS_LIVE_TEST); the live target is the real run, used by the live-e2e CI job via just test-live.",
   "projectType": "application",
   "tags": [
-    "type:live"
+    "type:live",
+    "coverage:profiles"
   ],
   "implicitDependencies": [
     "gh-secrets",

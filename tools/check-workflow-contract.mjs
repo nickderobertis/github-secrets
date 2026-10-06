@@ -57,7 +57,8 @@ function contextsOf(id, job) {
 function triggersOnEveryPr(on) {
   if (on === "pull_request") return true;
   if (Array.isArray(on)) return on.includes("pull_request");
-  if (!on || typeof on !== "object" || !("pull_request" in on)) return false;
+  if (!isObject(on) || !("pull_request" in on)) return false;
+  if (on.pull_request !== null && !isObject(on.pull_request)) return false;
   const pr = on.pull_request ?? {};
   // A `types` list must still include the default activity types, or ordinary
   // pushes to a pull request would not run the workflow.

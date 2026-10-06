@@ -75,9 +75,10 @@ install_pinned() {
   command -v unzip >/dev/null 2>&1 \
     || fail "unzip is required to install bun $VERSION; install it with your package manager (e.g. 'apt-get install unzip'), then re-run 'just bootstrap'."
   tmp="$(mktemp -d)"
-  # Expanded now: the EXIT trap fires after this function's locals are gone.
+  # Expanded now (quoted for the shell): the EXIT trap fires after this
+  # function's locals are gone.
   # shellcheck disable=SC2064
-  trap "rm -rf '$tmp'" EXIT
+  trap "rm -rf $(printf '%q' "$tmp")" EXIT
   base="${GH_SECRETS_BUN_DOWNLOAD_BASE:-https://github.com/oven-sh/bun/releases/download}/bun-v$VERSION"
   echo "bun.sh: installing bun $VERSION into $CACHE_DIR" >&2
   curl -fsSL --retry 3 -o "$tmp/$asset.zip" "$base/$asset.zip" \
@@ -114,6 +115,6 @@ case "$MODE" in
     fi
     ;;
   *)
-    fail "usage: scripts/bun.sh ensure | path"
+    fail "unknown mode '${MODE}'; usage: scripts/bun.sh ensure | path"
     ;;
 esac

@@ -10,7 +10,8 @@ always see a complete set of profiles.
   *and* Nx implicit dependencies — Nx's own boundary rule only sees JS
   imports), `check-workflow-contract.mjs` (the fixed CI contexts and what may
   gate them, plus the CI facts restated across workflows) and
-  `check-coverage-floor.mjs` (every restated floor equals `MIN_LINES`). When
+  `check-restated-facts.mjs` (every restated coverage floor equals
+  `MIN_LINES`, and clippy's `msrv` and the docs equal Cargo's `rust-version`). When
   you add a project, give it exactly one `type:*` tag; when you rename a CI job
   or add a condition to one that reports a fixed context, these tell you.
 - `test` runs `bun test tools/tests`: these checkers, the justfile's gate

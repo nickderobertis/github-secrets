@@ -3,7 +3,10 @@
   "name": "gh-secrets",
   "//": "The published crate: lib gh_secrets + bin gh-secrets, with its inline unit tests. It is the root project, so it also owns every file no other project claims (scripts/, .github/, docs); its inputs are narrowed to what the crate compiles from so a docs edit replays cached lint/format results. It may depend only on type:app projects (tools/project-boundaries.json).",
   "projectType": "application",
-  "tags": ["type:app"],
+  "tags": [
+    "type:app",
+    "coverage:profiles"
+  ],
   "namedInputs": {
     "default": [
       "{projectRoot}/src/**/*",
@@ -14,11 +17,15 @@
   "targets": {
     "format": {
       "executor": "nx:run-commands",
-      "options": { "command": "cargo fmt -p gh-secrets" }
+      "options": {
+        "command": "cargo fmt -p gh-secrets"
+      }
     },
     "format-check": {
       "executor": "nx:run-commands",
-      "options": { "command": "cargo fmt -p gh-secrets -- --check" }
+      "options": {
+        "command": "cargo fmt -p gh-secrets -- --check"
+      }
     },
     "lint": {
       "executor": "nx:run-commands",
@@ -28,14 +35,22 @@
     },
     "build": {
       "executor": "nx:run-commands",
-      "options": { "command": "cargo build -p gh-secrets --locked" },
+      "options": {
+        "command": "cargo build -p gh-secrets --locked"
+      },
       "//": "Produces target/debug/gh-secrets, the binary the e2e and live journeys spawn when they run uninstrumented (Windows, and the real live runs)."
     },
     "test": {
       "executor": "nx:run-commands",
-      "dependsOn": ["workspace:coverage-clear"],
-      "options": { "command": "bash scripts/coverage.sh test gh-secrets" },
-      "outputs": ["{workspaceRoot}/target/llvm-cov-target/*.profraw"],
+      "dependsOn": [
+        "workspace:coverage-clear"
+      ],
+      "options": {
+        "command": "bash scripts/coverage.sh test gh-secrets"
+      },
+      "outputs": [
+        "{workspaceRoot}/target/llvm-cov-target/*.profraw"
+      ],
       "//": "Unit tests under cargo-llvm-cov (--no-report): raw profiles land in target/llvm-cov-target for workspace:coverage to merge. Uncached: cargo-llvm-cov names every profile after the workspace, not the crate, so a replay would restore siblings' stale profiles."
     }
   }

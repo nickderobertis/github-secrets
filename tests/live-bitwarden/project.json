@@ -4,7 +4,8 @@
   "//": "The live Bitwarden suite (a real, isolated Bitwarden account through the real bw CLI). The test target compiles it and runs it as a no-op (no GH_SECRETS_LIVE_TEST); the live target is the real run, used by the live-e2e-bitwarden CI job via just test-live-bitwarden. Serial (-j1): every test logs in to the one isolated account.",
   "projectType": "application",
   "tags": [
-    "type:live"
+    "type:live",
+    "coverage:profiles"
   ],
   "implicitDependencies": [
     "gh-secrets",

@@ -6,22 +6,10 @@
 # override) decides. CI's `llmlint` job authenticates the primary (codex) from the
 # OPENAI_API_KEY repository secret.
 #
-# Fallback mode: oneharness tries the harnesses in priority order and stops at the
-# first that can actually run — falling through only the candidates that cannot run
-# at all (not installed, unspawnable, or rejected before doing any work: auth /
-# no-credit quota). A real task failure or timeout does NOT fall through (it would
-# mask a real failure). So the SAME committed config works everywhere with no edit:
-#
-#   * A contributor with Codex authenticated runs the primary — codex + gpt-5.5.
-#   * A Claude Code web/cloud session, where codex is absent, falls through to the
-#     secondary — claude-code + opus-4.8 — the only harness authenticated there.
-#
-# Because the fallback already selects claude-code when codex can't run, the
-# SessionStart hook needs no `ONEHARNESS_HARNESSES` override — an override would
-# only clobber this list.
-#
-# IS_SANDBOX is injected into just the claude-code harness so it may run under root
-# without `--dangerously-skip-permissions` refusing (harmless elsewhere).
+# Fallback mode: the first harness that can run wins, so the same file works for
+# a contributor with codex authenticated (CI authenticates it too) and in a
+# Claude Code session, which falls through to claude-code. IS_SANDBOX lets
+# claude-code run under root.
 run_mode = "fallback"
 harnesses = ["codex", "claude-code"]
 

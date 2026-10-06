@@ -4,7 +4,7 @@
 // packaged the way release.yml packages them (tar.gz under a leading
 // gh-secrets-<tag>-<target>/ directory, `.sha256` appended to the archive name).
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO, ok, run, scratch } from "./helpers.mjs";
 
@@ -42,7 +42,7 @@ test.skipIf(isWindows)("installs the local release archive and the binary runs",
   const r = release();
   const res = install(["--version", TAG, "--from-dir", r.dir, "--to", r.to]);
   expect(res.code).toBe(0);
-  expect(res.stderr).toContain("verifying checksum");
+  expect(res.stderr.trim()).toBe(`installed gh-secrets ${TAG} to ${join(r.to, "gh-secrets")}\n\nNOTE: ${r.to} is not on your PATH. Add it to your shell profile:\n  export PATH="${r.to}:$PATH"`);
   expect(ok(join(r.to, "gh-secrets"), [])).toBe("gh-secrets 9.9.9");
 });
 
@@ -104,4 +104,20 @@ test.skipIf(isWindows || process.getuid?.() === 0)("an unreadable local archive 
   expect(res.code).not.toBe(0);
   expect(res.stderr).toContain("check that it is readable");
   expect(existsSync(join(r.to, "gh-secrets"))).toBe(false);
+});
+
+test.skipIf(isWindows)("an archive without its .sha256 is not installed", () => {
+  const r = release();
+  rmSync(join(r.dir, `${r.dist}.tar.gz.sha256`));
+  const res = install(["--version", TAG, "--from-dir", r.dir, "--to", r.to]);
+  expect(res.code).not.toBe(0);
+  expect(res.stderr).toContain(`${r.dist}.tar.gz.sha256 not found in ${r.dir}`);
+  expect(existsSync(join(r.to, "gh-secrets"))).toBe(false);
+});
+
+test.skipIf(isWindows)("a version that is not a tag is refused before any path is built", () => {
+  const r = release();
+  const res = install(["--version", "../../etc", "--from-dir", r.dir, "--to", r.to]);
+  expect(res.code).not.toBe(0);
+  expect(res.stderr).toContain("invalid --version '../../etc'");
 });

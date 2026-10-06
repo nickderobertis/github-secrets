@@ -31,7 +31,7 @@
         "commands": [
           "bun tools/check-project-boundaries.mjs",
           "bun tools/check-workflow-contract.mjs",
-          "bun tools/check-coverage-floor.mjs"
+          "bun tools/check-restated-facts.mjs"
         ],
         "parallel": false
       }
@@ -52,12 +52,17 @@
     "coverage": {
       "executor": "nx:run-commands",
       "dependsOn": [
-        "^test"
+        {
+          "projects": [
+            "tag:coverage:profiles"
+          ],
+          "target": "test"
+        }
       ],
       "options": {
         "command": "bash scripts/coverage.sh report"
       },
-      "//": "Runs the test target of every project this one depends on (all of them, via implicitDependencies \"*\"), so a new crate's profiles join the union with no list to update; then merges the raw profiles and enforces the 95% line floor over the gh-secrets crate's own sources (src/), once."
+      "//": "Runs the test target of every project tagged coverage:profiles (the crates whose tests write cargo-llvm-cov profiles; a new crate joins by carrying the tag), then merges the raw profiles and enforces the line floor over the gh-secrets crate's own sources (src/), once. The scripts project's tests are not prerequisites: they contribute no product coverage."
     },
     "supply-chain": {
       "executor": "nx:run-commands",
