@@ -33,7 +33,10 @@ pub fn live_enabled() -> bool {
 }
 
 pub fn token() -> String {
-    env::var(TOKEN_ENV).expect("GH_TOKEN must be set when GH_SECRETS_LIVE_TEST=1")
+    env::var(TOKEN_ENV)
+        .ok()
+        .filter(|t| !t.trim().is_empty())
+        .expect("GH_TOKEN must be set to a non-empty token when GH_SECRETS_LIVE_TEST=1")
 }
 
 pub fn owner() -> &'static str {
