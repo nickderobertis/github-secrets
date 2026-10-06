@@ -2,9 +2,10 @@
 // placement AGENTS.md "Commits, releases, and merging" records: the release
 // PR gets the full sweep, everything else the affected tier.
 //
-// Reads GITHUB_EVENT_NAME and the payload at GITHUB_EVENT_PATH, prints
-// `tier=<affected|all>` and `base=<sha>` (empty for `all`), and appends the same
-// lines to GITHUB_OUTPUT when that is set.
+// Reads GITHUB_EVENT_NAME and the payload at GITHUB_EVENT_PATH and writes
+// `tier=<affected|all>` and `base=<sha>` (empty for `all`) to GITHUB_OUTPUT,
+// saying which in one line on stderr; outside Actions (no GITHUB_OUTPUT) the two
+// lines go to stdout instead.
 //
 // Usage: bun scripts/ci-gate-tier.mjs
 // Exit status: 0 with a decision; 1 when no decision can be made (the message
@@ -116,10 +117,10 @@ if (import.meta.main) {
     if (err.fix) console.error(`ci-gate-tier: next: ${err.fix}`);
     process.exit(1);
   }
-  console.error(`ci-gate-tier: ${decision.tier} — ${decision.why}`);
   const lines = `tier=${decision.tier}\nbase=${decision.base}\n`;
-  process.stdout.write(lines);
-  if (process.env.GITHUB_OUTPUT) {
+  if (!process.env.GITHUB_OUTPUT) {
+    process.stdout.write(lines);
+  } else {
     try {
       appendFileSync(process.env.GITHUB_OUTPUT, lines);
     } catch (err) {
@@ -127,5 +128,6 @@ if (import.meta.main) {
       console.error("ci-gate-tier: next: run this inside a GitHub Actions step (it provides a writable GITHUB_OUTPUT), or unset it.");
       process.exit(1);
     }
+    console.error(`ci-gate-tier: ${decision.tier} — ${decision.why}`);
   }
 }

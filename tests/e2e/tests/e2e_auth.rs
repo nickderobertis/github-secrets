@@ -55,20 +55,12 @@ impl AuthHarness {
         c.current_dir(self.dir.path())
             .env("GH_SECRETS_HOME", self.dir.path().join("home"))
             .env("GH_SECRETS_API_BASE", self.server.uri())
-            .env("GH_SECRETS_PASSPHRASE", "auth-e2e-passphrase")
-            // Scrub any inherited credentials so the test starts from a known
-            // state regardless of the developer's shell / .env.
-            .env_remove("GH_TOKEN")
-            .env_remove("GITHUB_TOKEN")
-            .env_remove("BW_CLIENTID")
-            .env_remove("BITWARDEN_CLIENT_ID")
-            .env_remove("BW_CLIENTSECRET")
-            .env_remove("BITWARDEN_CLIENT_SECRET")
-            .env_remove("BW_PASSWORD")
-            .env_remove("BITWARDEN_MASTER_PASSWORD")
-            .env_remove("BITWARDEN_PASSWORD")
-            .env_remove("BW_SESSION")
-            .env_remove("BITWARDEN_SESSION");
+            .env("GH_SECRETS_PASSPHRASE", "auth-e2e-passphrase");
+        // Scrub any inherited credentials so the test starts from a known
+        // state regardless of the developer's shell / .env.
+        for var in common::CREDENTIAL_ENVS {
+            c.env_remove(var);
+        }
         c
     }
 
@@ -625,4 +617,25 @@ async fn e2e_unlock_days_flag_sets_session_length() {
         .args(["auth", "unlock", "--days", "0"])
         .assert()
         .failure();
+}
+
+/// The scrub list must cover every credential variable the binary reads, or a
+/// newly supported alias would let a developer's real login into these tests.
+#[test]
+fn scrubbed_credential_envs_cover_every_name_the_binary_reads() {
+    let src = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/");
+    let mut declared = Vec::new();
+    for file in ["sources.rs", "destinations.rs"] {
+        let text = fs::read_to_string(format!("{src}{file}")).expect("read crate source");
+        declared.extend(common::declared_credential_envs(&text));
+    }
+    assert!(declared.len() >= 11, "parsed too few names: {declared:?}");
+    let missing: Vec<_> = declared
+        .iter()
+        .filter(|n| !common::CREDENTIAL_ENVS.contains(&n.as_str()))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "add {missing:?} to tests/common CREDENTIAL_ENVS"
+    );
 }

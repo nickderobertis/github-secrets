@@ -22,6 +22,8 @@
 //!   each a precise error that names `bw`, never a secret value, with nothing
 //!   written.
 
+mod common;
+
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,20 +39,6 @@ const CLIENT_ID: &str = "user.client-id";
 const CLIENT_SECRET: &str = "client-secret-value";
 const MASTER_PASSWORD: &str = "correct horse battery staple";
 const PASSPHRASE: &str = "e2e-bitwarden-passphrase";
-
-/// Every Bitwarden credential variable `gh-secrets` reads. Cleared on each
-/// command so a developer's real login can never leak into (or be used by) a test.
-const BW_VARS: &[&str] = &[
-    "BW_CLIENTID",
-    "BW_CLIENTSECRET",
-    "BW_PASSWORD",
-    "BW_SESSION",
-    "BITWARDEN_CLIENT_ID",
-    "BITWARDEN_CLIENT_SECRET",
-    "BITWARDEN_MASTER_PASSWORD",
-    "BITWARDEN_PASSWORD",
-    "BITWARDEN_SESSION",
-];
 
 struct Harness {
     dir: TempDir,
@@ -142,7 +130,7 @@ impl Harness {
             .env("FAKE_BW_STATE", self.state_path())
             .env("FAKE_BW_LOG", self.log_path())
             .env("PATH", self.path_with_fake_bw());
-        for var in BW_VARS {
+        for var in common::CREDENTIAL_ENVS {
             c.env_remove(var);
         }
         c

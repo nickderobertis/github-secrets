@@ -93,6 +93,19 @@ pub struct BwCreds {
     pub password: String,
 }
 
+/// Credential variables that would shadow the isolated account's `BW_*`
+/// credentials if inherited from a developer's shell: an unlock token, and
+/// every `BITWARDEN_*` alias gh-secrets reads (src/sources.rs `BW_*_ENVS`).
+/// `e2e_live_bitwarden.rs` checks this list against that source.
+pub const SHADOWING_ENVS: &[&str] = &[
+    "BW_SESSION",
+    "BITWARDEN_SESSION",
+    "BITWARDEN_CLIENT_ID",
+    "BITWARDEN_CLIENT_SECRET",
+    "BITWARDEN_MASTER_PASSWORD",
+    "BITWARDEN_PASSWORD",
+];
+
 /// One test's worth of state against the isolated Bitwarden account:
 ///
 /// - `home` — an isolated `GH_SECRETS_HOME` config root.
@@ -185,13 +198,10 @@ impl BwLiveSession {
             .env("BW_CLIENTID", &self.creds.client_id)
             .env("BW_CLIENTSECRET", &self.creds.client_secret)
             .env("BW_PASSWORD", &self.creds.password)
-            .env_remove("GH_SECRETS_API_BASE")
-            .env_remove("BW_SESSION")
-            .env_remove("BITWARDEN_SESSION")
-            .env_remove("BITWARDEN_CLIENT_ID")
-            .env_remove("BITWARDEN_CLIENT_SECRET")
-            .env_remove("BITWARDEN_MASTER_PASSWORD")
-            .env_remove("BITWARDEN_PASSWORD");
+            .env_remove("GH_SECRETS_API_BASE");
+        for var in SHADOWING_ENVS {
+            c.env_remove(var);
+        }
         c
     }
 

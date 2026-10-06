@@ -57,7 +57,8 @@ test("the release-please release PR runs the full sweep", () => {
   expect(r.code).toBe(0);
   expect(r.tier).toBe("all");
   expect(r.base).toBe("");
-  expect(r.stdout).toBe("tier=all\nbase=\n");
+  expect(r.stdout).toBe("");
+  expect(r.stderr.trim().split("\n")).toHaveLength(1);
 });
 
 test("an ordinary pull request runs the affected tier from the merge base", () => {
@@ -135,4 +136,15 @@ test("an unwritable GITHUB_OUTPUT fails with the next action", () => {
   });
   expect(r.code).toBe(1);
   expect(r.stderr).toContain("could not append to GITHUB_OUTPUT");
+});
+
+test("outside Actions (no GITHUB_OUTPUT) the decision goes to stdout", () => {
+  const event = join(s.dir, "dispatch2.json");
+  writeFileSync(event, "{}");
+  const env = { ...process.env, GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_EVENT_PATH: event };
+  delete env.GITHUB_OUTPUT;
+  const r = run("bun", [SCRIPT], { cwd: repo, env });
+  expect(r.code).toBe(0);
+  expect(r.stdout).toBe("tier=all\nbase=\n");
+  expect(r.stderr).toBe("");
 });

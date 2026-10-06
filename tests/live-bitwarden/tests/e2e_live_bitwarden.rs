@@ -254,3 +254,28 @@ fn live_bw_wrong_master_password_errors_clearly() {
         "nothing should be written when the unlock fails"
     );
 }
+
+/// Not live: runs in every gate. Every `BITWARDEN_*` alias gh-secrets reads must
+/// be scrubbed by `cmd_in_appdata`, or a developer's own login could shadow the
+/// isolated account's credentials.
+#[test]
+fn shadowing_envs_cover_every_bitwarden_alias_the_binary_reads() {
+    let source =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/sources.rs"))
+            .expect("read src/sources.rs");
+    let aliases: Vec<&str> = source
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .filter(|s| {
+            s.starts_with("BITWARDEN_") && s.chars().all(|c| c.is_ascii_uppercase() || c == '_')
+        })
+        .collect();
+    assert!(aliases.len() >= 5, "parsed too few aliases: {aliases:?}");
+    for alias in aliases {
+        assert!(
+            live_bw_common::SHADOWING_ENVS.contains(&alias),
+            "add {alias} to live_bw_common::SHADOWING_ENVS"
+        );
+    }
+}
