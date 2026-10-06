@@ -26,7 +26,8 @@
       "executor": "nx:run-commands",
       "options": {
         "command": "cargo clippy -p gh-secrets-live-bitwarden --all-targets --all-features --locked -- -D warnings"
-      }
+      },
+      "//ignore-test": "llmlint: ignore-block[external_service_suite_stays_out_of_the_affected_tier] recorded standing decision (AGENTS.md, Stack and composition): the live suites stay compiled and run inside the gate as runtime no-ops (no GH_SECRETS_LIVE_TEST there), so the live code cannot rot; the real external calls happen only in the live target, which the gate never runs."
     },
     "test": {
       "executor": "nx:run-commands",
@@ -39,7 +40,8 @@
       },
       "outputs": [
         "{workspaceRoot}/target/llvm-cov-target/*.profraw"
-      ]
+      ],
+      "//ignore-end": "llmlint: ignore-end[external_service_suite_stays_out_of_the_affected_tier]"
     },
     "live": {
       "executor": "nx:run-commands",

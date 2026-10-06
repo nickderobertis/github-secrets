@@ -181,10 +181,13 @@ if (existsSync(join(root, "node_modules/.bin/nx"))) {
   } catch (err) {
     fail([`'nx graph' failed: ${err.stderr || err.message}`, "run 'just bootstrap', then re-run."]);
   }
+  const deps = JSON.parse(readFileSync(graphFile, "utf8"))?.graph?.dependencies;
+  const wellFormed =
+    deps !== null && typeof deps === "object" &&
+    Object.values(deps).every((list) => Array.isArray(list) && list.every((d) => typeof d?.target === "string" && typeof d?.type === "string"));
+  if (!wellFormed) fail(["'nx graph' produced a graph of an unexpected shape; check the Nx version in package.json, then re-run."]);
   const nxEdges = new Set(
-    Object.entries(JSON.parse(readFileSync(graphFile, "utf8")).graph.dependencies).flatMap(([from, deps]) =>
-      deps.filter((d) => d.type === "implicit").map((d) => `${from} -> ${d.target}`),
-    ),
+    Object.entries(deps).flatMap(([from, list]) => list.filter((d) => d.type === "implicit").map((d) => `${from} -> ${d.target}`)),
   );
   rmSync(dirname(graphFile), { recursive: true, force: true });
   const only = (a, b) => [...a].filter((e) => !b.has(e));

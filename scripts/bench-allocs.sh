@@ -19,7 +19,10 @@ fail() {
 mkdir -p "$OUT" || fail "cannot create $OUT; make it writable or set BENCH_OUT, then re-run 'just bench-allocs'."
 tmp="$(mktemp "$OUT/allocs.md.XXXXXX")" || fail "cannot write in $OUT; make it writable or set BENCH_OUT."
 trap 'rm -f "$tmp"' EXIT
-(cd "$ROOT" && cargo bench --locked --quiet -p gh-secrets-bench --bench engine_allocs) > "$tmp" \
-  || fail "the engine_allocs bench failed (above); no report was written. Fix it, then re-run 'just bench-allocs'."
+if ! (cd "$ROOT" && cargo bench --locked --quiet -p gh-secrets-bench --bench engine_allocs) > "$tmp"; then
+  cat "$tmp" >&2
+  fail "the engine_allocs bench failed (its output is above); no report was written. Fix it, then re-run 'just bench-allocs'."
+fi
+[ ! -d "$OUT/allocs.md" ] || fail "$OUT/allocs.md is a directory; remove it, then re-run 'just bench-allocs'."
 mv "$tmp" "$OUT/allocs.md" || fail "cannot replace $OUT/allocs.md; check its permissions."
 echo "bench-allocs: wrote $OUT/allocs.md" >&2

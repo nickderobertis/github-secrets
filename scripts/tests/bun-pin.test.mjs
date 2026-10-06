@@ -3,7 +3,7 @@
 // offline: GH_SECRETS_BUN_DOWNLOAD_BASE points curl at a file:// "release" laid
 // out exactly like bun's GitHub release (bun-v<ver>/<asset>.zip + SHASUMS256.txt).
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO, ok, run, scratch } from "./helpers.mjs";
 
@@ -232,4 +232,12 @@ test.skipIf(isWindows)("verification falls back to shasum, and refuses with neit
   expect(r.code).toBe(1);
   expect(r.stderr).toContain("no SHA-256 tool to verify the download");
   expect(existsSync(join(t2.tools, `bun-${PIN}`, "bin", "bun"))).toBe(false);
+});
+
+test.skipIf(isWindows)("a missing .tool-versions says to restore it", () => {
+  const t = setup({ pathBunVersion: PIN });
+  rmSync(join(t.repo, ".tool-versions"));
+  const r = t.bunSh("path");
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain(".tool-versions; restore it (it pins bun) from git");
 });

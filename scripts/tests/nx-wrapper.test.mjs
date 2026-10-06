@@ -94,3 +94,19 @@ test.skipIf(isWindows)("without the pinned bun it points at bootstrap", () => {
   expect(r.code).toBe(1);
   expect(r.stderr).toContain("run 'just bootstrap'");
 });
+
+test.skipIf(isWindows || process.getuid?.() === 0)("an unwritable node_modules after install names the fix and the cause", () => {
+  const t = setup();
+  mkdirSync(join(t.repo, "node_modules/.bin"), { recursive: true });
+  writeFileSync(join(t.repo, "node_modules/.bin/nx"), "#!/bin/sh\necho nx-ran\n");
+  chmodSync(join(t.repo, "node_modules/.bin/nx"), 0o755);
+  // An install that leaves node_modules read-only, so the stamp cannot be written.
+  writeFileSync(join(t.bin, "bun"), `#!/bin/sh\n[ "$1" = "--version" ] && { echo ${PIN}; exit 0; }\nchmod 555 node_modules\n`);
+  chmodSync(join(t.bin, "bun"), 0o755);
+  const r = t.nx("run", "p:t");
+  chmodSync(join(t.repo, "node_modules"), 0o755);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("nx: could not write node_modules/.bun-install-stamp (");
+  expect(r.stderr).toContain("make node_modules writable");
+  expect(r.stdout).not.toContain("nx-ran");
+});

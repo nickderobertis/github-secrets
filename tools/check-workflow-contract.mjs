@@ -87,18 +87,20 @@ function loadWorkflows(dir, errors) {
       continue;
     }
     for (const [id, job] of Object.entries(wf.jobs)) {
-      const matrix = isObject(job) ? job.strategy?.matrix : undefined;
+      const strategyOk = !isObject(job) || job.strategy === undefined || isObject(job.strategy);
+      const matrix = isObject(job) && isObject(job.strategy) ? job.strategy.matrix : undefined;
       const strings = (v) => Array.isArray(v) && v.every((x) => typeof x === "string");
       if (
         isObject(job) &&
-        ((job.name !== undefined && typeof job.name !== "string") ||
+        (!strategyOk ||
+          (job.name !== undefined && typeof job.name !== "string") ||
           (matrix !== undefined && !isObject(matrix)) ||
           (matrix?.os !== undefined && !strings(matrix.os)) ||
           (matrix?.include !== undefined &&
             !(Array.isArray(matrix.include) && matrix.include.every((i) => isObject(i) && (i.os === undefined || typeof i.os === "string")))) ||
           (job.needs !== undefined && typeof job.needs !== "string" && !strings(job.needs)))
       ) {
-        errors.push(`${f}:${id} has a name, needs or strategy.matrix (os / include) of an unexpected shape.`);
+        errors.push(`${f}:${id} has a name, needs, strategy or strategy.matrix (os / include) of an unexpected shape.`);
         wf.jobs[id] = {};
         continue;
       }

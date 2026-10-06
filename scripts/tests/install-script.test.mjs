@@ -121,3 +121,13 @@ test.skipIf(isWindows)("a version that is not a tag is refused before any path i
   expect(res.code).not.toBe(0);
   expect(res.stderr).toContain("invalid --version '../../etc'");
 });
+
+test.skipIf(isWindows)("--from-dir with no following argument, or a tag with odd characters, is refused", () => {
+  const r = release();
+  const noArg = install(["--version", TAG, "--to", r.to, "--from-dir"]);
+  expect(noArg.code).not.toBe(0);
+  expect(noArg.stderr).toContain("--from-dir needs the directory holding the packaged archive (see --help)");
+  const odd = install(["--version", "v1.0.0\\x", "--from-dir", r.dir, "--to", r.to]);
+  expect(odd.code).not.toBe(0);
+  expect(odd.stderr).toContain("expected a release tag like v1.2.3");
+});
