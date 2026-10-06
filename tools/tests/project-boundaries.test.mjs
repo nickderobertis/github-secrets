@@ -1,7 +1,7 @@
 // The boundary rule against a real (tiny) Cargo workspace: cargo metadata is the
 // edge source, so the test builds one rather than feeding canned JSON.
 import { afterEach, expect, test } from "bun:test";
-import { cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO, gitRepo, run, scratch } from "../../scripts/tests/helpers.mjs";
 
@@ -33,7 +33,7 @@ function workspace({ appDevDep = "", e2eTags = ["type:e2e"] } = {}) {
   return dir;
 }
 
-const check = (dir) => run("bun", [join(REPO, "tools/check-project-boundaries.mjs"), "--root", dir]);
+const check = (dir, env = process.env) => run("bun", [join(REPO, "tools/check-project-boundaries.mjs"), "--root", dir], { env });
 
 test("allowed edges pass quietly", () => {
   const r = check(workspace());
@@ -129,4 +129,28 @@ test("the checker's implicit edges must match Nx's resolved graph, both ways", (
   const r2 = check(checkerOnly);
   expect(r2.code).toBe(1);
   expect(r2.stderr).toContain("this checker resolves app-e2e -> app, which Nx does not");
+});
+
+/** Env whose `cargo metadata` answers `edit(real metadata)`: only the far-end tool is replaced. */
+function cargoAnswering(dir, edit) {
+  const metadata = JSON.parse(run("cargo", ["metadata", "--format-version", "1", "--no-deps", "--offline"], { cwd: dir }).stdout);
+  const bin = join(dir, "fake-bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "metadata.json"), JSON.stringify(edit(metadata)));
+  writeFileSync(join(bin, "cargo"), `#!/bin/sh\ncat '${join(bin, "metadata.json")}'\n`);
+  chmodSync(join(bin, "cargo"), 0o755);
+  return { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+}
+
+test.skipIf(process.platform === "win32")("cargo metadata whose packages fall short of its workspace members is refused", () => {
+  const dir = workspace({ appDevDep: 'app-e2e = { path = "e2e" }' });
+  // Dropping the app package would hide its forbidden edge; the checker must refuse, not pass.
+  const short = check(dir, cargoAnswering(dir, (m) => ({ ...m, packages: m.packages.filter((p) => p.name !== "app") })));
+  expect(short.code).toBe(1);
+  expect(short.stderr).toContain("packages do not match its workspace_members");
+
+  const none = workspace();
+  const r = check(none, cargoAnswering(none, (m) => ({ ...m, workspace_members: [] })));
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("returned no workspace_members list");
 });

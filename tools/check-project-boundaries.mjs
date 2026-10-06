@@ -141,10 +141,20 @@ const typeTag = (name) => {
 const edges = []; // [from, to, how]
 const memberDirs = new Map(); // manifest dir (relative) -> project name
 const isPkg = (p) =>
-  p !== null && typeof p === "object" && typeof p.name === "string" && typeof p.manifest_path === "string" &&
+  p !== null && typeof p === "object" && typeof p.id === "string" && typeof p.name === "string" && typeof p.manifest_path === "string" &&
   Array.isArray(p.dependencies) && p.dependencies.every((d) => d !== null && typeof d === "object" && typeof d.name === "string" && (d.path === undefined || typeof d.path === "string"));
 if (!Array.isArray(metadata?.packages) || !metadata.packages.every(isPkg)) {
   fail(["'cargo metadata' returned packages of an unexpected shape; check the cargo version, then re-run."]);
+}
+// With --no-deps the packages are exactly the workspace members; a list that
+// falls short of them would silently drop those members' Cargo edges.
+const members = metadata.workspace_members;
+if (!Array.isArray(members) || members.length === 0 || !members.every((m) => typeof m === "string")) {
+  fail(["'cargo metadata' returned no workspace_members list; check the cargo version, then re-run."]);
+}
+const packageIds = new Set(metadata.packages.map((p) => p.id));
+if (packageIds.size !== members.length || !members.every((m) => packageIds.has(m))) {
+  fail(["'cargo metadata' packages do not match its workspace_members, so some members' Cargo edges would go unchecked; check the cargo version, then re-run."]);
 }
 for (const pkg of metadata.packages) {
   const dir = rel(root, dirname(pkg.manifest_path));
