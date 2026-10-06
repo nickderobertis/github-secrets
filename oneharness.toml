@@ -1,11 +1,10 @@
 # oneharness harness/model selection for the llmlint (LLM-judge) tier.
 # Docs: https://github.com/nickderobertis/oneharness
 #
-# Drop this at the repo root as `oneharness.toml`. It is the single source of
-# truth for WHICH harness (and model) llmlint drives — the composed `llmlint.yml`
-# deliberately does not pin one, so this file (or an `ONEHARNESS_<FIELD>` env
-# override) decides. This template is the canonical source: the composer emits it
-# verbatim, and in the skills repo a drift gate pins the dogfooded root copy to it.
+# The single source of truth for WHICH harness (and model) llmlint drives here —
+# llmlint.yml deliberately pins none, so this file (or an `ONEHARNESS_<FIELD>` env
+# override) decides. CI's `llmlint` job authenticates the primary (codex) from the
+# OPENAI_API_KEY repository secret.
 #
 # Fallback mode: oneharness tries the harnesses in priority order and stops at the
 # first that can actually run — falling through only the candidates that cannot run

@@ -115,7 +115,7 @@ jobs:
       # target in this matrix, so the toolchain comes from the tagged tree.
       - name: Install Rust toolchain (rust-toolchain.toml)
         shell: bash
-        run: rustup toolchain install || rustup show
+        run: rustup toolchain install
 
       - name: Cache Cargo registry + build
         uses: Swatinem/rust-cache@v2
@@ -180,7 +180,7 @@ jobs:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
       - name: Install Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install || rustup show
+        run: rustup toolchain install
 
       - name: Publish (if configured)
         env:

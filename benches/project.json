@@ -3,8 +3,12 @@
   "name": "gh-secrets-bench",
   "//": "The informational performance suite: never a gate, so `check` reaches only its format-check and lint (which compiles the benches). The bench* targets are what `just bench*` and the Performance workflow run. scripts/bench*.sh drive the release binary, so they are its inputs too.",
   "projectType": "application",
-  "tags": ["type:bench"],
-  "implicitDependencies": ["gh-secrets"],
+  "tags": [
+    "type:bench"
+  ],
+  "implicitDependencies": [
+    "gh-secrets"
+  ],
   "namedInputs": {
     "default": [
       "{projectRoot}/**/*",
@@ -16,11 +20,15 @@
   "targets": {
     "format": {
       "executor": "nx:run-commands",
-      "options": { "command": "cargo fmt -p gh-secrets-bench" }
+      "options": {
+        "command": "cargo fmt -p gh-secrets-bench"
+      }
     },
     "format-check": {
       "executor": "nx:run-commands",
-      "options": { "command": "cargo fmt -p gh-secrets-bench -- --check" }
+      "options": {
+        "command": "cargo fmt -p gh-secrets-bench -- --check"
+      }
     },
     "lint": {
       "executor": "nx:run-commands",
@@ -32,24 +40,36 @@
       "executor": "nx:run-commands",
       "cache": false,
       "options": {
-        "command": "cargo bench --locked -p gh-secrets-bench --bench engine -- --save-baseline {args.baseline}",
-        "args": "--baseline=current"
+        "command": "cargo bench --locked -p gh-secrets-bench --bench engine -- --save-baseline {args.baseline} {args.criterion}"
       }
     },
     "bench-allocs": {
       "executor": "nx:run-commands",
       "cache": false,
-      "options": { "command": "cargo bench --locked --quiet -p gh-secrets-bench --bench engine_allocs" }
+      "options": {
+        "command": "mkdir -p target/bench && cargo bench --locked --quiet -p gh-secrets-bench --bench engine_allocs | tee target/bench/allocs.md"
+      }
     },
     "bench-cli": {
       "executor": "nx:run-commands",
       "cache": false,
-      "options": { "command": "bash scripts/bench.sh {args.mode}", "args": "--mode=" }
+      "options": {
+        "command": "bash scripts/bench.sh"
+      }
+    },
+    "bench-cli-smoke": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash scripts/bench.sh --dry-run"
+      }
     },
     "bench-instructions": {
       "executor": "nx:run-commands",
       "cache": false,
-      "options": { "command": "bash scripts/bench-instructions.sh" }
+      "options": {
+        "command": "bash scripts/bench-instructions.sh"
+      }
     }
   }
 }

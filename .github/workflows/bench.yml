@@ -55,7 +55,7 @@ jobs:
           bun-version-file: .tool-versions
 
       - name: Install Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install || rustup show
+        run: rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -73,17 +73,16 @@ jobs:
         run: rm -rf target/criterion
 
       - name: Benchmark this revision (Criterion)
-        run: cargo bench --locked --workspace --bench engine -- --measurement-time 3 --save-baseline pr
+        run: just bench pr --measurement-time 3
 
       - name: Benchmark this revision (hyperfine CLI)
         run: just bench-cli
 
       # Exact counts, no statistics: these two are the only layers where a
       # small delta is meaningful on a shared runner.
+      # Writes target/bench/allocs.md for the report below.
       - name: Allocation counts (deterministic)
-        run: |
-          mkdir -p target/bench
-          cargo bench --locked --quiet --workspace --bench engine_allocs | tee target/bench/allocs.md
+        run: just bench-allocs
 
       - name: Instruction counts (cachegrind)
         run: just bench-instructions
@@ -103,7 +102,9 @@ jobs:
           # root so its own root resolution still finds this repo.
           cp scripts/bench-instructions.sh target/bench-instructions-pr.sh
           git checkout -q "$base"
-          cargo bench --locked --workspace --bench engine -- --measurement-time 3 --save-baseline base
+          # The base measures itself with its own command surface (it may predate
+          # this one; `bench-base` has existed since the suite landed).
+          just bench-base
           BENCH_OUT="$PWD/target/bench-base" bash target/bench-instructions-pr.sh || true
           git checkout -q -
           critcmp base pr | tee target/bench/critcmp.txt

@@ -18,13 +18,14 @@ set windows-shell := ["bash", "-uc"]
 default:
     @just --list
 
-# Set up from a clean clone: the pinned Rust toolchain, cargo-nextest and
-# cargo-llvm-cov, the pinned bun + the locked Nx install, the git hooks, the
+# Set up from a clean clone: the pinned Rust toolchain (rustup >= 1.28 reads
+# rust-toolchain.toml), cargo-nextest and cargo-llvm-cov (CI provides both
+# prebuilt), the pinned bun + the locked Nx install, the git hooks, the
 # llmlint tier (best effort; CI's llmlint job installs it itself), and a crate pre-fetch.
 bootstrap:
-    rustup toolchain install 2>/dev/null || rustup show >/dev/null
+    rustup toolchain install
     sh scripts/install-nextest.sh
-    sh scripts/install-llvm-cov.sh
+    @cargo llvm-cov --version >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
     bash scripts/bun.sh ensure
     bash scripts/nx --version >/dev/null
     git config core.hooksPath .githooks
@@ -120,11 +121,10 @@ upgrade:
 release target="":
     cargo build --release --locked {{ if target == "" { "" } else { "--target " + target } }}
 
-# ---- llmlint (LLM-judge tier) ----
-#
-# Kept OUT of `check`: it drives a real coding harness (non-deterministic,
-# credentialed, networked). The `llmlint` CI job runs validate, then the
-# diff-scoped judge. Config: llmlint.yml (harness choice: oneharness.toml).
+# The llmlint (LLM-judge) recipes below are kept OUT of `check`: they drive a
+# real coding harness (non-deterministic, credentialed, networked). The `llmlint`
+# CI job runs validate, then the diff-scoped judge. Config: llmlint.yml (harness
+# choice: oneharness.toml).
 
 # Provision the dev toolchain for a Claude Code session (also its SessionStart hook).
 session-setup:
@@ -135,33 +135,36 @@ setup-llmlint:
     ./scripts/setup-llmlint.sh
 
 # LLM-judge lint over the configured set (or the paths given).
+[positional-arguments]
 lint-llm *paths:
     @command -v llmlint >/dev/null 2>&1 || { echo "llmlint not installed — run 'just setup-llmlint'" >&2; exit 1; }
-    llmlint {{ paths }}
+    llmlint "$@"
 
 # Fast, model-free llmlint gate: config structure, ignore directives, fragment bumps.
+[positional-arguments]
 lint-llm-validate *args:
     @command -v llmlint >/dev/null 2>&1 || { echo "llmlint not installed — run 'just setup-llmlint'" >&2; exit 1; }
-    llmlint validate {{ args }}
+    llmlint validate "$@"
 
 # llmlint over what this branch changed since it forked from origin/master (the blocking PR check).
+[positional-arguments]
 lint-llm-diff base="origin/master" *args:
     @command -v llmlint >/dev/null 2>&1 || { echo "llmlint not installed — run 'just setup-llmlint'" >&2; exit 1; }
-    llmlint --diff --diff-base "{{ base }}" {{ args }}
+    llmlint --diff --diff-base "$1" "${@:2}"
 
-# ---- performance ----
-#
-# Informational, never a gate: timings are noisy on shared hardware, so these
-# report numbers rather than block. The CI Performance workflow runs them on
-# every PR and posts a sticky comment. See benches/AGENTS.md.
+# The performance recipes below are informational, never a gate: timings are
+# noisy on shared hardware, so they report numbers rather than block. The CI
+# Performance workflow runs them on every PR and posts a sticky comment. See
+# benches/AGENTS.md.
 
-# Engine micro-benchmarks (Criterion); saves the `current` baseline for bench-compare.
-bench:
-    bash scripts/nx run gh-secrets-bench:bench --baseline=current
+# Engine micro-benchmarks (Criterion) saved as BASELINE (default `current`); extra args go to Criterion.
+[positional-arguments]
+bench baseline="current" *criterion_args:
+    bash scripts/nx run gh-secrets-bench:bench --baseline="$1" --criterion="${*:2}"
 
 # Save current engine benchmarks as the `base` baseline (run on the comparison point).
 bench-base:
-    bash scripts/nx run gh-secrets-bench:bench --baseline=base
+    @just bench base
 
 # Diff the latest `bench` run against `base` (run `bench-base` first; needs critcmp).
 bench-compare:
@@ -173,9 +176,10 @@ bench-cli:
 
 # Fast smoke check of the CLI benchmark harness (one run, no warmup, no stable numbers).
 bench-cli-smoke:
-    @bash scripts/nx run gh-secrets-bench:bench-cli --mode=--dry-run
+    @bash scripts/nx run gh-secrets-bench:bench-cli-smoke
 
-# Deterministic engine allocation counts (counting allocator; exact, comparable across commits).
+# Deterministic engine allocation counts (counting allocator; exact, comparable across
+# commits); also written to target/bench/allocs.md for the Performance report.
 bench-allocs:
     @bash scripts/nx run gh-secrets-bench:bench-allocs
 

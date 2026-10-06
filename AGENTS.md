@@ -141,10 +141,11 @@ Use the `just` recipes; do not hand-roll equivalent commands. The gate recipes
 delegate to Nx (`scripts/nx` runs it on the pinned toolchain) and take a tier:
 `affected` (default) or `all` (one full `run-many` sweep).
 
-- `just bootstrap` — the pinned Rust toolchain (`rust-toolchain.toml`:
-  rustfmt, clippy, llvm-tools, the release targets), cargo-nextest
-  (`scripts/install-nextest.sh`) and cargo-llvm-cov
-  (`scripts/install-llvm-cov.sh`), the bun `.tool-versions` pins
+- `just bootstrap` — the pinned Rust toolchain (`rustup toolchain install`
+  reads `rust-toolchain.toml`: rustfmt, clippy, llvm-tools, the release
+  targets; needs rustup >= 1.28), cargo-nextest (`scripts/install-nextest.sh`)
+  and cargo-llvm-cov (`cargo install` when absent; CI installs both prebuilt),
+  the bun `.tool-versions` pins
   (`scripts/bun.sh ensure`: the PATH copy if it reports the pin, else the
   checksum-verified release in a per-version cache dir) and the locked Nx
   install, `core.hooksPath .githooks` (the pre-push hook), the llmlint tier
