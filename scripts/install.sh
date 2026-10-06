@@ -13,6 +13,11 @@
 # Equivalent environment variables: GH_SECRETS_VERSION, GH_SECRETS_INSTALL_DIR.
 # Set GITHUB_TOKEN to lift the GitHub API rate limit when resolving "latest".
 #
+# `--from-dir <dir>` (GH_SECRETS_ARCHIVE_DIR) reads the release archive and its
+# `.sha256` from a local directory instead of the GitHub release — same names,
+# same checksum verification, same install. CI uses it to prove this exact path
+# against the archive built from a pull request's own commit; it needs --version.
+#
 # Covers Linux (x86_64, arm64), macOS (arm64), and Windows x86_64 under a POSIX shell
 # (Git Bash / MSYS / WSL). For native Windows PowerShell or unpublished targets,
 # use `cargo install gh-secrets --locked`.
@@ -35,13 +40,16 @@ usage() {
     cat >&2 <<EOF
 Install the prebuilt gh-secrets binary.
 
-Usage: install.sh [--version <tag>] [--to <dir>]
+Usage: install.sh [--version <tag>] [--to <dir>] [--from-dir <dir>]
 
-  --version <tag>   Release tag to install, e.g. v0.1.0 (default: latest).
-  --to <dir>        Install directory (default: ~/.local/bin).
-  -h, --help        Show this help.
+  --version <tag>     Release tag to install, e.g. v0.1.0 (default: latest).
+  --to <dir>          Install directory (default: ~/.local/bin).
+  --from-dir <dir>    Read the release archive + .sha256 from <dir> instead of
+                      downloading them (requires --version).
+  -h, --help          Show this help.
 
-Environment: GH_SECRETS_VERSION, GH_SECRETS_INSTALL_DIR, GITHUB_TOKEN.
+Environment: GH_SECRETS_VERSION, GH_SECRETS_INSTALL_DIR, GH_SECRETS_ARCHIVE_DIR,
+GITHUB_TOKEN.
 EOF
 }
 
@@ -111,6 +119,19 @@ download() {
     fi
 }
 
+# Fetch a release asset by name: from the local --from-dir when set, else from
+# the GitHub release.
+fetch_asset() {
+    _name="$1"
+    _out="$2"
+    if [ -n "$archive_dir" ]; then
+        [ -f "${archive_dir}/${_name}" ] || err "${_name} not found in ${archive_dir}"
+        cp "${archive_dir}/${_name}" "$_out"
+    else
+        download "${base_url}/${_name}" "$_out" || err "download failed: ${base_url}/${_name}"
+    fi
+}
+
 # Resolve the latest release tag by reading "tag_name" from the GitHub API.
 latest_tag() {
     _body="$(api_get "https://api.github.com/repos/$REPO/releases/latest")" \
@@ -152,6 +173,7 @@ extract() {
 main() {
     version="${GH_SECRETS_VERSION:-}"
     bindir="${GH_SECRETS_INSTALL_DIR:-}"
+    archive_dir="${GH_SECRETS_ARCHIVE_DIR:-}"
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -159,6 +181,8 @@ main() {
             --version=*) version="${1#*=}"; shift ;;
             --to | --bin-dir) bindir="${2:?--to needs a value}"; shift 2 ;;
             --to=* | --bin-dir=*) bindir="${1#*=}"; shift ;;
+            --from-dir) archive_dir="${2:?--from-dir needs a value}"; shift 2 ;;
+            --from-dir=*) archive_dir="${1#*=}"; shift ;;
             -h | --help) usage; exit 0 ;;
             *) err "unknown option: $1 (try --help)" ;;
         esac
@@ -166,7 +190,10 @@ main() {
 
     [ -n "$bindir" ] || bindir="${HOME}/.local/bin"
 
-    if have curl; then
+    if [ -n "$archive_dir" ]; then
+        [ -n "$version" ] || err "--from-dir needs --version (there is no release to resolve 'latest' from)"
+        [ -d "$archive_dir" ] || err "--from-dir: no such directory: $archive_dir"
+    elif have curl; then
         DL="curl"
     elif have wget; then
         DL="wget"
@@ -191,11 +218,9 @@ main() {
         || err "could not create a temporary directory"
     trap 'rm -rf "$tmp"' EXIT INT TERM
 
-    say "downloading ${archive} (${version})..."
-    download "${base_url}/${archive}" "${tmp}/${archive}" \
-        || err "download failed: ${base_url}/${archive}"
-    download "${base_url}/${sumfile}" "${tmp}/${sumfile}" \
-        || err "checksum download failed: ${base_url}/${sumfile}"
+    say "fetching ${archive} (${version})${archive_dir:+ from ${archive_dir}}..."
+    fetch_asset "$archive" "${tmp}/${archive}"
+    fetch_asset "$sumfile" "${tmp}/${sumfile}"
 
     say "verifying checksum..."
     expected="$(awk '{print $1}' "${tmp}/${sumfile}")"

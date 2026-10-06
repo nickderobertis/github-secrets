@@ -1,0 +1,63 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "workspace",
+  "//": "Repo-level targets: the coverage aggregate over every crate's test profiles, the supply-chain check, the project-boundary and workflow-contract checks (lint), and the tests of the repo's own tooling. It depends on every project, so any change selects it — which is what makes the coverage aggregate always see a complete set of profiles.",
+  "projectType": "library",
+  "tags": ["type:workspace"],
+  "implicitDependencies": [
+    "gh-secrets",
+    "gh-secrets-e2e",
+    "gh-secrets-live-github",
+    "gh-secrets-live-bitwarden",
+    "gh-secrets-bench"
+  ],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/**/Cargo.toml",
+      "{workspaceRoot}/**/project.json",
+      "{workspaceRoot}/.github/workflows/*.yml",
+      "{workspaceRoot}/.githooks/*",
+      "{workspaceRoot}/scripts/*.sh",
+      "sharedGlobals"
+    ]
+  },
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "inputs": ["default"],
+      "options": {
+        "commands": [
+          "bun tools/check-project-boundaries.mjs",
+          "bun tools/check-workflow-contract.mjs"
+        ],
+        "parallel": false
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": { "command": "bun test tools/tests" }
+    },
+    "coverage-clear": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": { "command": "bash scripts/coverage.sh clear" }
+    },
+    "coverage": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        { "projects": ["gh-secrets", "gh-secrets-e2e", "gh-secrets-live-github", "gh-secrets-live-bitwarden"], "target": "test" }
+      ],
+      "options": { "command": "bash scripts/coverage.sh report" },
+      "//": "Merges every crate's raw profiles and enforces the 95% line floor over the gh-secrets crate's own sources (src/), once, over the union."
+    },
+    "supply-chain": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "commands": ["cargo deny --locked check", "cargo machete"],
+        "parallel": false
+      }
+    }
+  }
+}

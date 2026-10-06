@@ -1,0 +1,70 @@
+// scripts/install.sh's local-archive mode (--from-dir), which CI's install-path
+// job uses: the same target detection, asset names, checksum verification and
+// install as a download, with the archive read from disk. Archives here are
+// packaged the way release.yml packages them (tar.gz under a leading
+// gh-secrets-<tag>-<target>/ directory, `.sha256` appended to the archive name).
+import { afterEach, expect, test } from "bun:test";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { REPO, ok, run, scratch } from "./helpers.mjs";
+
+const isWindows = process.platform === "win32";
+const TAG = "v9.9.9";
+let cleanups = [];
+afterEach(() => {
+  for (const c of cleanups) c();
+  cleanups = [];
+});
+
+function hostTarget() {
+  const arch = { x64: "x86_64", arm64: "aarch64" }[process.arch];
+  return process.platform === "darwin" ? `${arch}-apple-darwin` : `${arch}-unknown-linux-gnu`;
+}
+
+/** A release-shaped archive + checksum for this host in a fresh dir. */
+function release({ corruptSum = false } = {}) {
+  const s = scratch();
+  cleanups.push(s.cleanup);
+  const dist = `gh-secrets-${TAG}-${hostTarget()}`;
+  mkdirSync(join(s.dir, dist));
+  const bin = join(s.dir, dist, "gh-secrets");
+  writeFileSync(bin, `#!/bin/sh\necho "gh-secrets ${TAG.slice(1)}"\n`);
+  chmodSync(bin, 0o755);
+  ok("tar", ["czf", `${dist}.tar.gz`, dist], { cwd: s.dir });
+  const sum = ok("bash", ["-c", `(sha256sum "${dist}.tar.gz" 2>/dev/null || shasum -a 256 "${dist}.tar.gz")`], { cwd: s.dir });
+  writeFileSync(join(s.dir, `${dist}.tar.gz.sha256`), corruptSum ? `${"0".repeat(64)}  ${dist}.tar.gz\n` : `${sum}\n`);
+  return { dir: s.dir, dist, to: join(s.dir, "installed") };
+}
+
+const install = (args) => run("sh", [join(REPO, "scripts/install.sh"), ...args]);
+
+test.skipIf(isWindows)("installs the local release archive and the binary runs", () => {
+  const r = release();
+  const res = install(["--version", TAG, "--from-dir", r.dir, "--to", r.to]);
+  expect(res.code).toBe(0);
+  expect(res.stderr).toContain("verifying checksum");
+  expect(ok(join(r.to, "gh-secrets"), [])).toBe("gh-secrets 9.9.9");
+});
+
+test.skipIf(isWindows)("a missing archive fails and installs nothing", () => {
+  const r = release();
+  const res = install(["--version", "v0.0.1", "--from-dir", r.dir, "--to", r.to]);
+  expect(res.code).not.toBe(0);
+  expect(res.stderr).toContain(`gh-secrets-v0.0.1-${hostTarget()}.tar.gz not found in ${r.dir}`);
+  expect(existsSync(join(r.to, "gh-secrets"))).toBe(false);
+});
+
+test.skipIf(isWindows)("a checksum mismatch refuses to install", () => {
+  const r = release({ corruptSum: true });
+  const res = install(["--version", TAG, "--from-dir", r.dir, "--to", r.to]);
+  expect(res.code).not.toBe(0);
+  expect(res.stderr).toContain("checksum mismatch");
+  expect(existsSync(join(r.to, "gh-secrets"))).toBe(false);
+});
+
+test.skipIf(isWindows)("--from-dir without --version is refused", () => {
+  const r = release();
+  const res = install(["--from-dir", r.dir, "--to", r.to]);
+  expect(res.code).not.toBe(0);
+  expect(res.stderr).toContain("--from-dir needs --version");
+});

@@ -1,0 +1,10 @@
+{
+  "//": "Module-boundary rules for the project graph, in Nx's depConstraints shape. A project tagged sourceTag may depend (Cargo dependency of any kind, or Nx implicitDependency) only on projects carrying one of onlyDependOnTags. Enforced by tools/check-project-boundaries.mjs inside workspace:lint. The point: the published gh-secrets crate (type:app) can never be made to depend on a test, live or bench project, which would drag the expensive suites behind every change and ship test code.",
+  "depConstraints": [
+    { "sourceTag": "type:app", "onlyDependOnTags": ["type:app"] },
+    { "sourceTag": "type:e2e", "onlyDependOnTags": ["type:app"] },
+    { "sourceTag": "type:live", "onlyDependOnTags": ["type:app"] },
+    { "sourceTag": "type:bench", "onlyDependOnTags": ["type:app"] },
+    { "sourceTag": "type:workspace", "onlyDependOnTags": ["*"] }
+  ]
+}

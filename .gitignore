@@ -12,3 +12,6 @@ Cargo.lock.bak
 # gh-secrets manifest sync state (per-(secret,destination) SHA-256 hashes).
 # Safe to lose — losing it only forces a re-push — but never commit it.
 .gh-secrets-state.json
+# Nx's Node toolchain (bun install) and its local cache/workspace data.
+/node_modules
+/.nx

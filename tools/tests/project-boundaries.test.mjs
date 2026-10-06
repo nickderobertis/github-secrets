@@ -1,0 +1,61 @@
+// The boundary rule against a real (tiny) Cargo workspace: cargo metadata is the
+// edge source, so the test builds one rather than feeding canned JSON.
+import { afterEach, expect, test } from "bun:test";
+import { cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { REPO, gitRepo, run, scratch } from "./helpers.mjs";
+
+let cleanups = [];
+afterEach(() => {
+  for (const c of cleanups) c();
+  cleanups = [];
+});
+
+function workspace({ appDevDep = "", e2eTags = ["type:e2e"] } = {}) {
+  const { dir, cleanup } = scratch();
+  cleanups.push(cleanup);
+  const write = (path, text) => {
+    mkdirSync(join(dir, path, ".."), { recursive: true });
+    writeFileSync(join(dir, path), text);
+  };
+  write(
+    "Cargo.toml",
+    `[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n\n[dev-dependencies]\n${appDevDep}\n\n[workspace]\nmembers = ["e2e"]\n`,
+  );
+  write("src/lib.rs", "");
+  write("e2e/Cargo.toml", `[package]\nname = "app-e2e"\nversion = "0.1.0"\nedition = "2021"\n`);
+  write("e2e/src/lib.rs", "");
+  write("project.json", JSON.stringify({ name: "app", tags: ["type:app"] }));
+  write("e2e/project.json", JSON.stringify({ name: "app-e2e", tags: e2eTags, implicitDependencies: ["app"] }));
+  mkdirSync(join(dir, "tools"), { recursive: true });
+  cpSync(join(REPO, "tools/project-boundaries.json"), join(dir, "tools/project-boundaries.json"));
+  gitRepo(dir);
+  return dir;
+}
+
+const check = (dir) => run("bun", [join(REPO, "tools/check-project-boundaries.mjs"), "--root", dir]);
+
+test("allowed edges pass quietly", () => {
+  const r = check(workspace());
+  expect(r.stderr).toBe("");
+  expect(r.code).toBe(0);
+});
+
+test("the app crate depending on its e2e crate fails, naming both and the edge", () => {
+  const r = check(workspace({ appDevDep: 'app-e2e = { path = "e2e" }' }));
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("app (type:app) may not depend on app-e2e (type:e2e)");
+  expect(r.stderr).toContain("Cargo dev dependency app-e2e");
+});
+
+test("a project without exactly one type tag fails", () => {
+  const r = check(workspace({ e2eTags: [] }));
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("app-e2e must carry exactly one type:* tag");
+});
+
+test("the real repository passes", () => {
+  const r = check(REPO);
+  expect(r.stderr).toBe("");
+  expect(r.code).toBe(0);
+});

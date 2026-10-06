@@ -11,6 +11,10 @@
 #   * just            — the task runner every recipe is invoked through.
 #   * cargo-nextest   — the test runner used by `just test` / `just test-e2e`.
 #
+# It then hands off to scripts/setup-llmlint.sh, which installs the llmlint
+# tier (llmlint + oneharness) so `just lint-llm*` work in the session. That
+# hand-off never fails the hook: setup-llmlint.sh always exits 0.
+#
 # Both are fetched as prebuilt binaries into the cargo bin dir (already on
 # PATH), so no compile cost. The script is idempotent: anything already
 # present is left untouched, so it is safe to re-run on every session start.
@@ -62,6 +66,8 @@ main() {
   # one that pays the download cost. Non-fatal: the build would fetch anyway.
   cargo fetch --locked >/dev/null 2>&1 || true
   log "ready (just $(just --version 2>/dev/null | awk '{print $2}'), $(cargo-nextest --version 2>/dev/null | head -1))"
+  # The llmlint tier, from its own idempotent installer (also `just setup-llmlint`).
+  "$(dirname "$0")/setup-llmlint.sh" || log "setup-llmlint.sh reported an issue (continuing)"
 }
 
 main "$@"
