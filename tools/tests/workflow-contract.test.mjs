@@ -72,3 +72,8 @@ test("a workflow whose jobs are not a mapping is refused rather than skipped", (
   const errors = mutated("notignored.yml", "jobs:\n  suppressions:", "jobs: []\nnot_jobs:\n  suppressions:");
   expect(errors.join("\n")).toContain("notignored.yml has no jobs mapping");
 });
+
+test("a matrix of an unexpected shape is reported, not crashed on", () => {
+  const errors = mutated("ci.yml", "        os: [ubuntu-latest, macos-latest, windows-latest]\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history", "        os: ubuntu-latest\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history");
+  expect(errors.join("\n")).toContain("ci.yml:check has a name or strategy.matrix (os / include) of an unexpected shape");
+});

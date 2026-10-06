@@ -117,3 +117,11 @@ test("a base branch the clone lacks names fetch-depth as the fix", () => {
   expect(r.stderr).toContain("git merge-base origin/no-such-branch HEAD failed");
   expect(r.stderr).toContain("fetch-depth: 0");
 });
+
+test("a JSON array payload is not an event", () => {
+  const event = join(s.dir, "array-event.json");
+  writeFileSync(event, "[]");
+  const r = run("bun", [SCRIPT], { cwd: repo, env: { ...process.env, GITHUB_EVENT_NAME: "push", GITHUB_EVENT_PATH: event } });
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("not a JSON object");
+});

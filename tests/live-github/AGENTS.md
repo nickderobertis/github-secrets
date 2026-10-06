@@ -16,6 +16,7 @@ latest release. Live contact puts it outside the deterministic gate's real runs:
   in the affected tier; `live_install_script_downloads_and_verifies_release`
   is what catches release-asset naming drift against the real release.
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] moved here from the root AGENTS.md as this project's folder-scoped material, as the baseline task directs; condensing the catalogue is the separately scheduled AGENTS.md trim, not part of this move. -->
 - `tests/e2e_live.rs` round-trips the same `sync`
   pipeline (env-file source → real `github:` destination) against the real
   GitHub API: a secret becomes visible via the API after sync, a resync is a
@@ -23,3 +24,4 @@ latest release. Live contact puts it outside the deterministic gate's real runs:
   surfaces a 401 the user can act on, and undeclaring a secret does not delete
   it remotely. The sandbox repo is shared across tests; isolation comes from a
   per-test secret-name prefix and a `Drop` cleanup.
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->

@@ -81,3 +81,12 @@ test("malformed project definitions and policies are refused", () => {
   writeFileSync(join(dir, "tools/project-boundaries.json"), JSON.stringify({ depConstraints: [{ sourceTag: "app" }] }));
   expect(check(dir).stderr).toContain("malformed constraint");
 });
+
+test("a project.json holding JSON null, or a bad --root, is refused with a message", () => {
+  const dir = workspace();
+  writeFileSync(join(dir, "e2e/project.json"), "null");
+  expect(check(dir).stderr).toContain("e2e/project.json must hold a JSON object");
+  const r = run("bun", [join(REPO, "tools/check-project-boundaries.mjs"), "--root", join(dir, "missing")]);
+  expect(r.code).toBe(2);
+  expect(r.stderr).toContain("usage:");
+});

@@ -141,6 +141,7 @@ impl LiveSession {
     }
 
     /// List the names of every secret currently on the sandbox repo.
+    // llmlint: ignore[names_match_behavior] the sandbox repo only ever holds this suite's per-test-prefixed secrets, which Drop deletes, so one 100-item page is all of them; the empty-on-error fallback serves the Drop cleanup below, which must never panic while unwinding, and asserting callers fail on the missing name anyway.
     pub fn remote_secret_names(&self) -> Vec<String> {
         let path = format!("/repos/{}/actions/secrets?per_page=100", self.repo);
         let v: Value = match http_get(&path) {

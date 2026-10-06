@@ -125,10 +125,12 @@ fetch_asset() {
     _name="$1"
     _out="$2"
     if [ -n "$archive_dir" ]; then
-        [ -f "${archive_dir}/${_name}" ] || err "${_name} not found in ${archive_dir}"
+        [ -f "${archive_dir}/${_name}" ] \
+            || err "${_name} not found in ${archive_dir}; package it with release.yml's naming (see the install job in .github/workflows/ci.yml) or pass the --version it was packaged as"
         cp "${archive_dir}/${_name}" "$_out"
     else
-        download "${base_url}/${_name}" "$_out" || err "download failed: ${base_url}/${_name}"
+        download "${base_url}/${_name}" "$_out" \
+            || err "download failed: ${base_url}/${_name}; check that ${version} is published at https://github.com/$REPO/releases (or install with 'cargo install $BIN --locked')"
     fi
 }
 

@@ -379,6 +379,7 @@ jobs:
       - name: Bootstrap
         run: just bootstrap
 
+      # llmlint: ignore-block[live_tier_compiles_and_requires_credential] standing, recorded decision (AGENTS.md "Stack and composition"): this live job stays in the PR workflow and finishes green without its secret so forks and unconfigured runs are not red; the suite still compiles and no-ops inside every `check` run.
       - name: Live e2e (GitHub)
         env:
           GH_TOKEN: ${{ secrets.GH_E2E_TOKEN }}
@@ -388,6 +389,7 @@ jobs:
             exit 0
           fi
           just test-live
+      # llmlint: ignore-end[live_tier_compiles_and_requires_credential]
 
   # Live e2e against a real, isolated Bitwarden account. Kept a separate job (not
   # a step in live-e2e) so it is an independent required check, decoupled from the
@@ -430,6 +432,7 @@ jobs:
       - name: Bootstrap
         run: just bootstrap
 
+      # llmlint: ignore-block[live_tier_compiles_and_requires_credential] standing, recorded decision (AGENTS.md "Stack and composition"): live-e2e-bitwarden is a required check that must finish green without the isolated account's secrets (forks, unconfigured repos); the suite still compiles and no-ops inside every `check` run.
       - name: Live e2e (Bitwarden)
         env:
           GH_SECRETS_BW_E2E_CLIENT_ID: ${{ secrets.GH_SECRETS_BW_E2E_CLIENT_ID }}
@@ -442,3 +445,4 @@ jobs:
           fi
           npm install -g @bitwarden/cli
           just test-live-bitwarden
+      # llmlint: ignore-end[live_tier_compiles_and_requires_credential]

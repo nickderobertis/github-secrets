@@ -17,7 +17,7 @@
 //      targets, so the pinned toolchain always carries what a release builds.
 //
 // Usage: bun tools/check-workflow-contract.mjs [--root <dir>]
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 export const FIXED_CONTEXTS = [
@@ -78,6 +78,19 @@ function loadWorkflows(dir, errors) {
       continue;
     }
     for (const [id, job] of Object.entries(wf.jobs)) {
+      const matrix = isObject(job) ? job.strategy?.matrix : undefined;
+      const strings = (v) => Array.isArray(v) && v.every((x) => typeof x === "string");
+      if (
+        isObject(job) &&
+        ((job.name !== undefined && typeof job.name !== "string") ||
+          (matrix !== undefined && !isObject(matrix)) ||
+          (matrix?.os !== undefined && !strings(matrix.os)) ||
+          (matrix?.include !== undefined && !(Array.isArray(matrix.include) && matrix.include.every(isObject))))
+      ) {
+        errors.push(`${f}:${id} has a name or strategy.matrix (os / include) of an unexpected shape.`);
+        wf.jobs[id] = {};
+        continue;
+      }
       if (!isObject(job) || (job.steps !== undefined && !Array.isArray(job.steps))) {
         errors.push(`${f}:${id} must be a mapping whose steps (if any) are a list.`);
         wf.jobs[id] = {};
@@ -167,7 +180,14 @@ export function checkContract(root) {
   } catch (err) {
     errors.push(`rust-toolchain.toml is not readable TOML: ${err.message}`);
   }
-  const releaseTargets = (workflows["release.yml"]?.jobs?.build?.strategy?.matrix?.include ?? []).map((i) => i?.target);
+  const releaseTargets = (workflows["release.yml"]?.jobs?.build?.strategy?.matrix?.include ?? []).map((i) => i.target);
+  if (!releaseTargets.length || !releaseTargets.every((t) => typeof t === "string")) {
+    errors.push("release.yml's build job must list a string `target` in every matrix include entry.");
+  }
+  if (!Array.isArray(toolchainTargets) || !toolchainTargets.every((t) => typeof t === "string")) {
+    errors.push("rust-toolchain.toml's [toolchain] targets must be a list of strings.");
+    toolchainTargets = [];
+  }
   const sorted = (xs) => [...xs].sort().join(", ");
   if (sorted(toolchainTargets) !== sorted(releaseTargets)) {
     errors.push(
@@ -177,10 +197,18 @@ export function checkContract(root) {
   return errors;
 }
 
+/** `[--root <existing dir>]`, nothing else; the default is the repository. */
+function parseRoot(argv, fallback) {
+  if (argv.length === 0) return fallback;
+  if (argv.length === 2 && argv[0] === "--root" && existsSync(argv[1]) && statSync(argv[1]).isDirectory()) {
+    return resolve(argv[1]);
+  }
+  console.error(`usage: bun ${process.argv[1]} [--root <existing directory>] (got: ${argv.join(" ") || "nothing"})`);
+  process.exit(2);
+}
+
 if (import.meta.main) {
-  const argv = process.argv.slice(2);
-  const i = argv.indexOf("--root");
-  const root = resolve(i >= 0 ? argv[i + 1] : join(import.meta.dir, ".."));
+  const root = parseRoot(process.argv.slice(2), resolve(join(import.meta.dir, "..")));
   const errors = checkContract(root);
   if (errors.length) {
     for (const e of errors) console.error(`workflow-contract: ${e}`);

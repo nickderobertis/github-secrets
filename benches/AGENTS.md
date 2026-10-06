@@ -38,6 +38,7 @@ release binary and are listed in this project's inputs.
   warning-clean so they cannot rot. `harness = false` keeps them out of the test
   runner and coverage.
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] moved here from the root AGENTS.md as this project's folder-scoped material, as the baseline task directs; condensing the catalogue is the separately scheduled AGENTS.md trim, not part of this move. -->
 ## The four layers
 
 It has four layers, each measuring a different thing and chosen so that the
@@ -81,3 +82,4 @@ When you add or rename a CLI verb or a hot path, extend the matching layer (a
 Criterion group / allocs row for engine code, a hyperfine + cachegrind `measure`
 row for a new offline command) so the numbers keep tracking what the binary
 runs. The bench-fixture conventions are below.
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->

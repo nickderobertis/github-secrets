@@ -67,7 +67,8 @@ main() {
   cargo fetch --locked >/dev/null 2>&1 || true
   log "ready (just $(just --version 2>/dev/null | awk '{print $2}'), $(cargo-nextest --version 2>/dev/null | head -1))"
   # The llmlint tier, from its own idempotent installer (also `just setup-llmlint`).
-  "$(dirname "$0")/setup-llmlint.sh" || log "setup-llmlint.sh reported an issue (continuing)"
+  "$(dirname "$0")/setup-llmlint.sh" \
+    || log "setup-llmlint.sh exited non-zero (its log is above); retry with 'just setup-llmlint' — continuing, the deterministic gate does not need it"
 }
 
 main "$@"

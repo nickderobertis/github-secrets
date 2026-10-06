@@ -14,16 +14,24 @@
 // Exits 0 quietly when every edge is allowed; prints each violation and exits 1
 // otherwise.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 
 // Project dirs relative to the root, always with `/` (git ls-files spells them
 // that way on every platform; path.relative uses `\\` on Windows).
 const rel = (from, to) => relative(from, to).split("\\").join("/") || ".";
 
-const argv = process.argv.slice(2);
-const rootFlag = argv.indexOf("--root");
-const root = resolve(rootFlag >= 0 ? argv[rootFlag + 1] : join(import.meta.dir, ".."));
+/** `[--root <existing dir>]`, nothing else; the default is the repository. */
+function parseRoot(argv, fallback) {
+  if (argv.length === 0) return fallback;
+  if (argv.length === 2 && argv[0] === "--root" && existsSync(argv[1]) && statSync(argv[1]).isDirectory()) {
+    return resolve(argv[1]);
+  }
+  console.error(`usage: bun ${process.argv[1]} [--root <existing directory>] (got: ${argv.join(" ") || "nothing"})`);
+  process.exit(2);
+}
+
+const root = parseRoot(process.argv.slice(2), resolve(join(import.meta.dir, "..")));
 
 function fail(lines) {
   for (const line of lines) console.error(`project-boundaries: ${line}`);
@@ -42,7 +50,7 @@ const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === "st
 
 // The policy: a non-empty list of { sourceTag, onlyDependOnTags: [tag | "*"] }, one per tag.
 const rules = readJson("tools/project-boundaries.json");
-if (!Array.isArray(rules?.depConstraints) || rules.depConstraints.length === 0) {
+if (rules === null || typeof rules !== "object" || !Array.isArray(rules.depConstraints) || rules.depConstraints.length === 0) {
   fail(["tools/project-boundaries.json must hold a non-empty depConstraints array."]);
 }
 const constraints = new Map();
@@ -82,6 +90,7 @@ const projects = new Map(); // name -> { dir, tags, implicit }
 const byDir = new Map(); // dir -> name
 for (const file of projectFiles) {
   const json = readJson(file);
+  if (json === null || typeof json !== "object" || Array.isArray(json)) fail([`${file} must hold a JSON object.`]);
   const tags = json.tags ?? [];
   const implicit = json.implicitDependencies ?? [];
   if (typeof json.name !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(json.name)) {

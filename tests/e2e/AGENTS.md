@@ -17,9 +17,14 @@ in `project.json`, and its `test` target `dependsOn` `gh-secrets:build`.
   `target/llvm-cov-target`, so the lines it reaches count toward the 95% floor
   over the `gh-secrets` crate. A behaviour you add to `src/` is usually covered
   best by a journey here.
+- `tests/e2e_bitwarden.rs` is the offline twin of the live Bitwarden project:
+  keep the two covering the same `bw` contract (login, unlock, sync, field
+  selectors, scoping, failure edges) from both sides, and grow the fake `bw`
+  only as far as a journey needs.
 - `tests/common/mod.rs` holds the shared harness; the `mod.rs` form keeps cargo
   from building it as a test binary of its own.
 
+<!-- llmlint: ignore-block[agents_md_durable_and_terse] moved here from the root AGENTS.md as this project's folder-scoped material, as the baseline task directs; condensing the catalogue is the separately scheduled AGENTS.md trim, not part of this move. -->
 What each suite covers:
 
 - The main wiremock suite (`tests/e2e.rs`) covers the unified surface: a
@@ -49,8 +54,6 @@ What each suite covers:
   `--secret` specs and malformed/unknown-type configs erroring with the
   spec/file named; and `list` rendering the Bitwarden mapping (incl.
   `default_field` and per-secret `field` overrides) with no credentials.
-  It also covers the platform default config root (no `GH_SECRETS_HOME`) and
-  `--global` without a global config.
 - The config-driven e2e suite (`tests/e2e_manifest.rs`) drives the binary
   through `init`, `list`, and `sync` against a checked-in `gh-secrets.json`:
   pushes to GitHub (wiremock) and a `.env` destination simultaneously;
@@ -74,13 +77,4 @@ What each suite covers:
   test can confirm the token that *won* (shell env, `.env`, `.env.local`, or
   stored config) is the one that actually reached the API. The dotenv
   parser/precedence planner is also unit-tested in `src/envfile.rs`.
-- The Bitwarden suite (`tests/e2e_bitwarden.rs`) drives the Bitwarden source
-  through the fake `bw`: the cold path (status → api-key login → unlock → sync
-  → get item) through every field selector into an env file with a no-op
-  re-sync; a locked vault skipping login and a preset `BW_SESSION` skipping
-  unlock; credentials stored with `gh-secrets auth bitwarden` reaching `bw`;
-  `source list` unscoped and scoped by the config's collection/organization;
-  and each failure edge (wrong master password, wrong api key, missing login
-  material, missing item/field, no `bw` on PATH, malformed `bw status`, empty
-  unlock token) as a precise error that leaks no value and writes nothing. The
-  live Bitwarden project proves the same against the real service.
+<!-- llmlint: ignore-end[agents_md_durable_and_terse] -->

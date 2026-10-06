@@ -125,15 +125,10 @@ recorded so the next maintainer can see why the tooling is what it is.
     CI job (`just supply-chain`), per `languages/rust.md`.
   - *The performance suite* is informational and outside the gate
     (`benches/AGENTS.md`).
-  - *Tier thresholds are the starting defaults, not yet re-derived.* `ci.md`
-    asks for per-target p50/p95 from CI history before promoting anything out
-    of the affected tier; there is no history under the graph yet. Local
-    measurement on the finished tree (warm build cache, aarch64 Linux):
-    `just check` for a `src/` change (all six projects) took 30 s and for a
-    change confined to the offline e2e suite (`gh-secrets-e2e` + `workspace`,
-    plus the crate tests the coverage aggregate depends on) 10 s, with the
-    host's shared sccache warm; a cold build adds the compile (minutes). Both are well inside the 10-minute affected-tier
-    budget, so nothing is promoted; re-measure from CI once runs accumulate.
+  - *Tier thresholds are `ci.md`'s starting defaults* (10 min p95 for the
+    affected tier, 5 min for lint/unit) until CI history under the graph gives
+    per-target p50/p95. A full affected run measured well under a minute on a
+    warm build cache, so nothing is promoted out of the affected tier.
 
 ## Command surface
 

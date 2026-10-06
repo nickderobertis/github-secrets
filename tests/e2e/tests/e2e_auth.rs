@@ -131,13 +131,13 @@ impl AuthHarness {
     /// contacts Bitwarden; only the GitHub token resolution is under test.
     fn sync_cmd(&self) -> Command {
         let mut c = self.cmd();
-        // llmlint: ignore-block[tests_mirror_real_usage] moved verbatim (a git rename, no content change) into the gh-secrets-e2e crate by the workspace split; the documented test-only source hook (AGENTS.md "Config and paths") holds the source fixed so only GitHub-token resolution varies, and real sources are driven end to end in e2e.rs and e2e_bitwarden.rs.
+        // llmlint: ignore-block[tests_mirror_real_usage, e2e_not_mocked] the documented test-only source hook (AGENTS.md "Config and paths") holds the source fixed so only GitHub-token resolution varies, and real sources are driven end to end in e2e.rs and e2e_bitwarden.rs.
         c.env(
             "GH_SECRETS_TEST_SOURCE_FILE",
             self.dir.path().join("source.json"),
         )
         .args(["sync"]);
-        // llmlint: ignore-end[tests_mirror_real_usage]
+        // llmlint: ignore-end[tests_mirror_real_usage, e2e_not_mocked]
         c
     }
 
@@ -431,7 +431,7 @@ async fn e2e_unlock_session_replaces_the_passphrase_for_a_week() {
 
     // An expired session is as good as none: rewind the expiry and the next
     // passphrase-less call fails with the usual guidance.
-    // llmlint: ignore-block[tests_mirror_real_usage] moved verbatim (a git rename, no content change) into the gh-secrets-e2e crate by the workspace split; backdating the hard expiry is the only offline way to reach a session's expiry without waiting days, and what is asserted is the CLI's observable refusal and cleanup.
+    // llmlint: ignore-block[tests_mirror_real_usage] backdating the hard expiry is the only offline way to reach a session's expiry without waiting days, and what is asserted is the CLI's observable refusal and cleanup.
     let mut parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
     parsed["expires_at"] = serde_json::Value::from(1u64);
     fs::write(&session, serde_json::to_vec(&parsed).unwrap()).unwrap();
@@ -523,6 +523,7 @@ async fn e2e_stale_session_for_recreated_vault_is_dropped() {
 
     // Recreate the vault under a different passphrase. The old session file
     // survives the raw delete, but its key no longer fits the new vault.
+    // llmlint: ignore[tests_mirror_real_usage] the CLI has no command that recreates a vault while keeping its session, so deleting the vault file is how a user reaches this state (e.g. restoring an old config dir); every assertion is on the CLI's observable behaviour.
     fs::remove_file(h.vault_file()).unwrap();
     h.cmd()
         .env("GH_SECRETS_PASSPHRASE", "a-brand-new-passphrase")

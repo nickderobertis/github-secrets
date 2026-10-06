@@ -21,30 +21,21 @@
 #   2. In a Claude Code session, persists PATH (so the freshly installed binary
 #      resolves) into CLAUDE_ENV_FILE so later Bash calls inherit it.
 #
-# Harness selection: the committed `oneharness.toml` is in fallback mode (codex +
-# gpt-5.5 primary, claude-code + opus-4.8 secondary), so llmlint runs the primary
-# for a contributor with Codex authenticated and falls through to claude-code in a
-# Claude Code session where codex is absent — no `ONEHARNESS_*` override needed
-# (one would only clobber the fallback list). If your fallback order can't select
-# the right harness for some environment, set ONEHARNESS_HARNESSES there.
+# It sets no ONEHARNESS_* override: oneharness.toml's fallback list picks the
+# harness, and an override would clobber that list.
 # llmlint: ignore-file[tool_output_is_signal, boundary_inputs_validated] deliberate for a session-startup installer (see header): it always exits 0 so a flaky install can never abort the hook; success stays quiet while failures log-and-continue rather than block startup; and the toolchain is installed from PyPI (`uv tool install llmlint-cli`) whose wheels ship with Trusted Publishing + PEP 740 attestations, so no unvalidated external input is executed.
 set -uo pipefail
 
-# Version floor, as a PyPI constraint (the `llmlint-cli` package version tracks the
-# wrapped binary version). `uv tool install --upgrade` installs the newest release
-# satisfying it; oneharness comes along transitively at a compatible version.
-# llmlint >= 0.3.23 finds `oneharness` beside its own executable (so a lone
-# `uv tool install llmlint-cli` works), gives the whole-tree default the composed
-# llmlint.yml relies on (it omits `files.include`), restricts `--diff` to the
-# changed files (skipping empty diffs) so `just lint-llm-diff` judges only the
-# branch's changes, treats a plain `--diff-base <ref>` as three-dot/merge-base
-# (0.3.15), and ships the deterministic `validate` gate — config structure +
-# `llmlint: ignore` directives + fragment version bumps — that `just
-# lint-llm-validate` runs with no model call (0.3.17), and bundles config_lint v1.2
-# so `line_localizable_rules_require_attribution` is enforced (0.3.23).
+# Version floor, as a PyPI constraint (`llmlint-cli` tracks the binary's version;
+# oneharness comes along transitively). 0.3.23 is the first release with every
+# behaviour the recipes rely on: oneharness found beside llmlint, the
+# changed-files `--diff` with merge-base `--diff-base`, and the `validate` gate.
 # llmlint: ignore[changed_behavior_has_e2e] this dependency floor selects the validator release used by the existing real `just lint-llm-validate` gate; installer control flow and its user-visible contract are unchanged.
 readonly LLMLINT_MIN="0.3.23"
 readonly BIN_DIR="$HOME/.local/bin"
+# The inherited PATH, captured before BIN_DIR is prepended below, so
+# persist_session_env can tell whether the session already resolves it.
+readonly ORIG_PATH="${PATH}"
 
 log() { printf 'setup-llmlint: %s\n' "$*" >&2; }
 
@@ -69,11 +60,7 @@ ensure_toolchain() {
 persist_session_env() {
   [ -n "${CLAUDE_ENV_FILE:-}" ] || { log "no CLAUDE_ENV_FILE (not a session); skipping env"; return 0; }
   {
-    case ":${PATH}:" in *":${BIN_DIR}:"*) ;; *) printf 'export PATH=%q\n' "${BIN_DIR}:${PATH}";; esac
-    # No ONEHARNESS_* override: oneharness.toml's fallback mode selects the harness
-    # (codex primary, claude-code secondary), so a Claude Code session — where codex
-    # is absent — falls through to claude-code on its own. Set ONEHARNESS_HARNESSES
-    # here only if a specific environment's fallback order can't pick correctly.
+    case ":${ORIG_PATH}:" in *":${BIN_DIR}:"*) ;; *) printf 'export PATH=%q\n' "${BIN_DIR}:${ORIG_PATH}";; esac
   } >> "$CLAUDE_ENV_FILE"
   log "exported PATH"
 }

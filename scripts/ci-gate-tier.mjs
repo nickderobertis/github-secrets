@@ -84,7 +84,7 @@ function readPayload(path) {
   if (!path) return {};
   try {
     const payload = JSON.parse(readFileSync(path, "utf8"));
-    if (payload === null || typeof payload !== "object") throw new Error("not a JSON object");
+    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) throw new Error("not a JSON object");
     return payload;
   } catch (err) {
     throw new RoutingError(

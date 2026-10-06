@@ -22,7 +22,7 @@ packages = json.load(sys.stdin)["packages"]
 print(next((p.get("rust_version") or "") for p in packages if p["name"] == "gh-secrets"))
 ' || true)"
 printf '%s' "$msrv" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' \
-  || fail "could not read gh-secrets' rust-version from cargo metadata (got '${msrv}')."
+  || fail "could not read gh-secrets' rust-version from cargo metadata (got '${msrv}'); run 'cargo metadata --no-deps --locked' to see why, fix the manifest, then re-run 'just msrv'."
 
 clippy_msrv="$(sed -n 's/^msrv *= *"\([^"]*\)".*/\1/p' clippy.toml)"
 [ "$clippy_msrv" = "$msrv" ] \
