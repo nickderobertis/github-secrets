@@ -6,7 +6,7 @@
 //! prints a markdown table. The counts are exact and stable for a given commit,
 //! so two runs are directly comparable — in CI or by eye — without warmups or
 //! statistics. They surface allocator pressure, which the wall-clock numbers in
-//! `benches/engine.rs` cannot attribute.
+//! `benches/benches/engine.rs` cannot attribute.
 //!
 //! `harness = false` with a plain `main` keeps libtest, Criterion, nextest, and
 //! coverage away from this target (it is measured, not gated). The `--bench`

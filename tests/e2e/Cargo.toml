@@ -1,0 +1,21 @@
+# The offline end-to-end suite: drives the compiled `gh-secrets` binary as a
+# subprocess against wiremock and tempdirs. Test-only; never published. It takes
+# no Cargo dependency on `gh-secrets` — it spawns the binary `gh-secrets:build`
+# produces (see project.json), never links the library.
+[package]
+name = "gh-secrets-e2e"
+version = "1.0.3"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dev-dependencies]
+assert_cmd.workspace = true
+base64.workspace = true
+predicates.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+wiremock.workspace = true

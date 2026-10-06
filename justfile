@@ -18,7 +18,7 @@ check: format-check lint test test-e2e
 
 # Fast unit + binary tests (the inline `#[cfg(test)]` modules).
 test:
-    cargo nextest run --lib --bins
+    cargo nextest run -p gh-secrets --lib --bins
 
 # End-to-end tests: drive the compiled binary against a mock GitHub server.
 # Also compiles+runs the live-test binaries (`e2e_live`, `e2e_live_bitwarden`);
@@ -26,13 +26,15 @@ test:
 # the default gate catches breakage in the live test code without paying for
 # network calls.
 test-e2e:
-    cargo nextest run --test e2e --test e2e_manifest --test e2e_auth --test e2e_live --test e2e_live_bitwarden
+    cargo build -p gh-secrets --locked
+    cargo nextest run -p gh-secrets-e2e -p gh-secrets-live-github -p gh-secrets-live-bitwarden
 
 # Live end-to-end tests against the real GitHub API. Requires `GH_TOKEN` with
 # `repo` scope (covers `secrets:write`); creates and reuses a private sandbox
 # repo `gh-secrets-e2e-sandbox` on the authenticated user's account.
 test-live:
-    GH_SECRETS_LIVE_TEST=1 cargo nextest run --test e2e_live --no-fail-fast
+    cargo build -p gh-secrets --locked
+    GH_SECRETS_LIVE_TEST=1 cargo nextest run -p gh-secrets-live-github --no-fail-fast
 
 # Live end-to-end tests against a real, isolated Bitwarden account. Requires the
 # isolated account's api-key credentials in the environment:
@@ -44,11 +46,12 @@ test-live:
 # test logs in to the single isolated account, so parallel processes would pile
 # up concurrent api-key logins for no real gain on a 5-test suite.
 test-live-bitwarden:
-    GH_SECRETS_LIVE_TEST=1 cargo nextest run -j1 --test e2e_live_bitwarden --no-fail-fast
+    cargo build -p gh-secrets --locked
+    GH_SECRETS_LIVE_TEST=1 cargo nextest run -j1 -p gh-secrets-live-bitwarden --no-fail-fast
 
 # Lint with clippy. Warnings are errors.
 lint:
-    cargo clippy --all-targets --all-features -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Format the codebase in place.
 format:
@@ -75,11 +78,11 @@ release:
 
 # Engine micro-benchmarks (Criterion); saves the `current` baseline for bench-compare.
 bench:
-    cargo bench --locked --bench engine -- --save-baseline current
+    cargo bench --locked --workspace --bench engine -- --save-baseline current
 
 # Save current engine benchmarks as the `base` baseline (run on the comparison point).
 bench-base:
-    cargo bench --locked --bench engine -- --save-baseline base
+    cargo bench --locked --workspace --bench engine -- --save-baseline base
 
 # Diff the latest `bench` run against `base` (run `bench-base` first; needs critcmp).
 bench-compare:
@@ -95,7 +98,7 @@ bench-cli-smoke:
 
 # Deterministic engine allocation counts (counting allocator; exact, comparable across commits).
 bench-allocs:
-    cargo bench --locked --quiet --bench engine_allocs
+    cargo bench --locked --quiet --workspace --bench engine_allocs
 
 # Deterministic end-to-end CLI instruction counts (cachegrind; Linux-only, needs valgrind).
 bench-instructions:

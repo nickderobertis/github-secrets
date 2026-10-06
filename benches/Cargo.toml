@@ -1,0 +1,24 @@
+# The informational performance suite (never a gate): Criterion engine
+# micro-benchmarks and deterministic allocation counts over the `gh-secrets`
+# library. See AGENTS.md beside this file.
+[package]
+name = "gh-secrets-bench"
+version = "1.0.3"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dev-dependencies]
+criterion.workspace = true
+gh-secrets.workspace = true
+serde_json.workspace = true
+
+[[bench]]
+name = "engine"
+harness = false
+
+[[bench]]
+name = "engine_allocs"
+harness = false

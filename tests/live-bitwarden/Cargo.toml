@@ -1,0 +1,18 @@
+# The live Bitwarden suite: drives the compiled `gh-secrets` binary against a
+# real, isolated Bitwarden account through the real `bw` CLI. Each test is a
+# runtime no-op unless GH_SECRETS_LIVE_TEST=1 and the GH_SECRETS_BW_E2E_* creds are set.
+[package]
+name = "gh-secrets-live-bitwarden"
+version = "1.0.3"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dev-dependencies]
+assert_cmd.workspace = true
+base64.workspace = true
+predicates.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

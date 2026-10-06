@@ -1,14 +1,25 @@
+# The `gh-secrets` crate, and the root of the Cargo workspace every project in
+# this repository resolves in (one Cargo.lock). The published crate stays the
+# root *package* rather than moving under a virtual manifest: release-please's
+# `rust` strategy (path "." in release-please-config.json) bumps `package.version`
+# in this file and the root Cargo.lock, and it refuses a virtual manifest
+# ("not a package manifest"). Its version therefore stays a literal here rather
+# than inheriting from [workspace.package]; release-please bumps the members'
+# literal versions in lockstep with it. See AGENTS.md "Commits, releases, and merging".
 [package]
 name = "gh-secrets"
 version = "1.0.3"
-edition = "2021"
-rust-version = "1.85"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "A CLI for managing GitHub Actions repository secrets in bulk"
-license = "MIT"
-repository = "https://github.com/nickderobertis/github-secrets"
 readme = "README.md"
 keywords = ["github", "secrets", "cli", "actions"]
 categories = ["command-line-utilities"]
+# The suites live in their own member crates (tests/*, benches/), never here.
+autotests = false
+autobenches = false
 
 [[bin]]
 name = "gh-secrets"
@@ -19,42 +30,63 @@ name = "gh_secrets"
 path = "src/lib.rs"
 
 [dependencies]
+anyhow.workspace = true
+argon2.workspace = true
+base64.workspace = true
+chacha20poly1305.workspace = true
+clap.workspace = true
+crypto_box.workspace = true
+dirs.workspace = true
+reqwest.workspace = true
+rpassword.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[workspace]
+# Explicit paths, not globs: release-please reads `<member>/Cargo.toml` verbatim
+# to bump each member's version alongside the root crate's.
+members = [
+    "tests/e2e",
+    "tests/live-github",
+    "tests/live-bitwarden",
+    "benches",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/nickderobertis/github-secrets"
+
+[workspace.dependencies]
 anyhow = "1.0"
 argon2 = "0.5"
+assert_cmd = "2.0"
 base64 = "0.22"
 chacha20poly1305 = "0.10"
 clap = { version = "4.5", features = ["derive", "env"] }
+# Engine micro-benchmarks (`benches/benches/engine.rs`). default-features off
+# keeps the plotters/gnuplot/rayon stack out of the build; `cargo_bench_support`
+# is the only feature the harness needs, and critcmp reads the JSON Criterion
+# writes regardless.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 crypto_box = { version = "0.9", features = ["seal"] }
 dirs = "5.0"
+gh-secrets = { path = "." }
+predicates = "3.1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
 rpassword = "7.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-
-[dev-dependencies]
-assert_cmd = "2.0"
-# Encodes seeded Bitwarden items for the live e2e suite (`bw create item`
-# wants a base64 of the item JSON). Already a normal dependency; listed here so
-# the integration tests can use it too.
-base64 = "0.22"
-predicates = "3.1"
 tempfile = "3.13"
-wiremock = "0.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-# Engine micro-benchmarks (`benches/engine.rs`). default-features off keeps the
-# plotters/gnuplot/rayon stack out of the build; `cargo_bench_support` is the
-# only feature the harness needs, and critcmp reads the JSON Criterion writes
-# regardless.
-criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
-
-[[bench]]
-name = "engine"
-harness = false
-
-[[bench]]
-name = "engine_allocs"
-harness = false
+wiremock = "0.6"
 
 [profile.release]
 strip = true

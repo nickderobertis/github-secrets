@@ -725,22 +725,61 @@ version = "1.0.3"
 dependencies = [
  "anyhow",
  "argon2",
- "assert_cmd",
  "base64",
  "chacha20poly1305",
  "clap",
- "criterion",
  "crypto_box",
  "dirs",
- "predicates",
  "reqwest",
  "rpassword",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "gh-secrets-bench"
+version = "1.0.3"
+dependencies = [
+ "criterion",
+ "gh-secrets",
+ "serde_json",
+]
+
+[[package]]
+name = "gh-secrets-e2e"
+version = "1.0.3"
+dependencies = [
+ "assert_cmd",
+ "base64",
+ "predicates",
+ "serde_json",
+ "tempfile",
  "tokio",
  "wiremock",
+]
+
+[[package]]
+name = "gh-secrets-live-bitwarden"
+version = "1.0.3"
+dependencies = [
+ "assert_cmd",
+ "base64",
+ "predicates",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "gh-secrets-live-github"
+version = "1.0.3"
+dependencies = [
+ "assert_cmd",
+ "predicates",
+ "reqwest",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

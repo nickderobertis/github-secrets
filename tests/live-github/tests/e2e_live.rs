@@ -196,7 +196,7 @@ fn live_install_script_downloads_and_verifies_release() {
     skip_if_no_live!();
 
     let bindir = TempDir::new().expect("tempdir for install target");
-    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/install.sh");
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/install.sh");
 
     let output = StdCommand::new("sh")
         .arg(script)

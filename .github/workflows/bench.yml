@@ -61,7 +61,7 @@ jobs:
         run: rm -rf target/criterion
 
       - name: Benchmark this revision (Criterion)
-        run: cargo bench --locked --bench engine -- --measurement-time 3 --save-baseline pr
+        run: cargo bench --locked --workspace --bench engine -- --measurement-time 3 --save-baseline pr
 
       - name: Benchmark this revision (hyperfine CLI)
         run: just bench-cli
@@ -91,7 +91,7 @@ jobs:
           # root so its own root resolution still finds this repo.
           cp scripts/bench-instructions.sh target/bench-instructions-pr.sh
           git checkout -q "$base"
-          cargo bench --locked --bench engine -- --measurement-time 3 --save-baseline base
+          cargo bench --locked --workspace --bench engine -- --measurement-time 3 --save-baseline base
           BENCH_OUT="$PWD/target/bench-base" bash target/bench-instructions-pr.sh || true
           git checkout -q -
           critcmp base pr | tee target/bench/critcmp.txt
