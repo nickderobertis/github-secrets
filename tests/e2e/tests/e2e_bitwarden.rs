@@ -130,7 +130,7 @@ impl Harness {
             .env("FAKE_BW_STATE", self.state_path())
             .env("FAKE_BW_LOG", self.log_path())
             .env("PATH", self.path_with_fake_bw());
-        for var in common::CREDENTIAL_ENVS {
+        for var in common::PROVIDER_CREDENTIAL_ENVS {
             c.env_remove(var);
         }
         c

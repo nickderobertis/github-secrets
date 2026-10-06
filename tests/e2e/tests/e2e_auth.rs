@@ -58,7 +58,7 @@ impl AuthHarness {
             .env("GH_SECRETS_PASSPHRASE", "auth-e2e-passphrase");
         // Scrub any inherited credentials so the test starts from a known
         // state regardless of the developer's shell / .env.
-        for var in common::CREDENTIAL_ENVS {
+        for var in common::PROVIDER_CREDENTIAL_ENVS {
             c.env_remove(var);
         }
         c
@@ -617,10 +617,11 @@ async fn e2e_unlock_days_flag_sets_session_length() {
         .failure();
 }
 
-/// The scrub list must cover every credential variable the binary reads, or a
-/// newly supported alias would let a developer's real login into these tests.
+/// The scrub list must cover every provider credential variable declared in
+/// src/sources.rs and src/destinations.rs, or a newly supported alias would let a
+/// developer's real login into these tests.
 #[test]
-fn scrubbed_credential_envs_cover_every_name_the_binary_reads() {
+fn scrubbed_provider_credentials_cover_the_declared_env_names() {
     let src = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/");
     let mut declared = Vec::new();
     for file in ["sources.rs", "destinations.rs"] {
@@ -630,10 +631,10 @@ fn scrubbed_credential_envs_cover_every_name_the_binary_reads() {
     assert!(declared.len() >= 11, "parsed too few names: {declared:?}");
     let missing: Vec<_> = declared
         .iter()
-        .filter(|n| !common::CREDENTIAL_ENVS.contains(&n.as_str()))
+        .filter(|n| !common::PROVIDER_CREDENTIAL_ENVS.contains(&n.as_str()))
         .collect();
     assert!(
         missing.is_empty(),
-        "add {missing:?} to tests/common CREDENTIAL_ENVS"
+        "add {missing:?} to tests/common PROVIDER_CREDENTIAL_ENVS"
     );
 }

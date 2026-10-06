@@ -85,7 +85,11 @@ export function checkVersions(root) {
   const version = manifest.package?.version;
   if (typeof version !== "string") return ["Cargo.toml's root package must declare a literal `version` (release-please bumps it)."];
   const errors = [];
-  for (const member of manifest.workspace?.members ?? []) {
+  const members = manifest.workspace?.members ?? [];
+  if (!Array.isArray(members) || !members.every((m) => typeof m === "string" && m.length > 0)) {
+    return ["Cargo.toml [workspace] members must be a list of member paths."];
+  }
+  for (const member of members) {
     let v;
     try {
       v = toml(`${member}/Cargo.toml`).package?.version;

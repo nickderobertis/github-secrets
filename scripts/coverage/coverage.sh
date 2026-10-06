@@ -60,8 +60,9 @@ require() {
 }
 
 # The crate selector must name a real workspace member: unchecked, a typo would
-# measure nothing and pass. Only plain package names are accepted; with
-# --no-deps, `cargo metadata` lists exactly the workspace members.
+# measure nothing and pass. Only plain package names are accepted, and they are
+# checked against the names of the packages `cargo metadata` lists in
+# `workspace_members` (parsed as JSON by the pinned bun scripts/nx provides).
 validate_crate() {
   local crate="$1"
   if ! printf '%s' "$crate" | grep -Eq '^[a-z0-9][a-z0-9-]*$'; then
@@ -74,8 +75,19 @@ validate_crate() {
     echo "coverage: 'cargo metadata' failed (above); fix the manifests so it resolves, then re-run." >&2
     exit 1
   fi
-  if ! printf '%s' "$metadata" | grep -q "\"name\":\"$crate\",\"version\""; then
-    echo "coverage: '$crate' is not a member of this Cargo workspace; pass one of: $(printf '%s' "$metadata" | grep -o '"name":"[^"]*","version"' | cut -d'"' -f4 | tr '\n' ' ')" >&2
+  local members
+  if ! members="$(printf '%s' "$metadata" | bun -e '
+    const m = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    if (!Array.isArray(m.workspace_members) || !Array.isArray(m.packages)) throw new Error("no workspace_members/packages arrays");
+    const ids = new Set(m.workspace_members);
+    console.log(m.packages.filter((p) => ids.has(p.id)).map((p) => p.name).join("\n"));
+  ' 2>&1)"; then
+    printf '%s\n' "$members" >&2
+    echo "coverage: could not read the workspace members from 'cargo metadata' (above); check that bun is on PATH ('just bootstrap')." >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$members" | grep -qxF -- "$crate"; then
+    echo "coverage: '$crate' is not a member of this Cargo workspace; pass one of: $(printf '%s\n' "$members" | tr '\n' ' ')" >&2
     exit 2
   fi
 }

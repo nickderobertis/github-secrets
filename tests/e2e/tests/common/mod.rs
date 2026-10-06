@@ -35,11 +35,12 @@ impl E2eHarness {
     }
 }
 
-/// Every credential variable gh-secrets reads (src/sources.rs `BW_*_ENVS`,
-/// src/destinations.rs `GITHUB_TOKEN_ENVS`). Scrubbed from every spawned command
-/// so a developer's real login can never leak into, or be used by, a test;
-/// `e2e_auth.rs` checks this list against those sources.
-pub const CREDENTIAL_ENVS: &[&str] = &[
+/// The provider credentials gh-secrets reads from the environment — GitHub
+/// (src/destinations.rs `GITHUB_TOKEN_ENVS`) and Bitwarden (src/sources.rs
+/// `BW_*_ENVS`). Scrubbed from every spawned command so a developer's real login
+/// can never leak into, or be used by, a test; `e2e_auth.rs` checks this list
+/// against those declarations. (The vault passphrase is set per harness.)
+pub const PROVIDER_CREDENTIAL_ENVS: &[&str] = &[
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "BW_CLIENTID",

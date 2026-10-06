@@ -6,7 +6,7 @@
 // fails the floor.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -110,9 +110,11 @@ test.skipIf(process.platform === "win32")("on Windows a crate's tests run uninst
     const calls = join(w.dir, "calls");
     writeFileSync(
       join(bin, "cargo"),
-      `#!/bin/sh\necho "$*" >> "${calls}"\ncase "$1" in\n  metadata) echo '{"packages":[{"name":"gh-secrets","version":"0.1.0"}]}' ;;\n  nextest) [ \"$2\" = \"--version\" ] && exit 0; exit 7 ;;\n  *) exit 0 ;;\nesac\n`,
+      `#!/bin/sh\necho "$*" >> "${calls}"\ncase "$1" in\n  metadata) echo '{"workspace_members":["id-1"],"packages":[{"id":"id-1","name":"gh-secrets","version":"0.1.0"}]}' ;;\n  nextest) [ \"$2\" = \"--version\" ] && exit 0; exit 7 ;;\n  *) exit 0 ;;\nesac\n`,
     );
     ok("chmod", ["+x", join(bin, "cargo")]);
+    // The driver parses cargo metadata with the bun running this test.
+    symlinkSync(process.execPath, join(bin, "bun"));
     mkdirSync(join(w.dir, "scripts/coverage"), { recursive: true });
     copyFileSync(join(REPO, "scripts/coverage/coverage.sh"), join(w.dir, "scripts/coverage/coverage.sh"));
     const env = { ...process.env, OS: "Windows_NT", PATH: [bin, "/usr/bin", "/bin"].join(":") };

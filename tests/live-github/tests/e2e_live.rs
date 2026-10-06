@@ -11,7 +11,8 @@
 //! GitHub token resolving from `GH_TOKEN` exactly as documented.
 //!
 //! Run with: `just test-live` (or directly:
-//! `GH_SECRETS_LIVE_TEST=1 GH_TOKEN=... cargo test --test e2e_live`).
+//! `GH_SECRETS_LIVE_TEST=1 GH_TOKEN=... cargo nextest run -p gh-secrets-live-github`
+//! after `cargo build -p gh-secrets`).
 
 mod live_common;
 
