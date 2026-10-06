@@ -69,7 +69,9 @@ install_pinned() {
   command -v curl >/dev/null 2>&1 || fail "curl is required to install bun $VERSION."
   command -v unzip >/dev/null 2>&1 || fail "unzip is required to install bun $VERSION."
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+  # Expanded now: the EXIT trap fires after this function's locals are gone.
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" EXIT
   base="https://github.com/oven-sh/bun/releases/download/bun-v$VERSION"
   echo "bun.sh: installing bun $VERSION into $CACHE_DIR" >&2
   curl -fsSL --retry 3 -o "$tmp/$asset.zip" "$base/$asset.zip" \
