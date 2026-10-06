@@ -39,11 +39,25 @@ confidence-threshold = 0.9
 ignore = true
 
 [bans]
-# Two versions of one crate is common in a real graph (windows-sys); warn so it
-# stays visible without blocking. Wildcard version requirements are refused.
-multiple-versions = "warn"
+# A second version of a crate fails the check unless it is listed in `skip` with
+# the reason it cannot be unified yet. Wildcard version requirements are refused.
+multiple-versions = "deny"
 wildcards = "deny"
 allow-wildcard-paths = true
+# The windows-sys family: dirs-sys 0.4, rpassword/rtoolbox, tokio/socket2 and
+# rustix each pin a different windows-sys minor, and only a coordinated upstream
+# bump unifies them. Windows-only bindings with no runtime cost elsewhere.
+skip = [
+    { crate = "windows-sys", reason = "pinned at different minors by dirs-sys, rpassword, tokio/socket2 and rustix" },
+    { crate = "windows-targets", reason = "follows windows-sys" },
+    { crate = "windows_aarch64_gnullvm", reason = "follows windows-targets" },
+    { crate = "windows_aarch64_msvc", reason = "follows windows-targets" },
+    { crate = "windows_i686_gnu", reason = "follows windows-targets" },
+    { crate = "windows_i686_msvc", reason = "follows windows-targets" },
+    { crate = "windows_x86_64_gnu", reason = "follows windows-targets" },
+    { crate = "windows_x86_64_gnullvm", reason = "follows windows-targets" },
+    { crate = "windows_x86_64_msvc", reason = "follows windows-targets" },
+]
 
 [sources]
 # Only crates.io; no git dependencies or alternate registries.
