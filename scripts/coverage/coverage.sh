@@ -78,7 +78,9 @@ validate_crate() {
   local members
   if ! members="$(printf '%s' "$metadata" | bun -e '
     const m = JSON.parse(require("fs").readFileSync(0, "utf8"));
-    if (!Array.isArray(m.workspace_members) || !Array.isArray(m.packages)) throw new Error("no workspace_members/packages arrays");
+    const str = (v) => typeof v === "string" && v.length > 0;
+    if (!Array.isArray(m.workspace_members) || !m.workspace_members.every(str)) throw new Error("workspace_members is not a list of ids");
+    if (!Array.isArray(m.packages) || !m.packages.every((p) => p && str(p.id) && str(p.name))) throw new Error("packages are not {id, name} objects");
     const ids = new Set(m.workspace_members);
     console.log(m.packages.filter((p) => ids.has(p.id)).map((p) => p.name).join("\n"));
   ' 2>&1)"; then

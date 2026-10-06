@@ -89,3 +89,8 @@ test("the llmlint job installing a harness other than oneharness.toml's primary 
   const errors = mutated("ci.yml", "npm install -g @openai/codex", "npm install -g @anthropic-ai/claude-code");
   expect(errors.join("\n")).toContain("ci.yml:llmlint must install oneharness.toml's primary harness (codex: npm install -g @openai/codex)");
 });
+
+test("an include list where only some entries name an os is reported", () => {
+  const errors = mutated("ci.yml", "          - os: macos-latest\n            target: aarch64-apple-darwin", "          - target: aarch64-apple-darwin");
+  expect(errors.join("\n")).toContain("ci.yml:install has a name, needs, strategy or strategy.matrix (os / include) of an unexpected shape");
+});

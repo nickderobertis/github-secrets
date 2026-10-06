@@ -50,7 +50,8 @@ const PIN_STEP = "just@${{ steps.pins.outputs.just }}";
 /** The contexts a job reports: `name` or job id, expanded over an `os` matrix. */
 function contextsOf(id, job) {
   const base = job.name ?? id;
-  const oses = job.strategy?.matrix?.os ?? job.strategy?.matrix?.include?.map((i) => i.os);
+  const include = job.strategy?.matrix?.include;
+  const oses = job.strategy?.matrix?.os ?? (include?.some((i) => i.os !== undefined) ? include.map((i) => i.os) : undefined);
   if (!oses) return [base];
   if (job.name) return oses.map((os) => base.replace("${{ matrix.os }}", os));
   return oses.map((os) => `${id} (${os})`);
@@ -98,6 +99,7 @@ function loadWorkflows(dir, errors) {
           (matrix?.os !== undefined && !strings(matrix.os)) ||
           (matrix?.include !== undefined &&
             !(Array.isArray(matrix.include) && matrix.include.every((i) => isObject(i) && (i.os === undefined || typeof i.os === "string")))) ||
+          (matrix?.os === undefined && Array.isArray(matrix?.include) && matrix.include.some((i) => typeof i.os !== "string") && matrix.include.some((i) => typeof i.os === "string")) ||
           (job.needs !== undefined && typeof job.needs !== "string" && !strings(job.needs)))
       ) {
         errors.push(`${f}:${id} has a name, needs, strategy or strategy.matrix (os / include) of an unexpected shape.`);
