@@ -1,11 +1,7 @@
-# The `gh-secrets` crate, and the root of the Cargo workspace every project in
-# this repository resolves in (one Cargo.lock). The published crate stays the
-# root *package* rather than moving under a virtual manifest: release-please's
-# `rust` strategy (path "." in release-please-config.json) bumps `package.version`
-# in this file and the root Cargo.lock, and it refuses a virtual manifest
-# ("not a package manifest"). Its version therefore stays a literal here rather
-# than inheriting from [workspace.package]; release-please bumps the members'
-# literal versions in lockstep with it. See AGENTS.md "Commits, releases, and merging".
+# The `gh-secrets` crate, and the root of the Cargo workspace (one Cargo.lock).
+# It stays the root package with a literal `version` because release-please's
+# `rust` strategy needs exactly that (AGENTS.md "Stack and composition"); the
+# members' versions follow it in lockstep (tools/check-restated-facts.mjs).
 [package]
 name = "gh-secrets"
 version = "1.0.3"

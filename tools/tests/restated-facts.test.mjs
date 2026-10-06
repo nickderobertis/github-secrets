@@ -2,7 +2,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkCoverageFloor, checkMsrv } from "../check-restated-facts.mjs";
+import { checkCoverageFloor, checkMsrv, checkVersions } from "../check-restated-facts.mjs";
 import { REPO, gitRepo, scratch } from "../../scripts/tests/helpers.mjs";
 
 let cleanups = [];
@@ -53,4 +53,23 @@ test("the committed MSRV restatements agree with Cargo.toml", () => {
 test("a clippy msrv or doc that drifts from rust-version is caught", () => {
   expect(checkMsrv(msrvRepo({ clippy: "1.85" }))).toEqual(['clippy.toml msrv "1.85" differs from Cargo.toml rust-version "1.86"; make them equal.']);
   expect(checkMsrv(msrvRepo({ agents: "the MSRV is 1.80 here\n" }))).toEqual(["AGENTS.md:1 states MSRV 1.80; Cargo.toml declares 1.86."]);
+});
+
+function versionsRepo({ root = "1.2.3", member = "1.2.3", released = "1.2.3" } = {}) {
+  const s = scratch();
+  cleanups.push(s.cleanup);
+  writeFileSync(join(s.dir, "Cargo.toml"), `[package]\nname = "app"\nversion = "${root}"\n\n[workspace]\nmembers = ["e2e"]\n`);
+  mkdirSync(join(s.dir, "e2e"));
+  writeFileSync(join(s.dir, "e2e/Cargo.toml"), `[package]\nname = "app-e2e"\nversion = "${member}"\n`);
+  writeFileSync(join(s.dir, ".release-please-manifest.json"), JSON.stringify({ ".": released }));
+  return s.dir;
+}
+
+test("member versions and the release manifest follow the root package", () => {
+  expect(checkVersions(REPO)).toEqual([]);
+  expect(checkVersions(versionsRepo())).toEqual([]);
+  expect(checkVersions(versionsRepo({ member: "1.2.2" }))).toEqual([
+    'e2e/Cargo.toml version "1.2.2" differs from the root package\'s "1.2.3"; release-please keeps them in lockstep.',
+  ]);
+  expect(checkVersions(versionsRepo({ released: "1.2.4" }))[0]).toContain('.release-please-manifest.json records "1.2.4"');
 });

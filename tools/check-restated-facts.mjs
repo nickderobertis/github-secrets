@@ -7,7 +7,10 @@
 //     files;
 //   * the MSRV — source: `rust-version` in Cargo.toml's [workspace.package];
 //     restated as clippy.toml's `msrv` (so clippy flags too-new APIs at the same
-//     floor) and as "MSRV is X.Y" in the AGENTS.md files.
+//     floor) and as "MSRV is X.Y" in the AGENTS.md files;
+//   * the release version — source: the root package's `version`, which
+//     release-please bumps; restated by every workspace member's `version` and
+//     by .release-please-manifest.json.
 //
 // Usage: bun tools/check-restated-facts.mjs [--root <dir>]
 // Exit status: 0 (quiet) when every restatement agrees; 1 with each drift
@@ -71,6 +74,36 @@ export function checkMsrv(root) {
   return errors;
 }
 
+export function checkVersions(root) {
+  const toml = (file) => Bun.TOML.parse(readFileSync(join(root, file), "utf8"));
+  let manifest;
+  try {
+    manifest = toml("Cargo.toml");
+  } catch (err) {
+    return [`Cargo.toml is not readable TOML: ${err.message}`];
+  }
+  const version = manifest.package?.version;
+  if (typeof version !== "string") return ["Cargo.toml's root package must declare a literal `version` (release-please bumps it)."];
+  const errors = [];
+  for (const member of manifest.workspace?.members ?? []) {
+    let v;
+    try {
+      v = toml(`${member}/Cargo.toml`).package?.version;
+    } catch (err) {
+      errors.push(`${member}/Cargo.toml is not readable TOML: ${err.message}`);
+      continue;
+    }
+    if (v !== version) errors.push(`${member}/Cargo.toml version ${JSON.stringify(v)} differs from the root package's "${version}"; release-please keeps them in lockstep.`);
+  }
+  try {
+    const released = JSON.parse(readFileSync(join(root, ".release-please-manifest.json"), "utf8"))["."];
+    if (released !== version) errors.push(`.release-please-manifest.json records ${JSON.stringify(released)} but Cargo.toml says "${version}"; never hand-bump either.`);
+  } catch (err) {
+    errors.push(`.release-please-manifest.json is not readable JSON: ${err.message}`);
+  }
+  return errors;
+}
+
 if (import.meta.main) {
   const argv = process.argv.slice(2);
   let root = resolve(join(import.meta.dir, ".."));
@@ -81,7 +114,7 @@ if (import.meta.main) {
     }
     root = resolve(argv[1]);
   }
-  const errors = [...checkCoverageFloor(root), ...checkMsrv(root)];
+  const errors = [...checkCoverageFloor(root), ...checkMsrv(root), ...checkVersions(root)];
   if (errors.length) {
     for (const e of errors) console.error(`restated-facts: ${e}`);
     process.exit(1);

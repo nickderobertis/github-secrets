@@ -102,7 +102,8 @@ recorded so the next maintainer can see why the tooling is what it is.
     `Cargo.toml` and the root `Cargo.lock`, and refuses a virtual manifest; so
     `gh-secrets` stays the root package that also declares `[workspace]`, its
     `version` stays a literal (not `[workspace.package]`), and release-please
-    bumps the members' literal versions in lockstep with it.
+    bumps the members' literal versions in lockstep with it (`workspace:lint`
+    fails if they, or `.release-please-manifest.json`, drift from it).
   - *The e2e crate takes no Cargo dependency on `gh-secrets`.* The suites only
     spawn the binary, never link the library, so the graph edge is Nx's
     implicit dependency plus `test` `dependsOn gh-secrets:build`.
