@@ -59,7 +59,10 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.85"
+# The MSRV `just msrv` holds the crate to (clippy.toml's `msrv` must match). 1.86
+# is the floor the locked dependency graph needs (icu_* 2.2 via idna <- url <-
+# reqwest), so a lower value would be a promise `cargo build --locked` cannot keep.
+rust-version = "1.86"
 license = "MIT"
 repository = "https://github.com/nickderobertis/github-secrets"
 
