@@ -15,8 +15,8 @@ always see a complete set of profiles.
   constraint; when you rename a CI job or add a condition to one that reports a
   fixed context, this check is what will tell you.
 - `test` runs `bun test tools/tests`: real subprocess tests of the repo's own
-  tooling — the boundary checker on a scratch Cargo workspace, the gate's tier
-  selection (`scripts/nx-tier.sh`), CI's tier routing
+  tooling — the boundary checker on a scratch Cargo workspace, the gate recipes'
+  tier and base selection (the real `justfile` + `scripts/nx-base.sh`), CI's tier routing
   (`scripts/ci-gate-tier.mjs`) fed synthetic event payloads, the pre-push hook
   through real `git push`es, `scripts/install.sh --from-dir`, and the workflow
   contract against mutated copies. The bash-script tests skip on Windows.
@@ -27,5 +27,5 @@ always see a complete set of profiles.
   AGENTS.md; never exclude product code to meet it.
 - `supply-chain` (`just supply-chain`) runs cargo-deny against `deny.toml` and
   cargo-machete; Linux-only, in its own CI job, not part of `check`.
-- Everything here runs on the bun pinned in `.tool-versions` (scripts/nx.sh
+- Everything here runs on the bun pinned in `.tool-versions` (scripts/nx
   puts it first on PATH) and uses Node/bun built-ins only — no npm dependencies.

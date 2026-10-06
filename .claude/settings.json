@@ -51,7 +51,7 @@
       "Bash(cargo check:*)",
       "Bash(rustup component add:*)",
       "Bash(uv run:*)",
-      "Bash(bash scripts/nx.sh:*)",
+      "Bash(bash scripts/nx:*)",
       "Bash(bun test:*)",
       "Bash(actionlint:*)",
       "Bash(git status)",

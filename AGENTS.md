@@ -138,7 +138,7 @@ recorded so the next maintainer can see why the tooling is what it is.
 ## Command surface
 
 Use the `just` recipes; do not hand-roll equivalent commands. The gate recipes
-delegate to Nx through `scripts/nx-tier.sh` → `scripts/nx.sh`, and take a tier:
+delegate to Nx (`scripts/nx` runs it on the pinned toolchain) and take a tier:
 `affected` (default) or `all` (one full `run-many` sweep).
 
 - `just bootstrap` — the pinned Rust toolchain (`rust-toolchain.toml`:
