@@ -127,7 +127,8 @@ fetch_asset() {
     if [ -n "$archive_dir" ]; then
         [ -f "${archive_dir}/${_name}" ] \
             || err "${_name} not found in ${archive_dir}; package it with release.yml's naming (see the install job in .github/workflows/ci.yml) or pass the --version it was packaged as"
-        cp "${archive_dir}/${_name}" "$_out"
+        cp "${archive_dir}/${_name}" "$_out" \
+            || err "could not copy ${archive_dir}/${_name}; check that it is readable and the temp dir has space"
     else
         download "${base_url}/${_name}" "$_out" \
             || err "download failed: ${base_url}/${_name}; check that ${version} is published at https://github.com/$REPO/releases (or install with 'cargo install $BIN --locked')"
@@ -194,7 +195,7 @@ main() {
 
     if [ -n "$archive_dir" ]; then
         [ -n "$version" ] || err "--from-dir needs --version (there is no release to resolve 'latest' from)"
-        [ -d "$archive_dir" ] || err "--from-dir: no such directory: $archive_dir"
+        [ -d "$archive_dir" ] || err "--from-dir: no such directory: $archive_dir (pass the directory holding the packaged archive and its .sha256)"
     elif have curl; then
         DL="curl"
     elif have wget; then

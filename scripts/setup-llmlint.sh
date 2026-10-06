@@ -23,7 +23,7 @@
 #
 # It sets no ONEHARNESS_* override: oneharness.toml's fallback list picks the
 # harness, and an override would clobber that list.
-# llmlint: ignore-file[tool_output_is_signal, boundary_inputs_validated] deliberate for a session-startup installer (see header): it always exits 0 so a flaky install can never abort the hook; success stays quiet while failures log-and-continue rather than block startup; and the toolchain is installed from PyPI (`uv tool install llmlint-cli`) whose wheels ship with Trusted Publishing + PEP 740 attestations, so no unvalidated external input is executed.
+# llmlint: ignore-file[tool_output_is_signal, boundary_inputs_validated, cli_output_contract] deliberate for a session-startup installer (see header): it always exits 0 so a flaky install can never abort the hook (CI's llmlint job checks `llmlint --version` right after, so a failed install still fails there); success stays quiet while failures log-and-continue rather than block startup; and the toolchain is installed from PyPI (`uv tool install llmlint-cli`) whose wheels ship with Trusted Publishing + PEP 740 attestations, so no unvalidated external input is executed.
 set -uo pipefail
 
 # Version floor, as a PyPI constraint (`llmlint-cli` tracks the binary's version;
@@ -47,8 +47,6 @@ ensure_toolchain() {
     log "uv not found; cannot install llmlint (install uv: https://docs.astral.sh/uv/)"
     return 0
   fi
-  # llmlint-cli pulls oneharness-cli as a dependency into the same tool venv, where
-  # llmlint discovers the `oneharness` binary beside its own — no separate install.
   log "installing llmlint-cli >= $LLMLINT_MIN via uv tool"
   uv tool install --upgrade "llmlint-cli>=$LLMLINT_MIN" >&2 \
     || log "llmlint-cli install failed (continuing)"

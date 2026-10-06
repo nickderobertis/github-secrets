@@ -318,6 +318,7 @@ async fn e2e_store_round_trips_encrypted_and_feeds_sync() {
     assert_sealed_box("FOO", &bodies[0].1, &["foo-store-value"]);
     drop(bodies);
 
+    // llmlint: ignore[comments_earn_their_place] a phase header in a long multi-phase journey: it marks where removal starts and states the property the next assertions hold.
     // Remove; a removed name is gone and removing it again errors.
     h.cmd().args(["store", "remove", "BAR"]).assert().success();
     h.cmd()

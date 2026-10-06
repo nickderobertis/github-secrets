@@ -276,6 +276,7 @@ async fn e2e_manifest_sync_pushes_to_github_and_env_file() {
     }
     drop(bodies);
 
+    // llmlint: ignore-block[comments_earn_their_place] phase headers in a long multi-destination journey, marking where the checks of each destination begin.
     // Env file: managed keys present + pre-existing line preserved.
     let content = fs::read_to_string(h.env_file()).unwrap();
     assert!(content.contains("PRE_EXISTING=keepme"));
@@ -287,6 +288,7 @@ async fn e2e_manifest_sync_pushes_to_github_and_env_file() {
     let foo_dests = &state["secrets"]["FOO"]["destinations"];
     assert!(foo_dests[format!("github:{repo}")].is_string());
     assert!(foo_dests["env_file:.env"].is_string());
+    // llmlint: ignore-end[comments_earn_their_place]
 }
 
 /// One source value can be written under several destination names — and a

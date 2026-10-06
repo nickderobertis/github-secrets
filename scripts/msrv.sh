@@ -34,5 +34,4 @@ if ! rustup run "$msrv" rustc --version >/dev/null 2>&1; then
     || fail "could not install Rust $msrv via rustup (output above); check the network, or run 'rustup toolchain install $msrv --profile minimal' by hand and re-run 'just msrv'."
 fi
 
-echo "msrv: cargo +$msrv check -p gh-secrets" >&2
 exec cargo "+$msrv" check -p gh-secrets --locked --all-targets --all-features

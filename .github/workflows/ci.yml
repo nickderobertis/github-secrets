@@ -1,17 +1,9 @@
 # Prove the artifact from a clean checkout: bootstrap, then the gate — at the
 # tier this run is for.
 #
-# Every `check` leg runs the SAME `just check` recipe; the tier is a flag on it,
-# chosen by scripts/ci-gate-tier.mjs (AGENTS.md "Commits, releases, and merging"):
-#
-#   * ordinary pull requests and pushes to master run the AFFECTED tier — the Nx
-#     projects the change can reach, keyed off an explicitly derived base (the
-#     merge base with origin/master on a PR, the previous master tip on a push);
-#   * the release-please release PR runs the BROADER tier — one full sweep over
-#     every project. This repo batches releases behind that PR, so the commit that
-#     ships is swept there, at release-prep, and nowhere else.
-#
-# release.yml builds and publishes an already-swept commit; it re-gates nothing.
+# Every `check` leg runs the SAME `just check` recipe at the tier
+# scripts/ci-gate-tier.mjs chooses for the event (AGENTS.md "Commits, releases,
+# and merging" records the placement); release.yml re-gates nothing.
 #
 # Fixed status-check contexts (branch protection names them): `check (<os>)`,
 # `build (<os>)`, `live-e2e`, `live-e2e-bitwarden`, `llmlint` — keep these job

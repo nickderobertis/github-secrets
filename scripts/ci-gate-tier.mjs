@@ -1,27 +1,30 @@
-// Decide which gate tier a CI run owes, and the explicit base it keys off.
-//
-// The placement (AGENTS.md "Commits, releases, and merging"): this repo batches
-// releases behind release-please's release PR, so
-//   * the release PR (head branch release-please--branches--master…, opened in
-//     this repository) runs the BROADER tier — one full `just check all` sweep,
-//     at release-prep, over the exact tree that ships;
-//   * every other pull request, and every push to master, runs the AFFECTED tier
-//     against an explicitly derived base:
-//       pull request -> git merge-base origin/<base branch> HEAD
-//       push         -> the event's `before` commit (the previous master tip),
-//                       or HEAD~1 when `before` is absent or unknown here;
-//   * anything else (workflow_dispatch) runs the full sweep.
+// Decide which gate tier a CI run owes, and the explicit base it keys off — the
+// placement AGENTS.md "Commits, releases, and merging" records: the release
+// PR gets the full sweep, everything else the affected tier.
 //
 // Reads GITHUB_EVENT_NAME and the payload at GITHUB_EVENT_PATH, prints
 // `tier=<affected|all>` and `base=<sha>` (empty for `all`), and appends the same
-// lines to GITHUB_OUTPUT when that is set. The CI step then runs
-// `NX_BASE=<base> just check <tier>`.
+// lines to GITHUB_OUTPUT when that is set.
 //
 // Usage: bun scripts/ci-gate-tier.mjs
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
-export const RELEASE_BRANCH_PREFIX = "release-please--branches--master";
+// release-please names its release-PR branch `release-please--branches--<branch
+// it releases from>` (plus a component suffix), so the prefix is derived from the
+// branch release.yml runs on rather than restated here.
+function releaseBranchPrefix() {
+  const release = Bun.YAML.parse(readFileSync(join(import.meta.dir, "../.github/workflows/release.yml"), "utf8"));
+  const branches = release?.on?.push?.branches;
+  if (!Array.isArray(branches) || branches.length !== 1 || typeof branches[0] !== "string") {
+    throw new RoutingError(
+      "release.yml must run on exactly one push branch to derive the release-PR branch from",
+      "restore `on: push: branches: [<default branch>]` in .github/workflows/release.yml.",
+    );
+  }
+  return `release-please--branches--${branches[0]}`;
+}
 const ZERO_SHA = /^0+$/;
 
 /** A routing failure carrying the concrete next action for the CI log. */
@@ -57,7 +60,7 @@ export function decide(eventName, payload, cwd = process.cwd()) {
   if (eventName === "pull_request") {
     const pr = payload.pull_request ?? {};
     const sameRepo = pr.head?.repo?.full_name && pr.head.repo.full_name === pr.base?.repo?.full_name;
-    if (sameRepo && typeof pr.head?.ref === "string" && pr.head.ref.startsWith(RELEASE_BRANCH_PREFIX)) {
+    if (sameRepo && typeof pr.head?.ref === "string" && pr.head.ref.startsWith(releaseBranchPrefix())) {
       return { tier: "all", base: "", why: `release PR (${pr.head.ref}): full sweep at release-prep` };
     }
     const baseRef = pr.base?.ref;

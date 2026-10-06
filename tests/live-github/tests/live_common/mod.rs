@@ -27,6 +27,7 @@ pub const LIVE_ENV: &str = "GH_SECRETS_LIVE_TEST";
 pub const TOKEN_ENV: &str = "GH_TOKEN";
 pub const SANDBOX_REPO_NAME: &str = "gh-secrets-e2e-sandbox";
 
+// llmlint: ignore[names_match_behavior] this is exactly the GH_SECRETS_LIVE_TEST gate; the token half is token()'s, which every live test calls next and which fails with the variable to set.
 pub fn live_enabled() -> bool {
     env::var(LIVE_ENV).as_deref() == Ok("1")
 }

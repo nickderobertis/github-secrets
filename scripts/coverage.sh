@@ -58,7 +58,7 @@ validate_crate() {
   fi
   if ! cargo metadata --format-version 1 --no-deps --locked 2>/dev/null \
     | grep -q "\"name\":\"$crate\",\"version\""; then
-    echo "coverage: '$crate' is not a member of this Cargo workspace (see 'cargo metadata')." >&2
+    echo "coverage: '$crate' is not a member of this Cargo workspace; pass one of: $(cargo metadata --format-version 1 --no-deps --locked 2>/dev/null | grep -o '"name":"[^"]*","version"' | cut -d'"' -f4 | tr '\n' ' ')" >&2
     exit 2
   fi
 }

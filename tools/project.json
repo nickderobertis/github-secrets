@@ -30,7 +30,8 @@
       "options": {
         "commands": [
           "bun tools/check-project-boundaries.mjs",
-          "bun tools/check-workflow-contract.mjs"
+          "bun tools/check-workflow-contract.mjs",
+          "bun tools/check-coverage-floor.mjs"
         ],
         "parallel": false
       }

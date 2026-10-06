@@ -57,7 +57,11 @@ function triggersOnEveryPr(on) {
   if (Array.isArray(on)) return on.includes("pull_request");
   if (!on || typeof on !== "object" || !("pull_request" in on)) return false;
   const pr = on.pull_request ?? {};
-  return !pr.branches && !pr["branches-ignore"] && !pr.paths && !pr["paths-ignore"];
+  // A `types` list must still include the default activity types, or ordinary
+  // pushes to a pull request would not run the workflow.
+  const types = pr.types ?? ["opened", "synchronize", "reopened"];
+  const defaultsKept = Array.isArray(types) && ["opened", "synchronize", "reopened"].every((t) => types.includes(t));
+  return defaultsKept && !pr.branches && !pr["branches-ignore"] && !pr.paths && !pr["paths-ignore"];
 }
 
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -85,9 +89,11 @@ function loadWorkflows(dir, errors) {
         ((job.name !== undefined && typeof job.name !== "string") ||
           (matrix !== undefined && !isObject(matrix)) ||
           (matrix?.os !== undefined && !strings(matrix.os)) ||
-          (matrix?.include !== undefined && !(Array.isArray(matrix.include) && matrix.include.every(isObject))))
+          (matrix?.include !== undefined &&
+            !(Array.isArray(matrix.include) && matrix.include.every((i) => isObject(i) && (i.os === undefined || typeof i.os === "string")))) ||
+          (job.needs !== undefined && typeof job.needs !== "string" && !strings(job.needs)))
       ) {
-        errors.push(`${f}:${id} has a name or strategy.matrix (os / include) of an unexpected shape.`);
+        errors.push(`${f}:${id} has a name, needs or strategy.matrix (os / include) of an unexpected shape.`);
         wf.jobs[id] = {};
         continue;
       }

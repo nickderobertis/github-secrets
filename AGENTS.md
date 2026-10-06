@@ -136,34 +136,20 @@ Use the `just` recipes; do not hand-roll equivalent commands. The gate recipes
 delegate to Nx (`scripts/nx` runs it on the pinned toolchain) and take a tier:
 `affected` (default) or `all` (one full `run-many` sweep).
 
-- `just bootstrap` — the pinned Rust toolchain (`rustup toolchain install`
-  reads `rust-toolchain.toml`: rustfmt, clippy, llvm-tools, the release
-  targets; needs rustup >= 1.28), cargo-nextest (`scripts/install-nextest.sh`)
-  and cargo-llvm-cov (`cargo install` when absent; CI installs both prebuilt),
-  the bun `.tool-versions` pins
-  (`scripts/bun.sh ensure`: the PATH copy if it reports the pin, else the
-  checksum-verified release in a per-version cache dir) and the locked Nx
-  install, `core.hooksPath .githooks` (the pre-push hook), the llmlint tier
-  (best effort, skipped in CI) and `cargo fetch`. nextest stays the runner
-  because the inline test modules mutate process-global env vars and need a
-  process per test. Nx itself runs on Node (any LTS on PATH).
-- `just check [all]` — the gate: `format-check lint build test coverage` over
-  the affected projects (or all). Affected keys off `NX_BASE` when set (only a
-  plain ref name or SHA that resolves; anything else is refused before a target
-  runs) and otherwise `git merge-base origin/master HEAD`.
-- `just test` / `just lint` / `just format-check` `[all]` — one target name at
-  the same tier; `just test-e2e` — the offline e2e project alone (builds the
-  binary first); `just coverage` — every crate's tests then the floor.
-- `just test-live` / `just test-live-bitwarden` — opt-in real-service runs (the
-  live projects' `live` targets); see their nested AGENTS.md. Never needed for
-  the gate.
-- `just supply-chain` (cargo-deny + cargo-machete), `just msrv` (the crate
-  against its declared `rust-version`, currently 1.86 — the floor the locked
-  graph needs), `just format`, `just upgrade` (`cargo update` + `bun update`,
-  then `just check all`), `just release [target]`.
-- `just lint-llm` / `lint-llm-diff` (diff base `origin/master`) /
-  `lint-llm-validate` / `setup-llmlint` — the LLM-judge tier, outside `check`.
-- `just bench*` — the informational performance suite (`benches/AGENTS.md`).
+- `just bootstrap` provisions everything from a clean clone (`just --list`
+  says what). Constraints it encodes: rustup >= 1.28 (it installs from
+  `rust-toolchain.toml`); bun comes from the `.tool-versions` pin, never
+  whatever `bun` is on PATH (`scripts/bun.sh`); Nx runs on Node (any LTS on
+  PATH); nextest stays the runner because the inline tests mutate
+  process-global env vars and need a process per test.
+- `just check [all]` is the gate; `just test` / `lint` / `format-check` run one
+  target at the same tier. The affected tier keys off `NX_BASE` (a plain ref
+  name or SHA that resolves — anything else is refused before a target runs) or
+  else `git merge-base origin/master HEAD`.
+- Outside the gate: `just test-live*` (real services; never needed for the
+  gate), `just supply-chain` and `just msrv` (own CI jobs; the MSRV is 1.86, the
+  floor the locked graph needs), `just lint-llm*` (the judged tier), and
+  `just bench*` (`benches/AGENTS.md`).
 
 The product binary is `gh-secrets`. `cargo run -- <args>` invokes it during
 development; the e2e projects drive the compiled artifact via `assert_cmd`.

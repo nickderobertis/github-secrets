@@ -5,24 +5,18 @@ to the repository rather than one crate. It implicitly depends on every other
 project, so any change selects it — that is what lets the coverage aggregate
 always see a complete set of profiles.
 
-- `lint` runs `check-project-boundaries.mjs` (the tag rule in
-  `project-boundaries.json`, over Cargo path dependencies *and* Nx implicit
-  dependencies — Nx's own boundary rule only sees JS imports) and
-  `check-workflow-contract.mjs` (the fixed status-check contexts and what may
-  gate them, `contents: read` in ci.yml, pinned `just` in every ci.yml job,
-  packaging lockstep between CI's install job and release.yml, and
-  rust-toolchain.toml's targets equal to release.yml's build matrix). When you
-  add a project, give it exactly one `type:*` tag and, if it is a new kind, a
-  constraint; when you rename a CI job or add a condition to one that reports a
-  fixed context, this check is what will tell you.
-- `test` runs `bun test tools/tests`: real subprocess tests of the repo's own
-  tooling — the boundary checker on a scratch Cargo workspace, the gate recipes'
-  tier and base selection (the real `justfile` + `scripts/nx-base.sh`), CI's tier routing
-  (`scripts/ci-gate-tier.mjs`) fed synthetic event payloads, the pre-push hook
-  through real `git push`es, `scripts/install.sh --from-dir`, the bun pin
-  (`scripts/bun.sh`, its download-and-verify path served from `file://`), the
-  `scripts/nx` wrapper, and the workflow contract against mutated copies. The
-  bash-script tests skip on Windows.
+- `lint` runs the repo's reconciling checks: `check-project-boundaries.mjs`
+  (the tag rule in `project-boundaries.json`, over Cargo path dependencies
+  *and* Nx implicit dependencies — Nx's own boundary rule only sees JS
+  imports), `check-workflow-contract.mjs` (the fixed CI contexts and what may
+  gate them, plus the CI facts restated across workflows) and
+  `check-coverage-floor.mjs` (every restated floor equals `MIN_LINES`). When
+  you add a project, give it exactly one `type:*` tag; when you rename a CI job
+  or add a condition to one that reports a fixed context, these tell you.
+- `test` runs `bun test tools/tests`: the repo's own tooling driven as real
+  subprocesses in scratch repositories, with only the external tool at the far
+  end (Nx, bun's release, uv, git remotes) replaced. Keep new tooling covered
+  the same way; the bash-script tests skip on Windows.
 - `coverage-clear` / `coverage` are steps one and three of
   `scripts/coverage.sh` (each crate's `test` target is step two). `coverage`
   depends on `^test` — the `test` of every project, since `implicitDependencies`

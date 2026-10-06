@@ -75,5 +75,10 @@ test("a workflow whose jobs are not a mapping is refused rather than skipped", (
 
 test("a matrix of an unexpected shape is reported, not crashed on", () => {
   const errors = mutated("ci.yml", "        os: [ubuntu-latest, macos-latest, windows-latest]\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history", "        os: ubuntu-latest\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history");
-  expect(errors.join("\n")).toContain("ci.yml:check has a name or strategy.matrix (os / include) of an unexpected shape");
+  expect(errors.join("\n")).toContain("ci.yml:check has a name, needs or strategy.matrix (os / include) of an unexpected shape");
+});
+
+test("a pull_request types list that drops synchronize is caught", () => {
+  const errors = mutated("pr-lint.yml", "types: [opened, edited, reopened, synchronize]", "types: [opened, edited]");
+  expect(errors.join("\n")).toContain("pr-lint.yml does not run on every pull request");
 });
