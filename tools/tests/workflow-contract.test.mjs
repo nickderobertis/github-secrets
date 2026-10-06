@@ -16,6 +16,7 @@ function mutated(file, from, to) {
   const s = scratch();
   cleanups.push(s.cleanup);
   cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
+  cpSync(join(REPO, "rust-toolchain.toml"), join(s.dir, "rust-toolchain.toml"));
   const path = join(s.dir, ".github/workflows", file);
   const text = readFileSync(path, "utf8");
   expect(text).toContain(from);
@@ -55,4 +56,19 @@ test("packaging drift between CI's install job and the release is caught", () =>
 test("a ci.yml job without the pinned just is caught", () => {
   const errors = mutated("ci.yml", "  msrv:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n\n      - name: Read tool pins (.tool-versions)\n        id: pins\n", "  msrv:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n\n      - name: Read tool pins (.tool-versions)\n        id: not-pins\n");
   expect(errors.join("\n")).toContain("ci.yml:msrv must install just at the .tool-versions pin");
+});
+
+test("a release target missing from rust-toolchain.toml is caught", () => {
+  const s = scratch();
+  cleanups.push(s.cleanup);
+  cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
+  const toolchain = readFileSync(join(REPO, "rust-toolchain.toml"), "utf8");
+  expect(toolchain).toContain('    "aarch64-apple-darwin",\n');
+  writeFileSync(join(s.dir, "rust-toolchain.toml"), toolchain.replace('    "aarch64-apple-darwin",\n', ""));
+  expect(checkContract(s.dir).join("\n")).toContain("differ from release.yml's build matrix");
+});
+
+test("a workflow whose jobs are not a mapping is refused rather than skipped", () => {
+  const errors = mutated("notignored.yml", "jobs:\n  suppressions:", "jobs: []\nnot_jobs:\n  suppressions:");
+  expect(errors.join("\n")).toContain("notignored.yml has no jobs mapping");
 });

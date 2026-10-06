@@ -99,3 +99,21 @@ test("a pull request whose base ref is not a plain ref name is refused", () => {
   expect(r.stderr).toContain("no usable base ref");
   expect(masterTip).toBeTruthy();
 });
+
+test("an unreadable event payload fails with the next action, not a stack trace", () => {
+  const event = join(s.dir, "broken-event.json");
+  writeFileSync(event, "{ not json");
+  const r = run("bun", [SCRIPT], { cwd: repo, env: { ...process.env, GITHUB_EVENT_NAME: "push", GITHUB_EVENT_PATH: event } });
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("is unreadable");
+  expect(r.stderr).toContain("ci-gate-tier: next:");
+});
+
+test("a base branch the clone lacks names fetch-depth as the fix", () => {
+  const payload = pr("feature");
+  payload.pull_request.base.ref = "no-such-branch";
+  const r = route("pull_request", payload);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("git merge-base origin/no-such-branch HEAD failed");
+  expect(r.stderr).toContain("fetch-depth: 0");
+});

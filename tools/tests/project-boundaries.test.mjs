@@ -59,3 +59,25 @@ test("the real repository passes", () => {
   expect(r.stderr).toBe("");
   expect(r.code).toBe(0);
 });
+
+test("implicit dependency globs expand the way Nx reads them", () => {
+  const dir = workspace();
+  // The e2e project claiming every other project (`*`) reaches app: allowed.
+  writeFileSync(join(dir, "e2e/project.json"), JSON.stringify({ name: "app-e2e", tags: ["type:e2e"], implicitDependencies: ["*"] }));
+  expect(check(dir).code).toBe(0);
+  // The app claiming `*` reaches the e2e project: refused, naming the edge.
+  writeFileSync(join(dir, "project.json"), JSON.stringify({ name: "app", tags: ["type:app"], implicitDependencies: ["*", "!nothing"] }));
+  const r = check(dir);
+  expect(r.code).toBe(1);
+  expect(r.stderr).toContain("app (type:app) may not depend on app-e2e (type:e2e) — found implicitDependencies");
+});
+
+test("malformed project definitions and policies are refused", () => {
+  const dir = workspace();
+  writeFileSync(join(dir, "e2e/project.json"), JSON.stringify({ name: "app", tags: ["type:e2e"] }));
+  expect(check(dir).stderr).toContain("project name app is declared twice");
+  writeFileSync(join(dir, "e2e/project.json"), JSON.stringify({ name: "app-e2e", tags: "type:e2e" }));
+  expect(check(dir).stderr).toContain("tags and implicitDependencies must be arrays of strings");
+  writeFileSync(join(dir, "tools/project-boundaries.json"), JSON.stringify({ depConstraints: [{ sourceTag: "app" }] }));
+  expect(check(dir).stderr).toContain("malformed constraint");
+});

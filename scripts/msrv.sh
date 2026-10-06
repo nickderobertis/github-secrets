@@ -31,7 +31,7 @@ clippy_msrv="$(sed -n 's/^msrv *= *"\([^"]*\)".*/\1/p' clippy.toml)"
 if ! rustup run "$msrv" rustc --version >/dev/null 2>&1; then
   echo "msrv: installing Rust $msrv (minimal profile)" >&2
   rustup toolchain install "$msrv" --profile minimal >&2 \
-    || fail "could not install Rust $msrv via rustup."
+    || fail "could not install Rust $msrv via rustup (output above); check the network, or run 'rustup toolchain install $msrv --profile minimal' by hand and re-run 'just msrv'."
 fi
 
 echo "msrv: cargo +$msrv check -p gh-secrets" >&2

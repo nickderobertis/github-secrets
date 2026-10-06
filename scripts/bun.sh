@@ -12,6 +12,10 @@
 # per-version cache directory outside the clone (never onto PATH, and no shell rc
 # file is edited). CI provisions the pin itself (oven-sh/setup-bun reading
 # .tool-versions), so `ensure` finds it on PATH there and installs nothing.
+#
+# GH_SECRETS_BUN_DOWNLOAD_BASE replaces the release URL prefix (any curl URL,
+# e.g. file://) so tools/tests can drive the download-and-verify path offline;
+# like GH_SECRETS_API_BASE it exists for tests only.
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -66,13 +70,15 @@ sha256_of() {
 install_pinned() {
   local asset tmp base expected actual
   asset="$(asset_name)"
-  command -v curl >/dev/null 2>&1 || fail "curl is required to install bun $VERSION."
-  command -v unzip >/dev/null 2>&1 || fail "unzip is required to install bun $VERSION."
+  command -v curl >/dev/null 2>&1 \
+    || fail "curl is required to install bun $VERSION; install it with your package manager (e.g. 'apt-get install curl'), then re-run 'just bootstrap'."
+  command -v unzip >/dev/null 2>&1 \
+    || fail "unzip is required to install bun $VERSION; install it with your package manager (e.g. 'apt-get install unzip'), then re-run 'just bootstrap'."
   tmp="$(mktemp -d)"
   # Expanded now: the EXIT trap fires after this function's locals are gone.
   # shellcheck disable=SC2064
   trap "rm -rf '$tmp'" EXIT
-  base="https://github.com/oven-sh/bun/releases/download/bun-v$VERSION"
+  base="${GH_SECRETS_BUN_DOWNLOAD_BASE:-https://github.com/oven-sh/bun/releases/download}/bun-v$VERSION"
   echo "bun.sh: installing bun $VERSION into $CACHE_DIR" >&2
   curl -fsSL --retry 3 -o "$tmp/$asset.zip" "$base/$asset.zip" \
     || fail "downloading $base/$asset.zip failed; check your network and re-run 'just bootstrap'."

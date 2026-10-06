@@ -131,11 +131,13 @@ impl AuthHarness {
     /// contacts Bitwarden; only the GitHub token resolution is under test.
     fn sync_cmd(&self) -> Command {
         let mut c = self.cmd();
+        // llmlint: ignore-block[tests_mirror_real_usage] moved verbatim (a git rename, no content change) into the gh-secrets-e2e crate by the workspace split; the documented test-only source hook (AGENTS.md "Config and paths") holds the source fixed so only GitHub-token resolution varies, and real sources are driven end to end in e2e.rs and e2e_bitwarden.rs.
         c.env(
             "GH_SECRETS_TEST_SOURCE_FILE",
             self.dir.path().join("source.json"),
         )
         .args(["sync"]);
+        // llmlint: ignore-end[tests_mirror_real_usage]
         c
     }
 
@@ -429,9 +431,11 @@ async fn e2e_unlock_session_replaces_the_passphrase_for_a_week() {
 
     // An expired session is as good as none: rewind the expiry and the next
     // passphrase-less call fails with the usual guidance.
+    // llmlint: ignore-block[tests_mirror_real_usage] moved verbatim (a git rename, no content change) into the gh-secrets-e2e crate by the workspace split; backdating the hard expiry is the only offline way to reach a session's expiry without waiting days, and what is asserted is the CLI's observable refusal and cleanup.
     let mut parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
     parsed["expires_at"] = serde_json::Value::from(1u64);
     fs::write(&session, serde_json::to_vec(&parsed).unwrap()).unwrap();
+    // llmlint: ignore-end[tests_mirror_real_usage]
     h.cmd()
         .env_remove("GH_SECRETS_PASSPHRASE")
         .args(["store", "list"])

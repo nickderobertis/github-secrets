@@ -30,8 +30,29 @@ function fail(lines) {
   process.exit(1);
 }
 
-const rules = JSON.parse(readFileSync(join(root, "tools/project-boundaries.json"), "utf8"));
-const constraints = new Map(rules.depConstraints.map((c) => [c.sourceTag, c.onlyDependOnTags]));
+function readJson(file) {
+  try {
+    return JSON.parse(readFileSync(join(root, file), "utf8"));
+  } catch (err) {
+    fail([`${file} is not readable JSON: ${err.message}`]);
+  }
+}
+
+const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === "string" && x.length > 0);
+
+// The policy: a non-empty list of { sourceTag, onlyDependOnTags: [tag | "*"] }, one per tag.
+const rules = readJson("tools/project-boundaries.json");
+if (!Array.isArray(rules?.depConstraints) || rules.depConstraints.length === 0) {
+  fail(["tools/project-boundaries.json must hold a non-empty depConstraints array."]);
+}
+const constraints = new Map();
+for (const c of rules.depConstraints) {
+  if (typeof c?.sourceTag !== "string" || !c.sourceTag.startsWith("type:") || !isStringArray(c.onlyDependOnTags)) {
+    fail([`malformed constraint in tools/project-boundaries.json: ${JSON.stringify(c)}`]);
+  }
+  if (constraints.has(c.sourceTag)) fail([`tools/project-boundaries.json constrains ${c.sourceTag} twice.`]);
+  constraints.set(c.sourceTag, c.onlyDependOnTags);
+}
 
 let metadata;
 try {
@@ -47,6 +68,8 @@ try {
 }
 
 // Projects, from every project.json git tracks (plus untracked ones in this tree).
+const errors = [];
+
 const projectFiles = execFileSync(
   "git",
   ["ls-files", "--cached", "--others", "--exclude-standard", "--", "project.json", "**/project.json"],
@@ -58,13 +81,37 @@ const projectFiles = execFileSync(
 const projects = new Map(); // name -> { dir, tags, implicit }
 const byDir = new Map(); // dir -> name
 for (const file of projectFiles) {
-  const json = JSON.parse(readFileSync(join(root, file), "utf8"));
+  const json = readJson(file);
+  const tags = json.tags ?? [];
+  const implicit = json.implicitDependencies ?? [];
+  if (typeof json.name !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(json.name)) {
+    fail([`${file} must name its project (lowercase letters, digits and -), got ${JSON.stringify(json.name)}.`]);
+  }
+  const strings = (v) => Array.isArray(v) && v.every((x) => typeof x === "string" && x.length > 0);
+  if (!strings(tags) || !strings(implicit)) {
+    fail([`${file}: tags and implicitDependencies must be arrays of strings.`]);
+  }
+  if (projects.has(json.name)) fail([`project name ${json.name} is declared twice (${projects.get(json.name).dir} and ${dirname(file)}).`]);
   const dir = dirname(file);
-  projects.set(json.name, { dir, tags: json.tags ?? [], implicit: json.implicitDependencies ?? [] });
+  projects.set(json.name, { dir, tags, implicit });
   byDir.set(dir, json.name);
 }
 
-const errors = [];
+// implicitDependencies the way Nx reads them: names, `*` globs, and `!` exclusions.
+function expandImplicit(name, patterns) {
+  const glob = (p) => new RegExp(`^${p.split("*").map((x) => x.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`);
+  const selected = new Set();
+  for (const p of patterns.filter((x) => !x.startsWith("!"))) {
+    const matches = [...projects.keys()].filter((n) => glob(p).test(n));
+    if (matches.length === 0) errors.push(`${name} names unknown implicit dependency ${p}.`);
+    for (const m of matches) if (m !== name) selected.add(m);
+  }
+  for (const p of patterns.filter((x) => x.startsWith("!"))) {
+    for (const n of [...selected]) if (glob(p.slice(1)).test(n)) selected.delete(n);
+  }
+  return [...selected];
+}
+
 const typeTag = (name) => {
   const tags = projects.get(name).tags.filter((t) => t.startsWith("type:"));
   if (tags.length !== 1) {
@@ -100,10 +147,7 @@ for (const pkg of metadata.packages) {
   }
 }
 for (const [name, project] of projects) {
-  for (const dep of project.implicit) {
-    if (!projects.has(dep)) errors.push(`${name} names unknown implicit dependency ${dep}.`);
-    else edges.push([name, dep, "implicitDependencies"]);
-  }
+  for (const dep of expandImplicit(name, project.implicit)) edges.push([name, dep, "implicitDependencies"]);
 }
 
 for (const name of projects.keys()) typeTag(name);

@@ -68,3 +68,23 @@ test.skipIf(isWindows)("--from-dir without --version is refused", () => {
   expect(res.code).not.toBe(0);
   expect(res.stderr).toContain("--from-dir needs --version");
 });
+
+test.skipIf(isWindows)("GH_SECRETS_ARCHIVE_DIR and --from-dir=<dir> are the same local mode", () => {
+  const r = release();
+  const viaEnv = run("sh", [join(REPO, "scripts/install.sh"), "--version", TAG, "--to", r.to], {
+    env: { ...process.env, GH_SECRETS_ARCHIVE_DIR: r.dir },
+  });
+  expect(viaEnv.code).toBe(0);
+  expect(ok(join(r.to, "gh-secrets"), [])).toBe("gh-secrets 9.9.9");
+
+  const to2 = join(r.dir, "installed-2");
+  expect(install([`--version=${TAG}`, `--from-dir=${r.dir}`, `--to=${to2}`]).code).toBe(0);
+  expect(existsSync(join(to2, "gh-secrets"))).toBe(true);
+});
+
+test.skipIf(isWindows)("a --from-dir that does not exist is refused", () => {
+  const r = release();
+  const res = install(["--version", TAG, "--from-dir", join(r.dir, "nope"), "--to", r.to]);
+  expect(res.code).not.toBe(0);
+  expect(res.stderr).toContain("--from-dir: no such directory");
+});

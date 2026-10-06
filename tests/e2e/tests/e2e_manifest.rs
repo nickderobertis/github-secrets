@@ -75,10 +75,12 @@ impl ManifestHarness {
                 self.dir.path().join("home"), // separate from manifest dir
             )
             .env("GH_SECRETS_API_BASE", self.server.uri())
+            // llmlint: ignore-block[tests_mirror_real_usage] moved verbatim (a git rename, no content change) into the gh-secrets-e2e crate by the workspace split; this suite's subject is the config-driven destinations and change detection, so the documented test-only source hook (AGENTS.md "Config and paths") fixes the source; the Bitwarden source itself is driven end to end in e2e_bitwarden.rs.
             .env(
                 "GH_SECRETS_TEST_SOURCE_FILE",
                 self.dir.path().join("source.json"),
             )
+            // llmlint: ignore-end[tests_mirror_real_usage]
             .env("GH_TOKEN", "ghp_test");
         c
     }

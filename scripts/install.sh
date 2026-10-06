@@ -218,7 +218,7 @@ main() {
         || err "could not create a temporary directory"
     trap 'rm -rf "$tmp"' EXIT INT TERM
 
-    say "fetching ${archive} (${version})${archive_dir:+ from ${archive_dir}}..."
+    [ -n "$archive_dir" ] || say "downloading ${archive} (${version})..."
     fetch_asset "$archive" "${tmp}/${archive}"
     fetch_asset "$sumfile" "${tmp}/${sumfile}"
 

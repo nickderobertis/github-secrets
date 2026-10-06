@@ -10,8 +10,8 @@ through the real `bw` CLI.
 - The real run is the `live` target (`just test-live-bitwarden`, serial `-j1`
   because every test logs in to the one account), which the
   `live-e2e-bitwarden` CI job runs. Locally: `scripts/bw-e2e-env.sh just
-  test-live-bitwarden` (see the root AGENTS.md "Releases and CI secrets"). Do
-  not run it from an agent session.
+  test-live-bitwarden`, which reads the isolated account's api-key credentials
+  from the maintainer's own vault. Do not run it from an agent session.
 - The offline twin of this suite is `tests/e2e/tests/e2e_bitwarden.rs` (a
   stand-in `bw`); keep the two covering the same contract from both sides.
 

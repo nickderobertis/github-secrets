@@ -24,8 +24,23 @@ import { appendFileSync, readFileSync } from "node:fs";
 export const RELEASE_BRANCH_PREFIX = "release-please--branches--master";
 const ZERO_SHA = /^0+$/;
 
+/** A routing failure carrying the concrete next action for the CI log. */
+class RoutingError extends Error {
+  constructor(message, fix) {
+    super(message);
+    this.fix = fix;
+  }
+}
+
 function git(args, cwd) {
-  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch (err) {
+    throw new RoutingError(
+      `git ${args.join(" ")} failed: ${String(err.stderr || err.message).trim()}`,
+      "check out with fetch-depth: 0 so the base branch and its history are present.",
+    );
+  }
 }
 
 function resolves(rev, cwd) {
@@ -46,8 +61,11 @@ export function decide(eventName, payload, cwd = process.cwd()) {
       return { tier: "all", base: "", why: `release PR (${pr.head.ref}): full sweep at release-prep` };
     }
     const baseRef = pr.base?.ref;
-    if (typeof baseRef !== "string" || !/^[A-Za-z0-9._/-]+$/.test(baseRef)) {
-      throw new Error(`pull_request payload has no usable base ref (${JSON.stringify(baseRef)})`);
+    if (typeof baseRef !== "string" || !/^[A-Za-z0-9._/-]+$/.test(baseRef) || baseRef.includes("..")) {
+      throw new RoutingError(
+        `pull_request payload has no usable base ref (${JSON.stringify(baseRef)})`,
+        "target a branch whose name is letters, digits and . _ / - only; nothing was run.",
+      );
     }
     const base = git(["merge-base", `origin/${baseRef}`, "HEAD"], cwd);
     return { tier: "affected", base, why: `pull request: merge base with origin/${baseRef}` };
@@ -62,17 +80,27 @@ export function decide(eventName, payload, cwd = process.cwd()) {
   return { tier: "all", base: "", why: `${eventName || "unknown event"}: full sweep` };
 }
 
+function readPayload(path) {
+  if (!path) return {};
+  try {
+    const payload = JSON.parse(readFileSync(path, "utf8"));
+    if (payload === null || typeof payload !== "object") throw new Error("not a JSON object");
+    return payload;
+  } catch (err) {
+    throw new RoutingError(
+      `the event payload at GITHUB_EVENT_PATH (${path}) is unreadable: ${err.message}`,
+      "run this inside a GitHub Actions job (it provides the payload), or point GITHUB_EVENT_PATH at a JSON event.",
+    );
+  }
+}
+
 if (import.meta.main) {
-  const eventName = process.env.GITHUB_EVENT_NAME ?? "";
-  const payload = process.env.GITHUB_EVENT_PATH
-    ? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"))
-    : {};
   let decision;
   try {
-    decision = decide(eventName, payload);
+    decision = decide(process.env.GITHUB_EVENT_NAME ?? "", readPayload(process.env.GITHUB_EVENT_PATH));
   } catch (err) {
     console.error(`ci-gate-tier: ${err.message}`);
-    console.error("ci-gate-tier: check out with fetch-depth: 0 so the base branch and history are present.");
+    if (err.fix) console.error(`ci-gate-tier: next: ${err.fix}`);
     process.exit(1);
   }
   console.error(`ci-gate-tier: ${decision.tier} — ${decision.why}`);

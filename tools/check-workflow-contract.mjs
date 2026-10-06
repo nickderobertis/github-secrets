@@ -13,6 +13,8 @@
 //   3. CI's install-path job packages the release archive with the SAME steps
 //      release.yml uses, so the archive install.sh is proven against is the one
 //      a release ships.
+//   4. rust-toolchain.toml's `targets` are exactly release.yml's build matrix
+//      targets, so the pinned toolchain always carries what a release builds.
 //
 // Usage: bun tools/check-workflow-contract.mjs [--root <dir>]
 import { readFileSync, readdirSync } from "node:fs";
@@ -58,14 +60,40 @@ function triggersOnEveryPr(on) {
   return !pr.branches && !pr["branches-ignore"] && !pr.paths && !pr["paths-ignore"];
 }
 
+const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+
+/** Parse every workflow, refusing shapes the checks below cannot reason about. */
+function loadWorkflows(dir, errors) {
+  const workflows = {};
+  for (const f of readdirSync(dir).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))) {
+    let wf;
+    try {
+      wf = Bun.YAML.parse(readFileSync(join(dir, f), "utf8"));
+    } catch (err) {
+      errors.push(`${f} is not valid YAML: ${err.message}`);
+      continue;
+    }
+    if (!isObject(wf) || !isObject(wf.jobs)) {
+      errors.push(`${f} has no jobs mapping.`);
+      continue;
+    }
+    for (const [id, job] of Object.entries(wf.jobs)) {
+      if (!isObject(job) || (job.steps !== undefined && !Array.isArray(job.steps))) {
+        errors.push(`${f}:${id} must be a mapping whose steps (if any) are a list.`);
+        wf.jobs[id] = {};
+      } else if ((job.steps ?? []).some((step) => !isObject(step))) {
+        errors.push(`${f}:${id} has a step that is not a mapping.`);
+        job.steps = job.steps.filter(isObject);
+      }
+    }
+    workflows[f] = wf;
+  }
+  return workflows;
+}
+
 export function checkContract(root) {
-  const dir = join(root, ".github/workflows");
-  const workflows = Object.fromEntries(
-    readdirSync(dir)
-      .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
-      .map((f) => [f, Bun.YAML.parse(readFileSync(join(dir, f), "utf8"))]),
-  );
   const errors = [];
+  const workflows = loadWorkflows(join(root, ".github/workflows"), errors);
   const reporters = new Map(); // context -> [file, jobId]
 
   for (const [file, wf] of Object.entries(workflows)) {
@@ -131,6 +159,20 @@ export function checkContract(root) {
     else if (a.run !== b.run || a.shell !== b.shell || a.if !== b.if) {
       errors.push(`'${name}' differs between release.yml:build and ci.yml:install; keep them identical.`);
     }
+  }
+  // The pinned toolchain carries exactly the targets a release builds.
+  let toolchainTargets = [];
+  try {
+    toolchainTargets = Bun.TOML.parse(readFileSync(join(root, "rust-toolchain.toml"), "utf8")).toolchain?.targets ?? [];
+  } catch (err) {
+    errors.push(`rust-toolchain.toml is not readable TOML: ${err.message}`);
+  }
+  const releaseTargets = (workflows["release.yml"]?.jobs?.build?.strategy?.matrix?.include ?? []).map((i) => i?.target);
+  const sorted = (xs) => [...xs].sort().join(", ");
+  if (sorted(toolchainTargets) !== sorted(releaseTargets)) {
+    errors.push(
+      `rust-toolchain.toml targets [${sorted(toolchainTargets)}] differ from release.yml's build matrix [${sorted(releaseTargets)}]; keep them equal.`,
+    );
   }
   return errors;
 }
