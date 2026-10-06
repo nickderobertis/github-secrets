@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/nx/schemas/project-schema.json",
   "name": "gh-secrets",
-  "//": "The published crate: lib gh_secrets + bin gh-secrets, with its inline unit tests. It is the root project, so it also owns every file no other project claims (scripts/, .github/, docs); its inputs are narrowed to what the crate compiles from so a docs edit replays cached lint/format results. It may depend only on type:app projects (tools/project-boundaries.json).",
+  "//": "The published crate: lib gh_secrets + bin gh-secrets, with its inline unit tests. It is the root project, so it also owns every file no other project claims (.github/, the justfile, docs); its inputs are narrowed to what the crate compiles from so a docs edit replays cached lint/format results. It may depend only on type:app projects (tools/project-boundaries.json).",
   "projectType": "application",
   "tags": [
     "type:app",

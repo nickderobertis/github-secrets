@@ -119,7 +119,7 @@ test.skipIf(isWindows)("a version that is not a tag is refused before any path i
   const r = release();
   const res = install(["--version", "../../etc", "--from-dir", r.dir, "--to", r.to]);
   expect(res.code).not.toBe(0);
-  expect(res.stderr).toContain("invalid --version '../../etc'");
+  expect(res.stderr).toContain("invalid version '../../etc'");
 });
 
 test.skipIf(isWindows)("--from-dir with no following argument, or a tag with odd characters, is refused", () => {

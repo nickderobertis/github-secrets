@@ -99,3 +99,34 @@ test("tag: implicit dependencies resolve to the tagged projects", () => {
   expect(r.code).toBe(1);
   expect(r.stderr).toContain("app (type:app) may not depend on app-e2e (type:e2e) — found implicitDependencies");
 });
+
+/** Make `dir` look Nx-enabled, with `scripts/nx graph` answering `edges` (implicit). */
+function stubNxGraph(dir, edges) {
+  mkdirSync(join(dir, "node_modules/.bin"), { recursive: true });
+  writeFileSync(join(dir, "node_modules/.bin/nx"), "");
+  const deps = { app: [], "app-e2e": [] };
+  for (const [from, to] of edges) deps[from].push({ source: from, target: to, type: "implicit" });
+  mkdirSync(join(dir, "scripts"), { recursive: true });
+  writeFileSync(
+    join(dir, "scripts/nx"),
+    `#!/usr/bin/env bash\nfor a in "$@"; do case "$a" in --file=*) printf '%s' '${JSON.stringify({ graph: { dependencies: deps } })}' > "\${a#--file=}" ;; esac; done\n`,
+  );
+}
+
+test("the checker's implicit edges must match Nx's resolved graph, both ways", () => {
+  const agree = workspace();
+  stubNxGraph(agree, [["app-e2e", "app"]]);
+  expect(check(agree).code).toBe(0);
+
+  const nxOnly = workspace();
+  stubNxGraph(nxOnly, [["app-e2e", "app"], ["app", "app-e2e"]]);
+  const r1 = check(nxOnly);
+  expect(r1.code).toBe(1);
+  expect(r1.stderr).toContain("Nx resolves app -> app-e2e, which this checker did not");
+
+  const checkerOnly = workspace();
+  stubNxGraph(checkerOnly, []);
+  const r2 = check(checkerOnly);
+  expect(r2.code).toBe(1);
+  expect(r2.stderr).toContain("this checker resolves app-e2e -> app, which Nx does not");
+});

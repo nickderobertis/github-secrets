@@ -44,7 +44,9 @@ beforeAll(() => {
   write("Cargo.toml", `[package]\nname = "gh-secrets"\nversion = "0.1.0"\nedition = "2021"\nautotests = false\n\n[workspace]\nmembers = ["tests/e2e"]\n`);
   // greet() is unit-tested; banner() runs only when the binary does.
   write("src/lib.rs", `pub fn greet() -> &'static str {\n    "hi"\n}\n\npub fn banner() -> String {\n    let mut s = String::from("banner:");\n    s.push_str(greet());\n    s\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn greets() {\n        assert_eq!(super::greet(), "hi");\n    }\n}\n`);
-  write("src/main.rs", `fn main() {\n    println!("{}", gh_secrets::banner());\n}\n`);
+  // coverage.sh runs the instrumented binary once with --version to build it;
+  // that path must not reach banner(), so only the e2e journey can cover it.
+  write("src/main.rs", `fn main() {\n    if std::env::args().nth(1).as_deref() == Some("--version") {\n        println!("0.1.0");\n        return;\n    }\n    println!("{}", gh_secrets::banner());\n}\n`);
   write("tests/e2e/Cargo.toml", `[package]\nname = "app-e2e"\nversion = "0.1.0"\nedition = "2021"\n`);
   // Never called: proves sources under tests/ stay out of the report.
   write("tests/e2e/src/lib.rs", `pub fn unused_helper(x: u32) -> u32 {\n    let y = x + 1;\n    y * 2\n}\n`);

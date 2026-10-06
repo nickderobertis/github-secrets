@@ -65,7 +65,7 @@ function resolves(rev, cwd) {
   }
 }
 
-/** The routing decision for one event. Pure apart from the git lookups in `cwd`. */
+/** The routing decision for one event, from the payload, git history in `cwd`, and release.yml. */
 export function decide(eventName, payload, cwd = process.cwd()) {
   if (eventName === "pull_request") {
     const pr = payload.pull_request ?? {};

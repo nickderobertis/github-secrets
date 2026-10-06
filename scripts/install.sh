@@ -198,12 +198,6 @@ main() {
 
     [ -n "$bindir" ] || bindir="${HOME}/.local/bin"
 
-    case "$version" in
-        */* | *..*) err "invalid --version '$version': expected a release tag like v1.2.3" ;;
-    esac
-    if [ -n "$version" ] && ! printf '%s' "$version" | grep -Eq '^[A-Za-z0-9._+-]+$'; then
-        err "invalid --version '$version': expected a release tag like v1.2.3"
-    fi
     if [ -n "$archive_dir" ]; then
         [ -n "$version" ] || err "--from-dir needs --version (there is no release to resolve 'latest' from)"
         [ -d "$archive_dir" ] || err "--from-dir: no such directory: $archive_dir (pass the directory holding the packaged archive and its .sha256)"
@@ -221,6 +215,13 @@ main() {
         say "resolving latest release..."
         version="$(latest_tag)"
     fi
+
+    # Supplied or resolved, the tag becomes part of asset paths and URLs.
+    case "$version" in
+        */* | *..*) err "invalid version '$version': expected a release tag like v1.2.3" ;;
+    esac
+    printf '%s' "$version" | grep -Eq '^[A-Za-z0-9._+-]+$' \
+        || err "invalid version '$version': expected a release tag like v1.2.3"
 
     archive="${BIN}-${version}-${TARGET}.${EXT}"
     # The release workflow names the checksum asset by appending `.sha256` to
