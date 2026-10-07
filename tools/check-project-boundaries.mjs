@@ -14,13 +14,24 @@
 // Exit status: 0 (quiet) when every edge is allowed; 1 with each violation
 // printed; 2 on a usage error.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 
 // Project dirs relative to the root, always with `/` (git ls-files spells them
 // that way on every platform; path.relative uses `\\` on Windows).
 const rel = (from, to) => relative(from, to).split("\\").join("/") || ".";
+// Cargo reports canonical paths (macOS's /var is /private/var; Windows may
+// expand 8.3 short names), so a member path is compared only after both it and
+// the root are canonicalized the same way.
+const canon = (p) => {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return resolve(p);
+  }
+};
+const memberRel = (p) => rel(canon(root), canon(p));
 
 /** `[--root <existing dir>]`, nothing else; the default is the repository. */
 function parseRoot(argv, fallback) {
@@ -157,7 +168,7 @@ if (packageIds.size !== members.length || !members.every((m) => packageIds.has(m
   fail(["'cargo metadata' packages do not match its workspace_members, so some members' Cargo edges would go unchecked; check the cargo version, then re-run."]);
 }
 for (const pkg of metadata.packages) {
-  const dir = rel(root, dirname(pkg.manifest_path));
+  const dir = memberRel(dirname(pkg.manifest_path));
   const name = byDir.get(dir);
   if (!name) {
     errors.push(`Cargo member ${pkg.name} (${dir}/Cargo.toml) has no project.json beside it.`);
@@ -166,11 +177,11 @@ for (const pkg of metadata.packages) {
   memberDirs.set(dir, name);
 }
 for (const pkg of metadata.packages) {
-  const from = memberDirs.get(rel(root, dirname(pkg.manifest_path)));
+  const from = memberDirs.get(memberRel(dirname(pkg.manifest_path)));
   if (!from) continue;
   for (const dep of pkg.dependencies) {
     if (!dep.path) continue;
-    const to = memberDirs.get(rel(root, dep.path));
+    const to = memberDirs.get(memberRel(dep.path));
     if (to && to !== from) edges.push([from, to, `Cargo ${dep.kind ?? "normal"} dependency ${dep.name}`]);
   }
 }

@@ -1,7 +1,7 @@
 // The boundary rule against a real (tiny) Cargo workspace: cargo metadata is the
 // edge source, so the test builds one rather than feeding canned JSON.
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO, gitRepo, run, scratch } from "../../scripts/tests/helpers.mjs";
 
@@ -46,6 +46,24 @@ test("the app crate depending on its e2e crate fails, naming both and the edge",
   expect(r.code).toBe(1);
   expect(r.stderr).toContain("app (type:app) may not depend on app-e2e (type:e2e)");
   expect(r.stderr).toContain("Cargo dev dependency app-e2e");
+});
+
+test("a root reached through a symlink is read the way cargo reports it", () => {
+  // macOS's tmpdir is /var/folders/..., which cargo reports as /private/var/...;
+  // a symlinked root reproduces that on every platform (a junction on Windows).
+  const linked = (dir) => {
+    const { dir: holder, cleanup } = scratch();
+    cleanups.push(cleanup);
+    const link = join(holder, "linked");
+    symlinkSync(dir, link, "junction");
+    return link;
+  };
+  const ok = check(linked(workspace()));
+  expect(ok.stderr).toBe("");
+  expect(ok.code).toBe(0);
+  const bad = check(linked(workspace({ appDevDep: 'app-e2e = { path = "e2e" }' })));
+  expect(bad.code).toBe(1);
+  expect(bad.stderr).toContain("app (type:app) may not depend on app-e2e (type:e2e)");
 });
 
 test("a project without exactly one type tag fails", () => {
