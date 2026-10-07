@@ -5,7 +5,7 @@
 # time with hyperfine across the offline verbs. This captures the cost that
 # matters in practice: process startup + config discovery (fs) + dotenv/source
 # parse + SHA-256 change detection + env-file write, which the in-process
-# Criterion benches (`benches/engine.rs`) deliberately exclude.
+# Criterion benches (`benches/benches/engine.rs`) deliberately exclude.
 #
 # Every benchmarked command is fully offline and hermetic: the source and
 # destination are env files in a throwaway sandbox, the config root

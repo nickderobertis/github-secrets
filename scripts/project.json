@@ -1,0 +1,24 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "scripts",
+  "//": "The repository's scripts \u2014 toolchain and gate plumbing (bun.sh, nx, nx-base.sh, msrv.sh), CI's tier router, the installers (install.sh, setup-llmlint.sh, session-setup.sh) and the bench drivers \u2014 with their subprocess tests in tests/. Its own project so a crate change never reruns these tests, and so install.sh reaches the live GitHub project without dragging the crate along. coverage/ is a project of its own nested inside.",
+  "projectType": "library",
+  "tags": [
+    "type:tooling"
+  ],
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash scripts/lint.sh"
+      },
+      "//": "Syntax-checks every script with the shell that runs it (scripts/lint.sh; install.sh and install-nextest.sh are POSIX sh). A script, not an inline loop, because Nx runs inline commands through cmd.exe on Windows."
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bun test --timeout 600000 scripts/tests"
+      }
+    }
+  }
+}

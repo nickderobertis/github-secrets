@@ -1,0 +1,56 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "workspace",
+  "//": "Repo-level checks: the reconciling lint over root-owned and cross-project facts (project boundaries, the CI workflow contract, restated coverage floor and MSRV), their tests (plus the justfile's gate recipes and the pre-push hook), and the supply-chain check. It depends on every other project (\"*\") so any change re-runs these cheap checks; lint and test are uncached because they read files across the whole tree. The coverage gate is the coverage-aggregate project.",
+  "projectType": "library",
+  "tags": [
+    "type:workspace"
+  ],
+  "implicitDependencies": [
+    "*",
+    "!workspace"
+  ],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*",
+      "{workspaceRoot}/**/Cargo.toml",
+      "{workspaceRoot}/**/project.json",
+      "{workspaceRoot}/.github/workflows/*.yml",
+      "{workspaceRoot}/.githooks/*",
+      "{workspaceRoot}/scripts/*.sh",
+      "sharedGlobals"
+    ]
+  },
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "commands": [
+          "bun tools/check-project-boundaries.mjs",
+          "bun tools/check-workflow-contract.mjs",
+          "bun tools/check-restated-facts.mjs"
+        ],
+        "parallel": false
+      },
+      "cache": false
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bun test tools/tests"
+      },
+      "cache": false
+    },
+    "supply-chain": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "commands": [
+          "cargo deny --locked check",
+          "cargo machete"
+        ],
+        "parallel": false
+      }
+    }
+  }
+}

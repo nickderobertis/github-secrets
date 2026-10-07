@@ -1,0 +1,68 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "gh-secrets-bench",
+  "//": "The informational performance suite: never a gate, so `check` reaches only its format-check and lint (which compiles the benches). The bench* targets are what `just bench*` and the Performance workflow run; scripts/bench*.sh (in the scripts project, a dependency) drive the release binary.",
+  "projectType": "application",
+  "tags": [
+    "type:bench"
+  ],
+  "implicitDependencies": [
+    "gh-secrets",
+    "scripts"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p gh-secrets-bench"
+      }
+    },
+    "format-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p gh-secrets-bench -- --check"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p gh-secrets-bench --all-targets --all-features --locked -- -D warnings"
+      }
+    },
+    "bench": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "cargo bench --locked -p gh-secrets-bench --bench engine -- --save-baseline {args.baseline} {args.criterion}"
+      }
+    },
+    "bench-allocs": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash scripts/bench-allocs.sh"
+      }
+    },
+    "bench-cli": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash scripts/bench.sh"
+      }
+    },
+    "bench-cli-smoke": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash scripts/bench.sh --dry-run"
+      }
+    },
+    "bench-instructions": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "bash scripts/bench-instructions.sh"
+      }
+    }
+  }
+}

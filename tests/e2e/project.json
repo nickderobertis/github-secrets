@@ -1,0 +1,47 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "gh-secrets-e2e",
+  "//": "The offline end-to-end suite: spawns the compiled gh-secrets binary against wiremock, tempdirs and a stand-in bw. No Cargo edge to gh-secrets (it never links the library), so the implicit dependency is what puts it behind every crate change.",
+  "projectType": "application",
+  "tags": [
+    "type:e2e",
+    "coverage:profiles"
+  ],
+  "implicitDependencies": [
+    "gh-secrets"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p gh-secrets-e2e"
+      }
+    },
+    "format-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p gh-secrets-e2e -- --check"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p gh-secrets-e2e --all-targets --all-features --locked -- -D warnings"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "gh-secrets:build",
+        "coverage-aggregate:coverage-clear"
+      ],
+      "options": {
+        "command": "bash scripts/coverage/coverage.sh test gh-secrets-e2e"
+      },
+      "outputs": [
+        "{workspaceRoot}/target/llvm-cov-target/*.profraw"
+      ],
+      "//": "dependsOn gh-secrets:build so a broken binary build fails here, named, before any journey runs. Under coverage the journeys then drive the instrumented copy scripts/coverage/coverage.sh builds into target/llvm-cov-target, so their lines count toward coverage-aggregate:coverage; on Windows they drive gh-secrets:build's binary directly."
+    }
+  }
+}

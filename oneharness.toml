@@ -1,0 +1,21 @@
+# oneharness harness/model selection for the llmlint (LLM-judge) tier.
+# Docs: https://github.com/nickderobertis/oneharness
+#
+# The single source of truth for WHICH harness (and model) llmlint drives here —
+# llmlint.yml deliberately pins none, so this file (or an `ONEHARNESS_<FIELD>` env
+# override) decides. CI's `llmlint` job authenticates the primary (codex) from the
+# OPENAI_API_KEY repository secret.
+#
+# Fallback mode: the first harness that can run wins, so the same file works for
+# a contributor with codex authenticated (CI authenticates it too) and in a
+# Claude Code session, which falls through to claude-code. IS_SANDBOX lets
+# claude-code run under root.
+run_mode = "fallback"
+harnesses = ["codex", "claude-code"]
+
+[harness.codex]
+model = "gpt-5.5"
+
+[harness.claude-code]
+model = "claude-opus-4-8"
+env = { IS_SANDBOX = "1" }

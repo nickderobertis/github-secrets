@@ -85,69 +85,106 @@ follow-ups (see "After the main task").
 
 ## Stack and composition
 
-How this repo was built up from the create-repo reference pieces, recorded so
-the next maintainer can see why the tooling is what it is.
+How this repo was built up from the create-repo skill (dero-skills `v1.47.3`),
+recorded so the next maintainer can see why the tooling is what it is.
 
 - **Product shape:** `cli` — a single-binary Rust CLI (`gh-secrets`), installed
-  and run as one executable.
-- **Language(s):** `rust`.
-- **References composed:** `shapes/cli.md` + `languages/rust.md` + `ci.md`.
-  `ci.md` always applies; it drives the clean-checkout → `just bootstrap` →
-  `just check` gate, the cross-platform matrix, and the install-path smoke job.
-- **Excluded, and why:**
-  - `monorepo.md` — one deliverable (a single binary), so no Nx orchestration
-    or affected-only CI.
-  - `intersections/rust-cli.md` — no such reference exists yet; the Rust-CLI
-    overlap (snapshot-testing the compiled binary, cross-platform release
-    artifacts) is handled inline here. Create the intersection if that overlap
-    grows.
-  - asdf/direnv/`src`-layout template baggage — not idiomatic for a Cargo
-    crate. A release pipeline is *not* excluded: release-please + the release
-    workflow ship the binary, per principle 11.
+  and run as one executable. **Language:** `rust`.
+- **References composed:** `shapes/cli.md`, `languages/rust.md`,
+  `intersections/rust-cli.md` (this repo is one of its worked examples),
+  `project-graph.md`, `ci.md`, `releasing.md` (release-please cuts versions) and
+  `llmlint.md` (the LLM-judge tier), on top of `base.md`. `llmlint.yml` is
+  composed for exactly that stack (`--shape cli --language rust --releasing`).
+- **Excluded or deviating, and why:**
+  - *The published crate is the root package, not a member under a virtual
+    manifest* (`languages/rust.md` prefers a virtual root). release-please's
+    `rust` strategy (package path `.`) bumps `package.version` in the root
+    `Cargo.toml` and the root `Cargo.lock`, and refuses a virtual manifest; so
+    `gh-secrets` stays the root package that also declares `[workspace]`, its
+    `version` stays a literal (not `[workspace.package]`), and release-please
+    bumps the members' literal versions in lockstep with it (`workspace:lint`
+    fails if they, or `.release-please-manifest.json`, drift from it).
+  - *The e2e crate takes no Cargo dependency on `gh-secrets`.* The suites only
+    spawn the binary, never link the library, so the graph edge is Nx's
+    implicit dependency plus `test` `dependsOn gh-secrets:build`.
+  - *Live tiers stay in the PR workflow and finish green without their
+    secrets* — a standing deviation from `ci.md`'s live-tier rule (own
+    workflow, fail fast without the credential). By decision: `live-e2e` and
+    `live-e2e-bitwarden` run on pushes and same-repo PRs, `needs` the check
+    gate, and `live-e2e-bitwarden` is a required check; making them fail fast
+    would turn every unconfigured run red. See "Releases and CI secrets" below.
+  - *Release packaging is hand-rolled* tar/zip in `release.yml`, chained off
+    release-please in the same workflow, rather than
+    `taiki-e/upload-rust-binary-action` behind a tag trigger (a tag pushed by
+    `GITHUB_TOKEN` would not trigger a separate workflow). CI's install-path
+    job reuses those packaging steps verbatim (checked by
+    `tools/check-workflow-contract.mjs`).
+  - *Coverage is measured on the Linux and macOS legs only.* On Windows the
+    tests still run, uninstrumented, but cargo-llvm-cov there does not
+    attribute the spawned binary's coverage, so the number would be wrong.
+  - *Supply chain is not part of `just check`*; it runs as its own Linux-only
+    CI job (`just supply-chain`), per `languages/rust.md`.
+  - *The performance suite* is informational and outside the gate
+    (`benches/AGENTS.md`).
+  - *Tier thresholds are `ci.md`'s starting defaults* (10 min p95 for the
+    affected tier, 5 min for lint/unit) until CI history under the graph gives
+    per-target p50/p95; until then nothing is promoted out of the affected tier.
 
 ## Command surface
 
-Use the `just` recipes; do not hand-roll equivalent commands.
+Use the `just` recipes; do not hand-roll equivalent commands. The gate recipes
+delegate to Nx (`scripts/nx` runs it on the pinned toolchain) and take a tier:
+`affected` (default) or `all` (one full `run-many` sweep).
 
-- `just bootstrap` — add the `rustfmt`/`clippy` components, install
-  `cargo-nextest` for the host platform (`scripts/install-nextest.sh`:
-  idempotent, downloads the prebuilt binary from get.nexte.st for
-  Linux x86_64/arm64, macOS universal, or Windows, and heals a wrong-arch
-  binary), and `cargo fetch`. The gate runs through nextest (not `cargo
-  test`) because the inline test modules mutate process-global env vars and
-  need a process per test; the script is the one cross-platform way to get it.
-  CI installs nextest via a setup action *before* `bootstrap`, so the script
-  no-ops there.
-- `just check` — full quality gate: `cargo fmt --check`, `cargo clippy -D
-  warnings`, `cargo nextest run` (unit + integration), and `test-e2e` (the
-  wiremock-driven e2e suite plus a compile-and-skip pass of the live suite).
-  Must pass before any commit or PR.
-- `just test` / `just test-e2e` — fast unit/integration tests, or the e2e
-  suite that drives the compiled binary against a mock GitHub server.
-- `just test-live` — opt-in: run the live e2e suite against the real GitHub
-  API. Requires `GH_TOKEN` with `repo` scope; creates (idempotently) a private
-  sandbox repo `gh-secrets-e2e-sandbox` on the authenticated user's account
-  and cleans up the secrets it creates.
-- `just test-live-bitwarden` — opt-in: run the live e2e suite against a real,
-  isolated Bitwarden account (`tests/e2e_live_bitwarden.rs`). Requires the
-  account's api-key credentials in the environment (`GH_SECRETS_BW_E2E_CLIENT_ID`,
-  `GH_SECRETS_BW_E2E_CLIENT_SECRET`, `GH_SECRETS_BW_E2E_PASSWORD`) and the `bw`
-  CLI on PATH. Locally, wrap it with `scripts/bw-e2e-env.sh just
-  test-live-bitwarden`, which pulls those creds out of your own vault (see
-  "Releases and CI secrets"). Runs serially and self-cleans every item it
-  seeds; without the creds, every test skips.
-- `just lint` / `just format` — clippy / rustfmt.
-- `just bench` / `just bench-cli` / `just bench-allocs` / `just bench-instructions`
-  — the informational performance suite (Criterion engine micro-benchmarks,
-  hyperfine end-to-end CLI latency, deterministic allocation counts, cachegrind
-  instruction counts). Never a gate — see "Performance suite". `bench-all` runs
-  the portable layers; `bench-cli`/`bench-instructions` need `hyperfine`/
-  `valgrind` on PATH and fail with an install hint otherwise.
-- `just upgrade` — `cargo update`, then re-run `just check`.
+- `just bootstrap` provisions everything from a clean clone (`just --list`
+  says what). Constraints it encodes: rustup >= 1.28 (it installs from
+  `rust-toolchain.toml`); bun comes from the `.tool-versions` pin, never
+  whatever `bun` is on PATH (`scripts/bun.sh`); Nx runs on Node (any LTS on
+  PATH); nextest stays the runner because the inline tests mutate
+  process-global env vars and need a process per test.
+- `just check [all]` is the gate; `just test` / `lint` / `format-check` run one
+  target at the same tier. The affected tier keys off `NX_BASE` (a plain ref
+  name or SHA that resolves — anything else is refused before a target runs) or
+  else `git merge-base origin/master HEAD`.
+- Outside the gate: `just test-live*` (real services; never needed for the
+  gate), `just supply-chain` and `just msrv` (own CI jobs; the MSRV is 1.86, the
+  floor the locked graph needs), `just lint-llm*` (the judged tier), and
+  `just bench*` (`benches/AGENTS.md`).
 
 The product binary is `gh-secrets`. `cargo run -- <args>` invokes it during
-development; the e2e tests invoke the compiled artifact via `assert_cmd` so
-they exercise it the way a user does.
+development; the e2e projects drive the compiled artifact via `assert_cmd`.
+
+## Project graph
+
+Nx runs targets; Cargo resolves dependencies (one workspace, one `Cargo.lock`).
+Each project's `project.json` sits beside its `Cargo.toml`, and each has a
+nested `AGENTS.md` for its own rules.
+
+| Project | Dir | Tag | Holds |
+| --- | --- | --- | --- |
+| `gh-secrets` | `.` | `type:app` | the published crate (lib + bin) and its unit tests |
+| `gh-secrets-e2e` | `tests/e2e` | `type:e2e` | offline e2e: wiremock GitHub, stand-in `bw` |
+| `gh-secrets-live-github` | `tests/live-github` | `type:live` | real GitHub API + `install.sh` vs the real release |
+| `gh-secrets-live-bitwarden` | `tests/live-bitwarden` | `type:live` | real isolated Bitwarden account |
+| `gh-secrets-bench` | `benches` | `type:bench` | informational benchmarks |
+| `scripts` | `scripts` | `type:tooling` | the repo's scripts (toolchain, gate, installers) and their tests |
+| `coverage` | `scripts/coverage` | `type:tooling` | the coverage driver and its end-to-end test |
+| `workspace` | `tools` | `type:workspace` | supply chain, reconciling checks over root and cross-project facts |
+| `coverage-aggregate` | `tools/coverage-aggregate` | `type:workspace` | the coverage gate: merges every crate's profiles, enforces the floor |
+
+- The root project owns every file no other project claims (`.github/`, the
+  justfile, docs), so a change there selects everything; its own inputs are
+  narrowed to `src/` and the manifests, so lint/format replay from cache.
+  `scripts/` is its own project, so script changes reach only what uses them.
+- Boundaries: `tools/project-boundaries.json`, enforced in `workspace:lint` over
+  Cargo *and* Nx edges. `type:app` may depend only on `type:app`, so the
+  published crate can never be made to depend on a test, live, bench or
+  tooling project.
+- Coverage: each crate's `test` target runs under cargo-llvm-cov
+  (`--no-report`, profiles in `target/llvm-cov-target`); `coverage-aggregate:coverage`
+  merges them and fails below **95%** lines over the gh-secrets crate's `src/`.
+  The offline e2e journeys count toward it (they drive the instrumented
+  binary), which is how the `bw` wrapper and `main` are covered.
 
 ## Invariants (non-negotiable)
 
@@ -159,10 +196,10 @@ they exercise it the way a user does.
   via typed structs that reject unknown variants of the small enums we care
   about (visibility, encryption key id, etc.).
 - E2E is part of the default gate, not opt-in. The wiremock e2e suite
-  (`tests/e2e.rs`) is plain `#[test]`-driven (no `#[ignore]`), spins up a
+  (`tests/e2e`) is plain `#[test]`-driven (no `#[ignore]`), spins up a
   mocked GitHub API with `wiremock`, and drives the compiled binary. Live
   GitHub credentials are never required to run the gate. The live e2e suites
-  (`tests/e2e_live.rs` against GitHub, `tests/e2e_live_bitwarden.rs` against a
+  (`tests/live-github` against GitHub, `tests/live-bitwarden` against a
   real isolated Bitwarden account) exist alongside it for opt-in real-API
   coverage — each test runtime-skips with a logged `skip:` line when its gate
   env vars are unset (`GH_SECRETS_LIVE_TEST=1` for both, plus the
@@ -177,6 +214,8 @@ they exercise it the way a user does.
   time-boxed *key material*, never a credential, a secret value, or the
   passphrase — see "Config and paths".)
 - Cross-platform: build and test on Linux, macOS, and Windows in CI.
+- Coverage is a gate: 95% lines over the gh-secrets crate, enforced by
+  `coverage-aggregate:coverage` inside `just check`. Never exclude product code to meet it.
 - Do not commit secrets, credentials, PII, or customer data.
 
 ## Config and paths
@@ -269,8 +308,8 @@ Project-local layout and credentials:
   not a durable credential.
 - A second test-only override, `GH_SECRETS_TEST_SOURCE_FILE`, points the
   engine's source resolver at a JSON file `{ "NAME": "value", ... }` instead
-  of the configured source. Used by `tests/e2e_manifest.rs` and
-  `tests/e2e_auth.rs`, and intentionally undocumented in `--help`, mirroring
+  of the configured source. Used by `tests/e2e/tests/e2e_manifest.rs` and
+  `e2e_auth.rs`, and intentionally undocumented in `--help`, mirroring
   `GH_SECRETS_API_BASE`.
 
 ## Scripts and output are context
@@ -285,87 +324,18 @@ Project-local layout and credentials:
 
 - Tests are how you and future agents actually see this system behave. Invest
   in them deliberately.
-- The default coverage strategy is: unit tests for the pure pieces (the vault
-  crypto in `vault.rs`, pipeline resolution and lazy credentials in
-  `engine.rs`, spec parsing in `cli.rs`, the per-store logic in `sources.rs` /
-  `destinations.rs`), and end-to-end tests in `tests/e2e*.rs` that invoke
-  `gh-secrets` as a subprocess. When you touch a feature, prefer extending the
-  e2e suite — it sees the same thing the user sees.
-- The main wiremock e2e suite (`tests/e2e.rs`) covers the unified surface: a
-  pure-argument pipeline (`--from env:… --to github:… --secret …`) with a
-  no-op re-sync and single-secret repush on change; `--to` replacing a
-  config's destinations; `--only` filtering; `--secret NAME=ITEM` remapping
-  through a real sync; the `--from github:` write-only rejection; the `store`
-  group round-tripping through the encrypted vault (and asserting the file
-  leaks neither names nor values); the local store as both source and
-  destination; `check` reporting pending-then-clean without a GitHub token or
-  a single PUT (config-driven and pure-args); explicit `--config` (with
-  config-relative path/state resolution and a missing-path error) and
-  `--state` overrides; global-config fallback, `--global`, and `list
-  --global`; `init` / `--path` / `--global` incl. overwrite refusals; error
-  edges (source missing a declared value, Bitwarden scoping flags on a
-  non-bitwarden source, empty store name); and the structural sealed-box
-  assertion on the PUT body so a broken seal step can't slip through. It also
-  pins the failure/drift surface: the 401/403/404/500 message mapping on both
-  the public-key GET and the PUT, the 204→"updated" report, malformed
-  public-key rejection (wrong length, non-JSON); partial-failure semantics (a
-  failed destination records *no* state, so the re-run repushes); the state
-  file holding hashes only, and a deleted state file merely forcing a
-  re-push; out-of-band edits to readable destinations (env file, local
-  store) healed by `sync` while `check` stays state-only by design; hostile
-  values (quotes, `$`, backticks, newlines) round-tripping env-destination →
-  env-source with byte-identical canonical lines; invalid `--from`/`--to`/
-  `--secret` specs and malformed/unknown-type configs erroring with the
-  spec/file named; and `list` rendering the Bitwarden mapping (incl.
-  `default_field` and per-secret `field` overrides) with no credentials.
-- The live e2e suite (`tests/e2e_live.rs`) round-trips the same `sync`
-  pipeline (env-file source → real `github:` destination) against the real
-  GitHub API: a secret becomes visible via the API after sync, a resync is a
-  no-op, an updated source value advances `updated_at`, an invalid token
-  surfaces a 401 the user can act on, and undeclaring a secret does not delete
-  it remotely. The sandbox repo is shared across tests; isolation comes from a
-  per-test secret-name prefix and a `Drop` cleanup.
-- The live Bitwarden e2e suite (`tests/e2e_live_bitwarden.rs`) is the source
-  half's real-API complement: it drives `sync`/`source list` against a real,
-  *isolated* Bitwarden account (one that exists only for this test, so seeding
-  and deleting items in it is safe). It proves the auth chain the wiremock
-  suites can't — api-key login + master-password unlock + vault sync — then
-  pulls real values off real items through every field selector (`password`,
-  `#username`, `#notes`, `#fields.<NAME>`) to an env-file destination, asserts
-  a no-op resync, proves `--default-field` changes what an unselected secret
-  extracts (with a per-secret `#field` still overriding it), runs the full
-  cold path through gh-secrets itself (login → unlock → sync → fetch), and
-  confirms a wrong master password yields a precise unlock error with nothing
-  written. Each test seeds uniquely-prefixed items
-  via `bw` directly (the product CLI is write-only-blocked for Bitwarden) and
-  deletes them in `Drop`. The hard-won isolation detail: every test points
-  `BITWARDENCLI_APPDATA_DIR` at its own tempdir, and gh-secrets' spawned `bw`
-  inherits it — so the suite never disturbs (or is confused by) a developer's
-  real Bitwarden login in the default app-data location. See
-  `tests/live_bw_common/mod.rs`.
-- The config-driven e2e suite (`tests/e2e_manifest.rs`) drives the binary
-  through `init`, `list`, and `sync` against a checked-in `gh-secrets.json`:
-  pushes to GitHub (wiremock) and a `.env` destination simultaneously;
-  verifies the PUT body is sealed-box shaped and the plaintext never appears
-  in it; verifies a re-sync of unchanged values produces zero new PUTs and
-  zero env-file writes; verifies a source-side value change repushes only the
-  affected secret. Bitwarden itself is unit-tested against a mock `BwCli`.
-- The auth e2e suite (`tests/e2e_auth.rs`) drives the `gh-secrets auth` command
-  group and proves the credential precedence end-to-end: `auth status` reports
-  provenance without printing values; storing/clearing round-trips through the
-  encrypted vault (the file is `0600`, contains no plaintext token, fails fast
-  without a passphrase in a non-interactive run, and rejects a wrong
-  passphrase with a decryption error); the session lifecycle (`auth unlock`
-  lets fresh processes read *and* write with no passphrase anywhere in the
-  environment, expiry and `auth lock` revoke it, a session cannot extend
-  itself, and a session left over from a *recreated* vault is detected as
-  mismatched and deleted on sight); selective clears (`--github` /
-  `--bitwarden`) and the empty-token / no-flag / lock-with-no-session edges;
-  and — the key assertion — a real `sync`
-  against a wiremock GitHub records the exact `Authorization` bearer, so each
-  test can confirm the token that *won* (shell env, `.env`, `.env.local`, or
-  stored config) is the one that actually reached the API. The dotenv
-  parser/precedence planner is also unit-tested in `src/envfile.rs`.
+- Unit tests cover the pure pieces inline in `src/` (vault crypto in
+  `vault.rs`, pipeline resolution and lazy credentials in `engine.rs`, spec
+  parsing in `cli.rs`, per-store logic in `sources.rs` / `destinations.rs`,
+  the dotenv parser in `envfile.rs`). End-to-end journeys drive the compiled
+  binary as a subprocess and live in their own projects — the catalogue of what
+  each suite covers is in its nested AGENTS.md (`tests/e2e`,
+  `tests/live-github`, `tests/live-bitwarden`). When you touch a feature,
+  prefer extending the offline e2e suite — it sees what the user sees, and it
+  counts toward the coverage floor.
+- The repo's own tooling (tier selection, CI routing, the pre-push hook, the
+  boundary and workflow-contract checks, `install.sh --from-dir`) is tested by
+  real-subprocess tests in `tools/tests` (`workspace:test`).
 - Deliberately *not* e2e-tested: the interactive passphrase prompt and the
   session it auto-mints on a prompted unlock. Those paths need a PTY
   (`rpassword` + `stdin.is_terminal()`), and a PTY harness is flakier than
@@ -373,7 +343,9 @@ Project-local layout and credentials:
   non-interactive fallbacks (env passphrase, precise no-passphrase error) are
   e2e-tested. Don't bolt a PTY driver onto the suite to close this gap.
 
-## Conventional Commits
+## Commits, releases, and merging
+
+### Conventional Commits
 
 This repo **squash-merges**, so the PR title is the single commit message that
 lands on `master` and the only thing release-please (below) parses. It must be
@@ -394,7 +366,33 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 `refactor`, `revert`, `style`, `test`. `feat` triggers a minor bump, `fix`/
 `perf` a patch bump, and a `!` or `BREAKING CHANGE:` footer a major bump.
 
-## Releases and CI secrets
+### Release driver and where each gate tier runs
+
+- **Driver:** release-please in **release-PR mode** (`release.yml`), post-1.0
+  bump policy: `feat` → minor, `fix`/`perf` → patch, `!`/`BREAKING CHANGE` →
+  major; the other types land without a release. Merging the release PR is the
+  only release action (it auto-merges once green; see below).
+- **Placement** (`ci.md` "Gate a given commit once"): the release PR can
+  accumulate several merges, so this repo *batches* releases and the
+  **broader tier — the full `just check all` sweep — runs on the release PR**
+  (release-prep), over the exact tree that ships. **Ordinary pull requests and
+  pushes to `master` run the affected tier** against an explicit base (the
+  merge base with `origin/master`; the previous `master` tip for a push).
+  `scripts/ci-gate-tier.mjs` makes that choice in every `check` leg (a release
+  PR is a same-repo PR whose head branch starts with
+  `release-please--branches--master`), and `tools/tests/ci-gate-tier.test.mjs`
+  pins it. `release.yml` builds and publishes the tagged commit and re-gates
+  nothing.
+- **Fixed status-check contexts** (what branch protection names; keep the job
+  ids and matrix values): `check (ubuntu-latest|macos-latest|windows-latest)`,
+  `build (…)`, `live-e2e`, `live-e2e-bitwarden`, `llmlint`, `lint PR title`.
+  `tools/check-workflow-contract.mjs` fails if one goes missing or gains a
+  condition, path filter or `needs` edge that could leave it unreported on a
+  PR. The `install (…)`, `supply-chain`, `msrv` and `notignored` jobs are not
+  in that set (notignored is a review artifact, never a gate). Which contexts
+  are *required* is branch-protection state, applied separately.
+
+### Release pipeline and CI secrets
 
 - Releases are **automated from conventional commits** via release-please; do
   not hand-bump `version` or push tags. On every push to `master`,
@@ -451,6 +449,10 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   Without it nothing breaks — the workflow falls back to `GITHUB_TOKEN`, the
   auto-merge step logs that it's skipping, and the release PR is merged by hand
   (squash, like any release PR).
+- The **llmlint** CI job needs the `OPENAI_API_KEY` repo secret: it
+  authenticates the codex CLI, the primary harness in `oneharness.toml`, and the
+  job fails naming that secret when it is absent (never a green no-op). The
+  model-free `llmlint validate` runs before it and needs nothing.
 - Live e2e in CI is gated on a `GH_E2E_TOKEN` repo secret. Set it with a PAT
   that has `repo` scope on the account that should host the sandbox repo:
   ```
@@ -495,61 +497,20 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   `gh-secrets-<tag>-<target>/` directory inside the archive. The live e2e
   suite (`live_install_script_downloads_and_verifies_release`) runs the script
   against the real release every CI run that has `GH_E2E_TOKEN`, so a drift in
-  asset naming fails the gate rather than only surfacing for a user.
+  asset naming fails the gate rather than only surfacing for a user. The
+  `install (<os>)` CI job proves the same path on every PR before any release:
+  it packages *this commit's* release build with release.yml's own packaging
+  steps and installs it with `install.sh --from-dir`, then runs the binary.
 
 ## Performance suite
 
-There is an **informational** performance suite, run by
-`.github/workflows/bench.yml` ("Performance") on every PR and on pushes to
-`master`. It reports numbers as a sticky PR comment and a job summary; it is
-**deliberately not a quality gate** — benchmark timings are noisy on shared CI
-runners, so it must never be a required check. The hard, deterministic gate is
-`ci.yml` / `just check`. It is also intentionally *not* part of `just check`,
-so the gate stays fast and dependency-light (Criterion, hyperfine, valgrind,
-and critcmp are only pulled in by the perf recipes / the perf workflow, never
-by `just bootstrap`).
-
-It has four layers, each measuring a different thing and chosen so that the
-ones sensitive to small deltas are the deterministic ones:
-
-- **`benches/engine.rs`** — Criterion micro-benchmarks of the pure in-process
-  engine surface a `sync`/`check` runs between process start and the network:
-  `value_hash` (SHA-256 content addressing), `parse_dotenv` (the env-file
-  source read), `Manifest::load`/parse+validate, and `SyncState` parse. Each
-  has a realistic-floor group (the checked-in `gh-secrets.json` / a small
-  corpus) and a `/synthetic` (or `/scaling`) group charting cost vs. secret (or
-  key) count. `harness = false`; run with `just bench`.
-- **`scripts/bench.sh`** (`just bench-cli`) — end-to-end wall-clock latency via
-  hyperfine, driving the **release** binary one process per command across the
-  offline verbs (`version`, `help`, `list`, `check`, `sync`, `source list`,
-  `store list`, `init`). Fully hermetic: an env-file source → env-file
-  destination config in a throwaway sandbox, `GH_SECRETS_HOME` and
-  `GH_SECRETS_PASSPHRASE` from the environment, so no network, no GitHub token,
-  no `bw`. `--dry-run` (`just bench-cli-smoke`) is a one-shot harness smoke
-  check used by the workflow.
-- **`benches/engine_allocs.rs`** (`just bench-allocs`) — a counting global
-  allocator reports exact allocator calls + bytes for the engine hot paths.
-  Deterministic for a given commit (`harness = false`, plain `main`, no
-  Criterion); no timing/randomness/I/O inside a measured closure.
-- **`scripts/bench-instructions.sh`** (`just bench-instructions`) — cachegrind
-  instruction counts for the same offline CLI verbs against the **`profiling`**
-  profile (release codegen, symbols kept). Linux-only (needs valgrind);
-  reproducible to ~0.1%, so this is where a small end-to-end regression is
-  trustworthy where a hyperfine delta is not. The `report BASE HEAD` subcommand
-  prints a markdown delta table from two `instructions.tsv` files (no valgrind
-  needed), which the workflow uses for the base-vs-PR comparison.
-
-The base comparison (Criterion via `critcmp`, plus the instruction-count delta)
-is best-effort: when the PR base predates a bench — e.g. the PR that introduces
-it — that step fails non-fatally and the report shows absolute numbers only.
-The sticky comment is posted on same-repo PRs only (fork PRs get a read-only
-token, so they fall back to the job summary + uploaded artifact), keyed by the
-`<!-- gh-secrets-perf -->` marker so each run updates one comment in place.
-
-When you add or rename a CLI verb or a hot path, extend the matching layer (a
-Criterion group / allocs row for engine code, a hyperfine + cachegrind `measure`
-row for a new offline command) so the numbers keep tracking what the binary
-runs. See `benches/AGENTS.md` for the bench-fixture conventions.
+An **informational** suite — Criterion engine benches, hyperfine CLI latency,
+deterministic allocation counts and cachegrind instruction counts — run by
+`.github/workflows/bench.yml` ("Performance") on every PR with a sticky
+comment. It is **deliberately not a gate** (shared-runner timings are noisy) and
+never part of `just check` or `just bootstrap`. Layers, recipes and fixture
+conventions: `benches/AGENTS.md`. When you add a CLI verb or a hot path, extend
+the matching layer there.
 
 ## Keeping the allowlist current
 
@@ -562,7 +523,7 @@ runs. See `benches/AGENTS.md` for the bench-fixture conventions.
 ## Conventions
 
 - One binary (`gh-secrets`) and a thin `lib.rs` that re-exports the modules
-  the integration tests need. Production code never depends on the test-only
+  the binary and the bench crate use (the e2e projects never link it). Production code never depends on the test-only
   `GH_SECRETS_API_BASE` env var being unset — the default value lives in
   `github.rs`.
 - Errors use `anyhow` with `.context(...)` throughout — every failure the CLI
@@ -574,9 +535,9 @@ runs. See `benches/AGENTS.md` for the bench-fixture conventions.
   (env file, local store) additionally compare actual content so out-of-band
   edits are healed rather than trusted.
 - Do **not** add a `#[ignore]` marker as a way to keep a test out of the
-  default gate. If a test is genuinely too expensive to run every time, split
-  it into its own recipe that CI still runs (e.g. nightly) and document why
-  in this file.
+  default gate. If a suite is genuinely too expensive for every change, split
+  it into its own project behind a graph edge unrelated changes cannot reach
+  (see "Project graph") and document why in this file.
 
 ## After the main task: refine and hand off
 

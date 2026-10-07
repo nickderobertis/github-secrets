@@ -111,10 +111,13 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      # rust-toolchain.toml pins the channel, components and every release
+      # target in this matrix, so the toolchain comes from the tagged tree.
+      # llmlint: ignore-block[work_goes_through_command_surface] the release jobs stay free of the dev task runner (no just install here, by the recorded release decision); `rustup toolchain install` is rust-toolchain.toml's own installer, the same one `just toolchain` runs.
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        shell: bash
+        run: rustup toolchain install
+      # llmlint: ignore-end[work_goes_through_command_surface]
 
       - name: Cache Cargo registry + build
         uses: Swatinem/rust-cache@v2
@@ -178,8 +181,10 @@ jobs:
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      # llmlint: ignore-block[work_goes_through_command_surface] as in the build job: no dev task runner in the release jobs; this is rust-toolchain.toml's own installer.
+      - name: Install Rust toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+      # llmlint: ignore-end[work_goes_through_command_surface]
 
       - name: Publish (if configured)
         env:

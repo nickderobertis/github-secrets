@@ -1,0 +1,57 @@
+{
+  "$schema": "./node_modules/nx/schemas/project-schema.json",
+  "name": "gh-secrets",
+  "//": "The published crate: lib gh_secrets + bin gh-secrets, with its inline unit tests. It is the root project, so it also owns every file no other project claims (.github/, the justfile, docs); its inputs are narrowed to what the crate compiles from so a docs edit replays cached lint/format results. It may depend only on type:app projects (tools/project-boundaries.json).",
+  "projectType": "application",
+  "tags": [
+    "type:app",
+    "coverage:profiles"
+  ],
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/src/**/*",
+      "{projectRoot}/Cargo.toml",
+      "sharedGlobals"
+    ]
+  },
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p gh-secrets"
+      }
+    },
+    "format-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p gh-secrets -- --check"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p gh-secrets --all-targets --all-features --locked -- -D warnings"
+      }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo build -p gh-secrets --locked"
+      },
+      "//": "Produces target/debug/gh-secrets, the binary the e2e and live journeys spawn when they run uninstrumented (Windows, and the real live runs)."
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "coverage-aggregate:coverage-clear"
+      ],
+      "options": {
+        "command": "bash scripts/coverage/coverage.sh test gh-secrets"
+      },
+      "outputs": [
+        "{workspaceRoot}/target/llvm-cov-target/*.profraw"
+      ],
+      "//": "Unit tests under cargo-llvm-cov (--no-report): raw profiles land in target/llvm-cov-target for coverage-aggregate:coverage to merge. Uncached: cargo-llvm-cov names every profile after the workspace, not the crate, so a replay would restore siblings' stale profiles."
+    }
+  }
+}

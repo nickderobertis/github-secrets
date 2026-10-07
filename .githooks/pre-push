@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Pre-push: the deterministic, model-free llmlint gate (`llmlint validate`) —
+# config structure, every `llmlint: ignore` directive names a real rule, and an
+# edited versioned fragment bumped its version. No harness, no credential, a few
+# seconds, so it catches those slips before the blocking `llmlint` PR check
+# would. The judged tier itself never runs here.
+#
+# Activated by `just bootstrap` (git config core.hooksPath .githooks). When
+# llmlint is not installed it says so and lets the push through: the hook is a
+# local safety net, and CI's `llmlint` job is the gate.
+set -uo pipefail
+
+if ! command -v llmlint >/dev/null 2>&1; then
+  echo "pre-push: llmlint is not installed; skipping 'llmlint validate' (run 'just setup-llmlint' to enable it)." >&2
+  exit 0
+fi
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+args=(validate)
+if git rev-parse --verify --quiet "origin/master^{commit}" >/dev/null; then
+  args+=(--diff-base origin/master)
+fi
+
+if ! llmlint "${args[@]}"; then
+  echo "pre-push: 'llmlint ${args[*]}' failed (above) — fix it, then push again." >&2
+  exit 1
+fi

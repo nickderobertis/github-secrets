@@ -1,0 +1,67 @@
+# Supply-chain policy for every crate in the workspace, checked by
+# `cargo deny check` (with `cargo machete` for unused dependencies) in the
+# `workspace:supply-chain` target — `just supply-chain`, and its own Linux-only
+# CI job. See AGENTS.md "Command surface".
+
+[graph]
+all-features = true
+
+[advisories]
+# RustSec advisories: vulnerabilities always fail; so do unmaintained or yanked
+# crates anywhere in the graph. Add an `ignore` entry only with the advisory id
+# and a reason it does not apply.
+unmaintained = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# An explicit allow-list: everything in today's graph, all permissive or
+# weak-copyleft-file-level. A dependency under any other license fails the check
+# until it is reviewed and added here.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+# The test and bench crates are `publish = false`; they carry the workspace
+# license anyway, but are not held to the published-crate rules.
+ignore = true
+
+[bans]
+# A second version of a crate fails the check unless it is listed in `skip` with
+# the reason it cannot be unified yet. Wildcard version requirements are refused.
+multiple-versions = "deny"
+wildcards = "deny"
+allow-wildcard-paths = true
+# The windows-sys family: dirs-sys 0.4, rpassword/rtoolbox, tokio/socket2 and
+# rustix each pin a different windows-sys minor, and only a coordinated upstream
+# bump unifies them. Windows-only bindings with no runtime cost elsewhere.
+skip = [
+    { crate = "windows-sys", reason = "pinned at different minors by dirs-sys, rpassword, tokio/socket2 and rustix" },
+    { crate = "windows-targets", reason = "follows windows-sys" },
+    { crate = "windows_aarch64_gnullvm", reason = "follows windows-targets" },
+    { crate = "windows_aarch64_msvc", reason = "follows windows-targets" },
+    { crate = "windows_i686_gnu", reason = "follows windows-targets" },
+    { crate = "windows_i686_msvc", reason = "follows windows-targets" },
+    { crate = "windows_x86_64_gnu", reason = "follows windows-targets" },
+    { crate = "windows_x86_64_gnullvm", reason = "follows windows-targets" },
+    { crate = "windows_x86_64_msvc", reason = "follows windows-targets" },
+]
+
+[sources]
+# Only crates.io; no git dependencies or alternate registries.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

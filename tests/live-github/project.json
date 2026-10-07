@@ -1,0 +1,59 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "gh-secrets-live-github",
+  "//": "The live GitHub suite (real GitHub API, and scripts/install.sh against the real release). The test target compiles it and runs it as a no-op (no GH_SECRETS_LIVE_TEST); the live target is the real run, used by the live-e2e CI job via just test-live.",
+  "projectType": "application",
+  "tags": [
+    "type:live"
+  ],
+  "//implicitDependencies": "llmlint: ignore[expensive_tests_stay_behind_their_own_edge] the suite runs scripts/install.sh against the real release, and install.sh cannot leave scripts/: its path is the README's published curl | sh URL. Depending on the scripts project is the narrowest edge that path allows, and in the gate this project's test target is a compiled no-op anyway.",
+  "implicitDependencies": [
+    "gh-secrets",
+    "scripts"
+  ],
+  "targets": {
+    "format": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p gh-secrets-live-github"
+      }
+    },
+    "format-check": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo fmt -p gh-secrets-live-github -- --check"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "cargo clippy -p gh-secrets-live-github --all-targets --all-features --locked -- -D warnings"
+      },
+      "//ignore-test": "llmlint: ignore-block[external_service_suite_stays_out_of_the_affected_tier] recorded standing decision (AGENTS.md, Stack and composition): the live suites stay compiled and run inside the gate as runtime no-ops (no GH_SECRETS_LIVE_TEST there), so the live code cannot rot; the real external calls happen only in the live target, which the gate never runs."
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "gh-secrets:build",
+        "coverage-aggregate:coverage-clear"
+      ],
+      "options": {
+        "command": "bash scripts/coverage/coverage.sh test gh-secrets-live-github"
+      },
+      "outputs": [
+        "{workspaceRoot}/target/llvm-cov-target/*.profraw"
+      ],
+      "//ignore-end": "llmlint: ignore-end[external_service_suite_stays_out_of_the_affected_tier]"
+    },
+    "live": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "gh-secrets:build"
+      ],
+      "cache": false,
+      "options": {
+        "command": "GH_SECRETS_LIVE_TEST=1 cargo nextest run -p gh-secrets-live-github --no-fail-fast"
+      }
+    }
+  }
+}
