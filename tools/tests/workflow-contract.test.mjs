@@ -1,7 +1,7 @@
 // The workflow contract checker against the real workflows, and against copies
 // of them with one realistic regression each.
 import { afterEach, expect, test } from "bun:test";
-import { cpSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkContract } from "../check-workflow-contract.mjs";
 import { REPO, scratch } from "../../scripts/tests/helpers.mjs";
@@ -144,4 +144,35 @@ test("the live suite renaming its sandbox key away from the workflows' is caught
 test("the live suite's sandbox key declaration changing shape is caught", () => {
   const errors = mutated(SANDBOX_RUST, "pub const SANDBOX_REPO_ENV: &str =", "pub static SANDBOX_REPO_ENV: &str =");
   expect(errors.join("\n")).toContain("no longer declares `pub const SANDBOX_REPO_ENV");
+});
+
+test("a missing live suite sandbox-key source is reported as unreadable", () => {
+  const s = scratch();
+  cleanups.push(s.cleanup);
+  cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
+  cpSync(join(REPO, "rust-toolchain.toml"), join(s.dir, "rust-toolchain.toml"));
+  cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
+  cpSync(join(REPO, SANDBOX_RUST), join(s.dir, SANDBOX_RUST));
+  rmSync(join(s.dir, SANDBOX_RUST));
+  expect(checkContract(s.dir).join("\n")).toContain(`${SANDBOX_RUST} is not readable`);
+});
+
+test("ci.yml losing its live GitHub run is caught", () => {
+  const errors = mutated("ci.yml", "          just test-live\n", "          echo live run removed\n");
+  expect(errors.join("\n")).toContain("ci.yml has no step running `just test-live`.");
+});
+
+test("a sandbox repo assigned in another workflow's script is caught", () => {
+  const errors = mutated("release.yml", "        run: rustup toolchain install\n", "        run: GH_SECRETS_E2E_SANDBOX_REPO=hiddenco/quietharbor rustup toolchain install\n");
+  expect(errors.join("\n")).toContain("release.yml:build assigns GH_SECRETS_E2E_SANDBOX_REPO in a script");
+});
+
+test("a sandbox repo set as a literal in workflow-level env is caught", () => {
+  const errors = mutated("release.yml", "env:\n  CARGO_TERM_COLOR: always\n", "env:\n  CARGO_TERM_COLOR: always\n  GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n");
+  expect(errors.join("\n")).toContain("release.yml:(workflow) sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
+});
+
+test("a sandbox repo set as a literal on a step outside the live job is caught", () => {
+  const errors = mutated("notignored.yml", "      - uses: actions/checkout@v4\n        with:\n", "      - uses: actions/checkout@v4\n        env:\n          GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n        with:\n");
+  expect(errors.join("\n")).toContain("notignored.yml:suppressions sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
 });
