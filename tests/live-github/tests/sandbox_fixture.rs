@@ -13,7 +13,7 @@ mod live_common;
 
 use std::panic;
 
-use fake_github::FakeGithub;
+use fake_github::{FakeGithub, KEY_ID};
 use live_common::{journeys, LiveSession, API_BASE_ENV, LIVE_ENV, SANDBOX_REPO_ENV, TOKEN_ENV};
 
 /// A synthetic identity: never a real repository.
@@ -167,13 +167,13 @@ fn the_double_rejects_a_malformed_secret_put() {
             .status()
             .as_u16()
     };
-    assert_eq!(put(serde_json::json!({ "key_id": "fake-key-id" })), 422);
+    assert_eq!(put(serde_json::json!({ "key_id": KEY_ID })), 422);
     assert_eq!(
         put(serde_json::json!({ "key_id": "other", "encrypted_value": "AAAA" })),
         422
     );
     assert_eq!(
-        put(serde_json::json!({ "key_id": "fake-key-id", "encrypted_value": "AAAA" })),
+        put(serde_json::json!({ "key_id": KEY_ID, "encrypted_value": "AAAA" })),
         422
     );
 }

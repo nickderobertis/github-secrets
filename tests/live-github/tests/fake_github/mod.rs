@@ -15,7 +15,8 @@ use serde_json::json;
 use tokio::runtime::Runtime;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
-const KEY_ID: &str = "fake-key-id";
+/// The public-key id the double serves and requires on every secret PUT.
+pub const KEY_ID: &str = "fake-key-id";
 
 struct State {
     repo: String,
