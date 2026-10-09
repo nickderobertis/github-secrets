@@ -19,6 +19,8 @@ use live_common::{journeys, LiveSession, API_BASE_ENV, LIVE_ENV, SANDBOX_REPO_EN
 /// A synthetic identity: never a real repository.
 const SYNTHETIC_REPO: &str = "hiddenco/quietharbor";
 const FAKE_TOKEN: &str = "fixture-token";
+/// Base64 of 48 zero bytes: the shortest body the double accepts as a sealed box.
+const B64_SEALED_BOX: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 /// Configure the live suite exactly as `just test-live` would, but aimed at a
 /// double. `repo` is what the key is set to (`None` leaves it unset).
@@ -176,6 +178,31 @@ fn the_double_rejects_a_malformed_secret_put() {
         put(serde_json::json!({ "key_id": KEY_ID, "encrypted_value": "AAAA" })),
         422
     );
+}
+
+#[test]
+fn the_double_rejects_an_invalid_secret_name() {
+    // A name GitHub forbids must not reach the double's store, or a binary
+    // mangling names could pass here and fail against GitHub.
+    let fake = FakeGithub::start(SYNTHETIC_REPO, FAKE_TOKEN);
+    let body = serde_json::json!({ "key_id": KEY_ID, "encrypted_value": B64_SEALED_BOX });
+    let put = |name: &str| {
+        reqwest::blocking::Client::new()
+            .put(format!(
+                "{}/repos/{SYNTHETIC_REPO}/actions/secrets/{name}",
+                fake.uri()
+            ))
+            .bearer_auth(FAKE_TOKEN)
+            .json(&body)
+            .send()
+            .expect("PUT to the double")
+            .status()
+            .as_u16()
+    };
+    assert_eq!(put("E2E_OK"), 201, "a valid name is stored");
+    for bad in ["", "E2E_X/extra", "1E2E", "GITHUB_E2E", "E2E-X"] {
+        assert_eq!(put(bad), 422, "{bad:?} must be refused");
+    }
 }
 
 #[test]

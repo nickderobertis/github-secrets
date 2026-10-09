@@ -75,6 +75,11 @@ impl State {
             }
             (m, r) if r.starts_with("/actions/secrets/") => {
                 let name = r.trim_start_matches("/actions/secrets/").to_string();
+                if !valid_secret_name(&name) {
+                    return ResponseTemplate::new(422).set_body_json(
+                        json!({ "message": format!("invalid secret name {name:?}") }),
+                    );
+                }
                 match m {
                     "GET" => match secrets.get(&name) {
                         Some((created, updated)) => {
@@ -113,6 +118,17 @@ impl State {
             _ => not_found(),
         }
     }
+}
+
+/// GitHub's secret-name rule: `[A-Za-z_][A-Za-z0-9_]*`, never `GITHUB_`-prefixed.
+/// So an empty name or an extra path segment is refused, not stored.
+fn valid_secret_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !name.to_ascii_uppercase().starts_with("GITHUB_")
 }
 
 /// GitHub's shape for a secret PUT: the double's `key_id` and a base64
