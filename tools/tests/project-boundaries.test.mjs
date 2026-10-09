@@ -72,11 +72,14 @@ test("a project without exactly one type tag fails", () => {
   expect(r.stderr).toContain("app-e2e must carry exactly one type:* tag");
 });
 
+// The real repository has node_modules, so the checker also runs `nx graph`:
+// ~2s warm, and past bun's 5s default on a CI runner busy with the gate's
+// other targets. The budget is for that subprocess, not a slack assertion.
 test("the real repository passes", () => {
   const r = check(REPO);
   expect(r.stderr).toBe("");
   expect(r.code).toBe(0);
-});
+}, 60_000);
 
 test("implicit dependency globs expand the way Nx reads them", () => {
   const dir = workspace();
