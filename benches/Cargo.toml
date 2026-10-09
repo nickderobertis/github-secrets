@@ -3,7 +3,7 @@
 # library. See AGENTS.md beside this file.
 [package]
 name = "gh-secrets-bench"
-version = "1.0.3"
+version = "1.0.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

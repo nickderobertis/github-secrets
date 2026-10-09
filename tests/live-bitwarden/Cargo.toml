@@ -3,7 +3,7 @@
 # runtime no-op unless GH_SECRETS_LIVE_TEST=1 and the GH_SECRETS_BW_E2E_* creds are set.
 [package]
 name = "gh-secrets-live-bitwarden"
-version = "1.0.3"
+version = "1.0.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
