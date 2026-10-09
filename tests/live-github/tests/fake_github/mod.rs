@@ -15,6 +15,8 @@ use serde_json::json;
 use tokio::runtime::Runtime;
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
+const KEY_ID: &str = "fake-key-id";
+
 struct State {
     repo: String,
     token: String,
@@ -60,7 +62,7 @@ impl State {
             })),
             ("GET", "/actions/secrets/public-key") => {
                 ResponseTemplate::new(200).set_body_json(json!({
-                    "key_id": "fake-key-id",
+                    "key_id": KEY_ID,
                     "key": B64.encode([7u8; 32]),
                 }))
             }
@@ -83,6 +85,10 @@ impl State {
                         None => not_found(),
                     },
                     "PUT" => {
+                        if let Err(why) = check_put_body(&req.body) {
+                            return ResponseTemplate::new(422)
+                                .set_body_json(json!({ "message": why }));
+                        }
                         let now = self.tick();
                         match secrets.get_mut(&name) {
                             Some(entry) => {
@@ -105,6 +111,27 @@ impl State {
             _ => not_found(),
         }
     }
+}
+
+/// GitHub's shape for a secret PUT: the double's `key_id` and a base64
+/// sealed box (at least the 48-byte sealed-box overhead), so a binary sending
+/// a malformed body fails here as it would against GitHub.
+fn check_put_body(body: &[u8]) -> Result<(), String> {
+    let v: serde_json::Value =
+        serde_json::from_slice(body).map_err(|e| format!("body is not JSON: {e}"))?;
+    if v["key_id"] != KEY_ID {
+        return Err(format!("key_id must be {KEY_ID:?}"));
+    }
+    let sealed = v["encrypted_value"]
+        .as_str()
+        .ok_or("encrypted_value must be a string")?;
+    let bytes = B64
+        .decode(sealed)
+        .map_err(|e| format!("encrypted_value is not base64: {e}"))?;
+    if bytes.len() < 48 {
+        return Err("encrypted_value is shorter than a sealed box".to_string());
+    }
+    Ok(())
 }
 
 fn not_found() -> ResponseTemplate {

@@ -56,14 +56,22 @@ pub fn token() -> String {
 }
 
 /// The sandbox repo's `owner/name`, read from [`SANDBOX_REPO_ENV`]. Panics
-/// naming the key when it is unset, empty or not `owner/name`.
+/// naming the key when it is unset, empty or not a plain `owner/name`.
 pub fn sandbox_repo() -> String {
     let v = env::var(SANDBOX_REPO_ENV).unwrap_or_default();
     let v = v.trim();
-    let valid = matches!(
-        v.split_once('/'),
-        Some((owner, name)) if !owner.is_empty() && !name.is_empty() && !name.contains('/')
-    );
+    // Each half is a GitHub owner or repo name: ASCII letters, digits, `.`, `-`
+    // and `_`, never a dot segment — so nothing in the value can reshape the
+    // request URLs it is interpolated into.
+    let component = |c: &str| {
+        !c.is_empty()
+            && c != "."
+            && c != ".."
+            && c.chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_'))
+    };
+    let valid =
+        matches!(v.split_once('/'), Some((owner, name)) if component(owner) && component(name));
     assert!(
         valid,
         "{SANDBOX_REPO_ENV} must be set to the sandbox repo as owner/name when {LIVE_ENV}=1 \

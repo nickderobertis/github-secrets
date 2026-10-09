@@ -110,14 +110,24 @@ fn unset_sandbox_key_fails_naming_it() {
 #[test]
 fn malformed_sandbox_key_fails_naming_it() {
     let fake = FakeGithub::start(SYNTHETIC_REPO, FAKE_TOKEN);
-    configure(&fake, Some("quietharbor"));
-    let msg = panic_message(|| {
-        LiveSession::new("malformed");
-    });
-    assert!(
-        msg.contains(SANDBOX_REPO_ENV),
-        "message must name the key: {msg}"
-    );
+    // Not owner/name, or carrying URL metacharacters or dot segments that would
+    // reshape the request paths the identity is interpolated into.
+    for bad in [
+        "quietharbor",
+        "hiddenco/quietharbor/extra",
+        "hiddenco/quietharbor?per_page=1",
+        "hiddenco/quiet harbor",
+        "hiddenco/..",
+    ] {
+        configure(&fake, Some(bad));
+        let msg = panic_message(|| {
+            LiveSession::new("malformed");
+        });
+        assert!(
+            msg.contains(SANDBOX_REPO_ENV),
+            "{bad:?}: message must name the key: {msg}"
+        );
+    }
     assert!(
         fake.requests().is_empty(),
         "a malformed key is refused before any call"
@@ -136,4 +146,34 @@ fn sandbox_key_naming_another_repo_fails_naming_it() {
         "message must name the key: {msg}"
     );
     assert_eq!(fake.requests(), vec!["GET /repos/hiddenco/otherharbor"]);
+}
+
+#[test]
+fn the_double_rejects_a_malformed_secret_put() {
+    // The double must catch a binary that sends GitHub a broken body, or the
+    // journeys above could pass on requests GitHub itself would refuse.
+    let fake = FakeGithub::start(SYNTHETIC_REPO, FAKE_TOKEN);
+    let url = format!(
+        "{}/repos/{SYNTHETIC_REPO}/actions/secrets/E2E_X",
+        fake.uri()
+    );
+    let put = |body: serde_json::Value| {
+        reqwest::blocking::Client::new()
+            .put(&url)
+            .bearer_auth(FAKE_TOKEN)
+            .json(&body)
+            .send()
+            .expect("PUT to the double")
+            .status()
+            .as_u16()
+    };
+    assert_eq!(put(serde_json::json!({ "key_id": "fake-key-id" })), 422);
+    assert_eq!(
+        put(serde_json::json!({ "key_id": "other", "encrypted_value": "AAAA" })),
+        422
+    );
+    assert_eq!(
+        put(serde_json::json!({ "key_id": "fake-key-id", "encrypted_value": "AAAA" })),
+        422
+    );
 }
