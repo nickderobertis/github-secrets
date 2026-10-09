@@ -62,8 +62,8 @@ test-e2e:
     bash scripts/nx run gh-secrets-e2e:test
 
 # Live end-to-end tests against the real GitHub API. Requires `GH_TOKEN` with
-# `repo` scope (covers `secrets:write`); creates and reuses a private sandbox
-# repo `gh-secrets-e2e-sandbox` on the authenticated user's account.
+# `repo` scope (covers `secrets:write`) and `GH_SECRETS_E2E_SANDBOX_REPO` set to the
+# private sandbox repo's `owner/name`; fails naming either one when it is unset.
 test-live:
     bash scripts/nx run gh-secrets-live-github:live
 

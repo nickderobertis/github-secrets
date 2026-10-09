@@ -94,3 +94,30 @@ test("an include list where only some entries name an os is reported", () => {
   const errors = mutated("ci.yml", "          - os: macos-latest\n            target: aarch64-apple-darwin", "          - target: aarch64-apple-darwin");
   expect(errors.join("\n")).toContain("ci.yml:install has a name, needs, strategy or strategy.matrix (os / include) of an unexpected shape");
 });
+
+const SANDBOX_ENV = "          GH_SECRETS_E2E_SANDBOX_REPO: ${{ secrets.GH_SECRETS_E2E_SANDBOX_REPO }}\n";
+
+test("the live GitHub step losing its sandbox-repo secret mapping is caught", () => {
+  const errors = mutated("ci.yml", SANDBOX_ENV, "");
+  expect(errors.join("\n")).toContain("must set env GH_SECRETS_E2E_SANDBOX_REPO: ${{ secrets.GH_SECRETS_E2E_SANDBOX_REPO }}");
+});
+
+test("mapping the sandbox repo from a differently named secret is caught", () => {
+  const errors = mutated("ci.yml", SANDBOX_ENV, "          GH_SECRETS_E2E_SANDBOX_REPO: ${{ secrets.SANDBOX }}\n");
+  expect(errors.join("\n")).toContain("must set env GH_SECRETS_E2E_SANDBOX_REPO");
+});
+
+test("a hard-coded sandbox repo on the live GitHub step is caught", () => {
+  const errors = mutated("ci.yml", SANDBOX_ENV, "          GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n");
+  expect(errors.join("\n")).toContain("hard-codes env GH_SECRETS_E2E_SANDBOX_REPO");
+});
+
+test("a sandbox repo assigned in the live step's script is caught", () => {
+  const errors = mutated("ci.yml", "          just test-live\n", "          GH_SECRETS_E2E_SANDBOX_REPO=hiddenco/quietharbor just test-live\n");
+  expect(errors.join("\n")).toContain("assigns GH_SECRETS_E2E_SANDBOX_REPO in a script");
+});
+
+test("a sandbox repo set as a literal in job env is caught", () => {
+  const errors = mutated("ci.yml", "  live-e2e:\n    needs: check\n", "  live-e2e:\n    needs: check\n    env:\n      GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n");
+  expect(errors.join("\n")).toContain("live-e2e sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
+});

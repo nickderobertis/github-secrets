@@ -4,14 +4,23 @@ The Nx project `gh-secrets-live-github` (tag `type:live`): `tests/e2e_live.rs`
 against the **real** GitHub API, plus `scripts/install.sh` against the real
 latest release. Live contact puts it outside the deterministic gate's real runs:
 
-- In `just check` its `test` target compiles it and runs every test as a
-  runtime no-op (each logs `skip:` unless `GH_SECRETS_LIVE_TEST=1` and
-  `GH_TOKEN` are set), so the live code cannot rot. Never `#[cfg]` it out.
+- In `just check` its `test` target compiles it and runs every live test as a
+  runtime no-op (each logs `skip:` unless `GH_SECRETS_LIVE_TEST=1`), so the live
+  code cannot rot. Never `#[cfg]` it out.
 - The real run is the `live` target (`just test-live`), which the `live-e2e`
-  CI job runs with the `GH_E2E_TOKEN` secret. It needs `GH_TOKEN` with `repo`
-  scope and creates (idempotently) a private sandbox repo
-  `gh-secrets-e2e-sandbox` on the authenticated account. Do not run it from an
-  agent session.
+  CI job runs with the `GH_E2E_TOKEN` and `GH_SECRETS_E2E_SANDBOX_REPO` Actions
+  secrets. It needs `GH_TOKEN` with `repo` scope and
+  `GH_SECRETS_E2E_SANDBOX_REPO` = the private sandbox repo's `owner/name`; the
+  identity is configuration and never a literal in the tree. Unset or
+  unreachable, the sandbox tests fail naming the key — they never skip. Do not
+  run it from an agent session.
+- `tests/sandbox_fixture.rs` runs the same sandbox journeys
+  (`live_common/journeys.rs`) inside the gate against a loopback GitHub double
+  (`tests/fake_github`), with `GH_SECRETS_LIVE_API_BASE` pointing helpers and
+  binary at it and a synthetic sandbox identity, proving the requests land on
+  the configured repo and that an unset, malformed or wrong key fails naming it.
+  `GH_SECRETS_LIVE_API_BASE` is test-only; with it set, the install test sends
+  no token to GitHub.
 - `live_install_script_downloads_and_verifies_release` runs `scripts/install.sh`
   against the real release, which is what catches release-asset naming drift
   for users; the `install (<os>)` CI job proves the same path offline per PR.

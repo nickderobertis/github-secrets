@@ -460,7 +460,13 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   # paste the token when prompted
   ```
   Without the secret, the GitHub `live-e2e` step in `.github/workflows/ci.yml`
-  is a no-op. Rotate the PAT through the same command whenever needed.
+  is a no-op. Rotate the PAT through the same command whenever needed. With the
+  token, the step also needs a `GH_SECRETS_E2E_SANDBOX_REPO` repo secret (the
+  private sandbox repo's `owner/name`; the same-named env var locally) and fails
+  naming it when unset — the sandbox identity is never a literal in the tree:
+  ```
+  gh secret set GH_SECRETS_E2E_SANDBOX_REPO --repo <owner>/<repo>
+  ```
 - The **isolated Bitwarden e2e account** is a throwaway Bitwarden account used
   only by the live Bitwarden suite. Its api-key credentials live in two places,
   kept in lockstep:

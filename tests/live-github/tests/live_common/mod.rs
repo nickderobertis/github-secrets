@@ -1,18 +1,30 @@
-//! Helpers for the live e2e suite (`tests/e2e_live.rs`).
+//! Helpers for the live e2e suite (`tests/e2e_live.rs`) and its loopback proof
+//! (`tests/sandbox_fixture.rs`). `mod live_common` in a sibling integration test
+//! pulls these in; not every consumer uses every item.
 //!
 //! Gated by `GH_SECRETS_LIVE_TEST=1`. When the env var is unset, callers must
 //! early-return so the default gate still compiles and runs the binary as
 //! cheap no-ops. When set, these helpers:
 //!
 //! - Read the GitHub token from `GH_TOKEN`.
-//! - Discover the authenticated user's login once per process.
-//! - Idempotently create a sandbox repo `gh-secrets-e2e-sandbox` (private).
+//! - Read the sandbox repo's `owner/name` from `GH_SECRETS_E2E_SANDBOX_REPO`
+//!   (an Actions secret in CI, an environment variable locally). It is
+//!   configuration, never a literal in the tree; unset or malformed, every
+//!   sandbox test fails naming the key rather than skipping.
+//! - Confirm once per process that the sandbox repo is reachable.
 //! - Hand each test a unique secret-name prefix, so parallel tests against the
 //!   shared sandbox can never collide on the GitHub side.
 //! - In `Drop`, delete every secret the test created (best-effort).
 //!
+//! The API base is `https://api.github.com` unless `GH_SECRETS_LIVE_API_BASE`
+//! points the helpers *and* the spawned binary at a double instead; that
+//! override exists only for `tests/sandbox_fixture.rs` and local proofs.
+//!
 //! The sandbox repo is intentionally left in place between runs; secrets that
 //! survive a panicked run are easy to spot — they share the `E2E_` prefix.
+#![allow(dead_code)]
+
+pub mod journeys;
 
 use std::env;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,12 +32,16 @@ use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use assert_cmd::Command;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tempfile::TempDir;
 
 pub const LIVE_ENV: &str = "GH_SECRETS_LIVE_TEST";
 pub const TOKEN_ENV: &str = "GH_TOKEN";
-pub const SANDBOX_REPO_NAME: &str = "gh-secrets-e2e-sandbox";
+/// The configuration key naming the sandbox repo (`owner/name`).
+pub const SANDBOX_REPO_ENV: &str = "GH_SECRETS_E2E_SANDBOX_REPO";
+/// Test-only API base override (helpers and spawned binary alike).
+pub const API_BASE_ENV: &str = "GH_SECRETS_LIVE_API_BASE";
+pub const GITHUB_API_BASE: &str = "https://api.github.com";
 
 // llmlint: ignore[names_match_behavior] this is exactly the GH_SECRETS_LIVE_TEST gate; the token half is token()'s, which every live test calls next and which fails with the variable to set.
 pub fn live_enabled() -> bool {
@@ -39,47 +55,53 @@ pub fn token() -> String {
         .expect("GH_TOKEN must be set to a non-empty token when GH_SECRETS_LIVE_TEST=1")
 }
 
-pub fn owner() -> &'static str {
-    static OWNER: OnceLock<String> = OnceLock::new();
-    OWNER.get_or_init(|| {
-        let v: Value = http_get("/user").expect("GET /user for live tests");
-        v["login"]
-            .as_str()
-            .expect("user.login is a string")
-            .to_string()
-    })
+/// The sandbox repo's `owner/name`, read from [`SANDBOX_REPO_ENV`]. Panics
+/// naming the key when it is unset, empty or not `owner/name`.
+pub fn sandbox_repo() -> String {
+    let v = env::var(SANDBOX_REPO_ENV).unwrap_or_default();
+    let v = v.trim();
+    let valid = matches!(
+        v.split_once('/'),
+        Some((owner, name)) if !owner.is_empty() && !name.is_empty() && !name.contains('/')
+    );
+    assert!(
+        valid,
+        "{SANDBOX_REPO_ENV} must be set to the sandbox repo as owner/name when {LIVE_ENV}=1 \
+         (an Actions secret of that name in CI, an environment variable locally); \
+         got {}",
+        if v.is_empty() {
+            "nothing"
+        } else {
+            "a value that is not owner/name"
+        }
+    );
+    v.to_string()
 }
 
-pub fn repo_slug() -> String {
-    format!("{}/{}", owner(), SANDBOX_REPO_NAME)
+/// `GH_SECRETS_LIVE_API_BASE` when set (a double), else the real GitHub API.
+pub fn api_base() -> String {
+    env::var(API_BASE_ENV)
+        .ok()
+        .map(|b| b.trim().trim_end_matches('/').to_string())
+        .filter(|b| !b.is_empty())
+        .unwrap_or_else(|| GITHUB_API_BASE.to_string())
 }
 
-/// Create the sandbox repo if it doesn't already exist. Runs once per process.
-pub fn ensure_sandbox_repo() {
+/// Whether the suite targets the real GitHub API (no double configured).
+pub fn targets_real_github() -> bool {
+    api_base() == GITHUB_API_BASE
+}
+
+/// Check once per process that the configured sandbox repo is reachable with
+/// the token, failing with the key to fix when it is not.
+pub fn ensure_sandbox_repo(repo: &str) {
     static ONCE: OnceLock<()> = OnceLock::new();
     ONCE.get_or_init(|| {
-        let body = json!({
-            "name": SANDBOX_REPO_NAME,
-            "private": true,
-            "description": "Sandbox for gh-secrets e2e tests; safe to delete.",
-            "has_issues": false,
-            "has_projects": false,
-            "has_wiki": false,
-            "auto_init": true,
-        });
-        let resp = client()
-            .post("https://api.github.com/user/repos")
-            .bearer_auth(token())
-            .header("accept", "application/vnd.github+json")
-            .json(&body)
-            .send()
-            .expect("POST /user/repos");
-        let status = resp.status().as_u16();
-        // 201 Created, 202 Accepted, or 422 (already exists / name taken).
-        // llmlint: ignore[boundary_inputs_validated] creating the sandbox is idempotent by design and 422 is GitHub's answer for an existing name; if that name is not a usable sandbox, the very next call (its public-key GET in every test) fails loudly with the status, so nothing proceeds on a bad repo.
-        if status != 201 && status != 202 && status != 422 {
-            let body = resp.text().unwrap_or_default();
-            panic!("creating sandbox repo failed: HTTP {status}: {body}");
+        if let Err(e) = http_get(&format!("/repos/{repo}")) {
+            panic!(
+                "the sandbox repo named by {SANDBOX_REPO_ENV} is not reachable with {TOKEN_ENV} \
+                 ({e}); create it (private) on the token's account or fix {SANDBOX_REPO_ENV}"
+            );
         }
     });
 }
@@ -103,7 +125,8 @@ impl LiveSession {
             live_enabled(),
             "LiveSession::new called without {LIVE_ENV}=1; tests must early-return first"
         );
-        ensure_sandbox_repo();
+        let repo = sandbox_repo();
+        ensure_sandbox_repo(&repo);
         let home = TempDir::new().expect("tempdir");
         let dir = TempDir::new().expect("tempdir");
         let nanos = SystemTime::now()
@@ -117,18 +140,23 @@ impl LiveSession {
             home,
             dir,
             prefix,
-            repo: repo_slug(),
+            repo,
         }
     }
 
     /// A fresh `gh-secrets` command pre-wired to this session's tempdir. The
-    /// real GitHub API base is used (not a mock), so any `GH_SECRETS_API_BASE`
-    /// from the parent shell is explicitly cleared.
+    /// binary talks to the same API base as the helpers: the real GitHub API
+    /// (any `GH_SECRETS_API_BASE` from the parent shell is cleared) unless
+    /// `GH_SECRETS_LIVE_API_BASE` names a double.
     pub fn cmd(&self) -> Command {
         let mut c = Command::cargo_bin("gh-secrets").expect("locate gh-secrets bin");
         c.current_dir(self.dir.path());
         c.env("GH_SECRETS_HOME", self.home.path());
-        c.env_remove("GH_SECRETS_API_BASE");
+        if targets_real_github() {
+            c.env_remove("GH_SECRETS_API_BASE");
+        } else {
+            c.env("GH_SECRETS_API_BASE", api_base());
+        }
         c
     }
 
@@ -208,7 +236,7 @@ fn client() -> reqwest::blocking::Client {
 }
 
 pub fn http_get(path: &str) -> Result<Value, String> {
-    let url = format!("https://api.github.com{path}");
+    let url = format!("{}{path}", api_base());
     let resp = client()
         .get(url)
         .bearer_auth(token())
@@ -224,7 +252,7 @@ pub fn http_get(path: &str) -> Result<Value, String> {
 }
 
 pub fn http_delete(path: &str) -> Result<(), String> {
-    let url = format!("https://api.github.com{path}");
+    let url = format!("{}{path}", api_base());
     let resp = client()
         .delete(url)
         .bearer_auth(token())

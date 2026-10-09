@@ -1,0 +1,139 @@
+//! Proves the live suite's sandbox repo is configuration, offline: each test
+//! points `GH_SECRETS_LIVE_API_BASE` at a loopback GitHub double that serves a
+//! synthetic repo, sets `GH_SECRETS_E2E_SANDBOX_REPO` to that identity, and runs
+//! the very journey functions `tests/e2e_live.rs` runs against GitHub — so the
+//! sandbox requests are observed landing on the configured repo. With the key
+//! unset or wrong, the suite fails naming the key instead of skipping.
+//!
+//! Each test sets process env, which is safe because nextest runs one test per
+//! process (the repo's required runner).
+
+mod fake_github;
+mod live_common;
+
+use std::panic;
+
+use fake_github::FakeGithub;
+use live_common::{journeys, LiveSession, API_BASE_ENV, LIVE_ENV, SANDBOX_REPO_ENV, TOKEN_ENV};
+
+/// A synthetic identity: never a real repository.
+const SYNTHETIC_REPO: &str = "hiddenco/quietharbor";
+const FAKE_TOKEN: &str = "fixture-token";
+
+/// Configure the live suite exactly as `just test-live` would, but aimed at a
+/// double. `repo` is what the key is set to (`None` leaves it unset).
+fn configure(fake: &FakeGithub, repo: Option<&str>) {
+    std::env::set_var(LIVE_ENV, "1");
+    std::env::set_var(TOKEN_ENV, FAKE_TOKEN);
+    std::env::set_var(API_BASE_ENV, fake.uri());
+    match repo {
+        Some(r) => std::env::set_var(SANDBOX_REPO_ENV, r),
+        None => std::env::remove_var(SANDBOX_REPO_ENV),
+    }
+}
+
+/// Run one journey against the double under the synthetic identity, then
+/// check where its requests went: every one at the configured repo, including
+/// the binary's own secret PUTs.
+fn run_against_configured_repo(journey: fn()) -> Vec<String> {
+    let fake = FakeGithub::start(SYNTHETIC_REPO, FAKE_TOKEN);
+    configure(&fake, Some(SYNTHETIC_REPO));
+    journey();
+    let requests = fake.requests();
+    let prefix = format!("/repos/{SYNTHETIC_REPO}");
+    assert!(
+        requests
+            .iter()
+            .all(|r| r.split_once(' ').unwrap().1.starts_with(&prefix)),
+        "a request missed the configured repo: {requests:#?}"
+    );
+    let put = format!("PUT {prefix}/actions/secrets/E2E_");
+    assert!(
+        requests.iter().any(|r| r.starts_with(&put)),
+        "the binary never pushed to the configured repo: {requests:#?}"
+    );
+    requests
+}
+
+/// The panic message of `f`, which must panic.
+fn panic_message(f: impl FnOnce() + panic::UnwindSafe) -> String {
+    let err = panic::catch_unwind(f).expect_err("expected a failure, not a pass or skip");
+    err.downcast_ref::<String>()
+        .cloned()
+        .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_default()
+}
+
+#[test]
+fn sync_creates_secret_reaches_the_configured_repo() {
+    run_against_configured_repo(journeys::sync_creates_secret_visible_via_api);
+}
+
+#[test]
+fn noop_resync_reaches_the_configured_repo() {
+    run_against_configured_repo(journeys::noop_resync_returns_nothing_to_do);
+}
+
+#[test]
+fn update_propagates_to_the_configured_repo() {
+    run_against_configured_repo(journeys::update_value_propagates_on_resync);
+}
+
+#[test]
+fn invalid_token_recovery_reaches_the_configured_repo() {
+    let requests = run_against_configured_repo(journeys::recovers_from_invalid_token);
+    // The bad-token attempt also hit the configured repo (and got the 401).
+    let key = format!("GET /repos/{SYNTHETIC_REPO}/actions/secrets/public-key");
+    assert!(requests.iter().filter(|r| **r == key).count() >= 2);
+}
+
+#[test]
+fn undeclared_secret_survives_at_the_configured_repo() {
+    run_against_configured_repo(journeys::undeclared_secret_is_not_deleted_remotely);
+}
+
+#[test]
+fn unset_sandbox_key_fails_naming_it() {
+    let fake = FakeGithub::start(SYNTHETIC_REPO, FAKE_TOKEN);
+    configure(&fake, None);
+    let msg = panic_message(journeys::sync_creates_secret_visible_via_api);
+    assert!(
+        msg.contains(SANDBOX_REPO_ENV),
+        "message must name the key: {msg}"
+    );
+    assert!(
+        fake.requests().is_empty(),
+        "nothing may run without the key"
+    );
+}
+
+#[test]
+fn malformed_sandbox_key_fails_naming_it() {
+    let fake = FakeGithub::start(SYNTHETIC_REPO, FAKE_TOKEN);
+    configure(&fake, Some("quietharbor"));
+    let msg = panic_message(|| {
+        LiveSession::new("malformed");
+    });
+    assert!(
+        msg.contains(SANDBOX_REPO_ENV),
+        "message must name the key: {msg}"
+    );
+    assert!(
+        fake.requests().is_empty(),
+        "a malformed key is refused before any call"
+    );
+}
+
+#[test]
+fn sandbox_key_naming_another_repo_fails_naming_it() {
+    // The double serves only the synthetic repo; a key naming any other repo
+    // must stop the suite at the reachability check, naming the key to fix.
+    let fake = FakeGithub::start(SYNTHETIC_REPO, FAKE_TOKEN);
+    configure(&fake, Some("hiddenco/otherharbor"));
+    let msg = panic_message(journeys::sync_creates_secret_visible_via_api);
+    assert!(
+        msg.contains(SANDBOX_REPO_ENV),
+        "message must name the key: {msg}"
+    );
+    assert_eq!(fake.requests(), vec!["GET /repos/hiddenco/otherharbor"]);
+}

@@ -1,6 +1,8 @@
 # The live GitHub suite: drives the compiled `gh-secrets` binary against the
 # real GitHub API and runs scripts/install.sh against the real release. Each test
-# is a runtime no-op unless GH_SECRETS_LIVE_TEST=1 and GH_TOKEN are set.
+# is a runtime no-op unless GH_SECRETS_LIVE_TEST=1 is set (then GH_TOKEN and
+# GH_SECRETS_E2E_SANDBOX_REPO are required). tests/sandbox_fixture.rs runs the
+# sandbox journeys offline against a loopback GitHub double (wiremock).
 [package]
 name = "gh-secrets-live-github"
 version = "1.0.3"
@@ -12,7 +14,10 @@ publish = false
 
 [dev-dependencies]
 assert_cmd.workspace = true
+base64.workspace = true
 predicates.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+tokio.workspace = true
+wiremock.workspace = true
