@@ -776,10 +776,13 @@ name = "gh-secrets-live-github"
 version = "1.0.3"
 dependencies = [
  "assert_cmd",
+ "base64",
  "predicates",
  "reqwest",
  "serde_json",
  "tempfile",
+ "tokio",
+ "wiremock",
 ]
 
 [[package]]

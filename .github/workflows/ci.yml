@@ -332,7 +332,8 @@ jobs:
         run: just lint-llm-diff origin/master
 
   # Live e2e tests against the real GitHub API. Only runs when the repo has a
-  # `GH_E2E_TOKEN` secret available (it's not on PRs from forks). One OS is
+  # `GH_E2E_TOKEN` secret available (it's not on PRs from forks); with the token
+  # it also requires the `GH_SECRETS_E2E_SANDBOX_REPO` secret and fails without it. One OS is
   # enough — the live suite proves real network behavior, not portability.
   # Standing deviation from the skill's live-tier rule (AGENTS.md): this stays
   # in the PR workflow and finishes green without its secret.
@@ -375,10 +376,17 @@ jobs:
       - name: Live e2e (GitHub)
         env:
           GH_TOKEN: ${{ secrets.GH_E2E_TOKEN }}
+          # The sandbox repo's owner/name: a secret (masked in logs), never a
+          # literal here. tools/check-workflow-contract.mjs pins this mapping.
+          GH_SECRETS_E2E_SANDBOX_REPO: ${{ secrets.GH_SECRETS_E2E_SANDBOX_REPO }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "GH_E2E_TOKEN not configured; skipping GitHub live e2e."
             exit 0
+          fi
+          if [ -z "$GH_SECRETS_E2E_SANDBOX_REPO" ]; then
+            echo "GH_SECRETS_E2E_SANDBOX_REPO not configured; set that Actions secret to the sandbox repo's owner/name." >&2
+            exit 1
           fi
           just test-live
       # llmlint: ignore-end[live_tier_compiles_and_requires_credential]

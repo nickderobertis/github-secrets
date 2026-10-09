@@ -17,6 +17,12 @@
 //      targets, so the pinned toolchain always carries what a release builds.
 //   5. The llmlint job installs the harness oneharness.toml lists first (its
 //      primary), so CI authenticates the harness llmlint will actually try.
+//   6. The live GitHub suite's sandbox repo is configuration: the ci.yml step
+//      that runs `just test-live` maps the Actions secret
+//      GH_SECRETS_E2E_SANDBOX_REPO into its env under the same name, takes every
+//      env value from a secret, and no workflow anywhere sets that key to a
+//      literal (env or a `KEY=` assignment in a script). That key name equals
+//      the live suite's own SANDBOX_REPO_ENV, so the two cannot drift apart.
 //
 // Usage: bun tools/check-workflow-contract.mjs [--root <dir>]
 // Exit status: 0 (quiet) when the contract holds; 1 with each breach printed; 2
@@ -46,6 +52,15 @@ const PR_SAFE_CONDITIONS = new Set([
 ]);
 
 const PIN_STEP = "just@${{ steps.pins.outputs.just }}";
+
+const SANDBOX_REPO_KEY = "GH_SECRETS_E2E_SANDBOX_REPO";
+// The live suite's consumer of that key, reconciled below.
+const SANDBOX_REPO_RUST = "tests/live-github/tests/live_common/mod.rs";
+const SANDBOX_REPO_RUST_CONST = /^pub const SANDBOX_REPO_ENV: &str = "([^"]*)";$/m;
+const SANDBOX_REPO_SECRET = `\${{ secrets.${SANDBOX_REPO_KEY} }}`;
+const SECRET_EXPR = /^\$\{\{\s*secrets\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}$/;
+// `just test-live` itself, not `just test-live-bitwarden`.
+const RUNS_LIVE_GITHUB = /\bjust\s+test-live(?![\w-])/;
 
 /** The contexts a job reports: `name` or job id, expanded over an `os` matrix. */
 function contextsOf(id, job) {
@@ -208,6 +223,53 @@ export function checkContract(root) {
     errors.push(
       `rust-toolchain.toml targets [${sorted(toolchainTargets)}] differ from release.yml's build matrix [${sorted(releaseTargets)}]; keep them equal.`,
     );
+  }
+  // The live GitHub suite reads its sandbox repo from the Actions secret.
+  let rustKey;
+  try {
+    rustKey = readFileSync(join(root, SANDBOX_REPO_RUST), "utf8").match(SANDBOX_REPO_RUST_CONST)?.[1];
+  } catch (err) {
+    errors.push(`${SANDBOX_REPO_RUST} is not readable: ${err.message}`);
+  }
+  if (rustKey !== undefined && rustKey !== SANDBOX_REPO_KEY) {
+    errors.push(`${SANDBOX_REPO_RUST} reads SANDBOX_REPO_ENV ${JSON.stringify(rustKey)}, but the workflows map ${SANDBOX_REPO_KEY}; keep them equal.`);
+  } else if (rustKey === undefined && existsSync(join(root, SANDBOX_REPO_RUST))) {
+    errors.push(`${SANDBOX_REPO_RUST} no longer declares \`pub const SANDBOX_REPO_ENV: &str = "...";\`; update this check with it.`);
+  }
+  const liveSteps = Object.entries(ci?.jobs ?? {}).flatMap(([id, job]) =>
+    (job.steps ?? []).filter((st) => RUNS_LIVE_GITHUB.test(String(st.run ?? ""))).map((st) => [id, st]),
+  );
+  if (!liveSteps.length) errors.push("ci.yml has no step running `just test-live`.");
+  for (const [id, st] of liveSteps) {
+    const env = st.env && typeof st.env === "object" && !Array.isArray(st.env) ? st.env : {};
+    if (env[SANDBOX_REPO_KEY] !== SANDBOX_REPO_SECRET) {
+      errors.push(`ci.yml:${id} step running \`just test-live\` must set env ${SANDBOX_REPO_KEY}: ${SANDBOX_REPO_SECRET}.`);
+    }
+    for (const [k, v] of Object.entries(env)) {
+      if (!SECRET_EXPR.test(String(v))) errors.push(`ci.yml:${id} step running \`just test-live\` hard-codes env ${k}; map it from a secret.`);
+    }
+  }
+  for (const [file, wf] of Object.entries(workflows)) {
+    const envs = [["(workflow)", wf.env]];
+    for (const [id, job] of Object.entries(wf.jobs ?? {})) {
+      envs.push([id, job.env]);
+      for (const st of job.steps ?? []) {
+        envs.push([id, st.env]);
+        if (new RegExp(`\\b${SANDBOX_REPO_KEY}=`).test(String(st.run ?? ""))) {
+          errors.push(`${file}:${id} assigns ${SANDBOX_REPO_KEY} in a script; it may only come from the secret.`);
+        }
+      }
+    }
+    for (const [id, env] of envs) {
+      if (env === undefined) continue;
+      if (env === null || typeof env !== "object" || Array.isArray(env)) {
+        errors.push(`${file}:${id} has an \`env\` that is not a mapping.`);
+        continue;
+      }
+      if (SANDBOX_REPO_KEY in env && env[SANDBOX_REPO_KEY] !== SANDBOX_REPO_SECRET) {
+        errors.push(`${file}:${id} sets ${SANDBOX_REPO_KEY} to something other than ${SANDBOX_REPO_SECRET}.`);
+      }
+    }
   }
   // The llmlint job installs oneharness.toml's primary harness.
   const HARNESS_PACKAGES = { codex: "@openai/codex", "claude-code": "@anthropic-ai/claude-code" };

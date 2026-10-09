@@ -1,25 +1,22 @@
 //! Live e2e tests against the real GitHub API.
 //!
 //! These tests are skipped (as no-op passing tests) unless
-//! `GH_SECRETS_LIVE_TEST=1` and `GH_TOKEN` are both set. They share a single
-//! sandbox repo (`gh-secrets-e2e-sandbox`) on the authenticated user's
-//! account, isolate themselves via a per-test unique secret-name prefix, and
-//! clean up the secrets they create in `Drop`.
-//!
-//! Each test drives the unified `sync` command with an env-file source and a
-//! real `github:` destination — the same pipeline a user runs, with the
-//! GitHub token resolving from `GH_TOKEN` exactly as documented.
+//! `GH_SECRETS_LIVE_TEST=1` is set; then they need `GH_TOKEN` and
+//! `GH_SECRETS_E2E_SANDBOX_REPO` (the sandbox repo's `owner/name`) and fail
+//! naming whichever is missing. The sandbox tests share that one repo, isolate
+//! themselves via a per-test unique secret-name prefix, and clean up the
+//! secrets they create in `Drop`. Their bodies live in `live_common/journeys.rs`
+//! so `tests/sandbox_fixture.rs` can run the same code against a double.
 //!
 //! Run with: `just test-live` (or directly:
-//! `GH_SECRETS_LIVE_TEST=1 GH_TOKEN=... cargo nextest run -p gh-secrets-live-github`
-//! after `cargo build -p gh-secrets`).
+//! `GH_SECRETS_LIVE_TEST=1 GH_TOKEN=... GH_SECRETS_E2E_SANDBOX_REPO=owner/name
+//! cargo nextest run -p gh-secrets-live-github` after `cargo build -p gh-secrets`).
 
 mod live_common;
 
 use std::process::Command as StdCommand;
 
-use live_common::{live_enabled, token, LiveSession, LIVE_ENV};
-use predicates::str::contains;
+use live_common::{journeys, live_enabled, targets_real_github, token, LIVE_ENV};
 use tempfile::TempDir;
 
 macro_rules! skip_if_no_live {
@@ -31,155 +28,34 @@ macro_rules! skip_if_no_live {
     };
 }
 
-/// Sync a secret from an env-file source to the sandbox repo and verify the
-/// GitHub API reports it.
 #[test]
 fn live_sync_creates_secret_visible_via_api() {
     skip_if_no_live!();
-    let s = LiveSession::new("create");
-    let name = s.secret_name("KEY");
-    let from = s.write_source_env(&[(&name, "live-test-value-1")]);
-
-    s.cmd()
-        .args([
-            "sync",
-            "--from",
-            &from,
-            "--to",
-            &format!("github:{}", s.repo),
-            "--secret",
-            &name,
-        ])
-        .assert()
-        .success()
-        .stdout(contains(format!("github:{}: created '{name}'", s.repo)));
-
-    let remote = s.remote_secret_names();
-    assert!(
-        remote.contains(&name),
-        "expected {name} in remote secret list, got {remote:?}"
-    );
+    journeys::sync_creates_secret_visible_via_api();
 }
 
-/// After an initial sync, an immediate resync against the real API must do
-/// nothing. This is the central UX promise of the tool.
 #[test]
 fn live_noop_resync_returns_nothing_to_do() {
     skip_if_no_live!();
-    let s = LiveSession::new("noop");
-    let name = s.secret_name("KEY");
-    let from = s.write_source_env(&[(&name, "live-test-value-2")]);
-    let to = format!("github:{}", s.repo);
-    let args = ["sync", "--from", &from, "--to", &to, "--secret", &name];
-
-    s.cmd().args(args).assert().success();
-    s.cmd()
-        .args(args)
-        .assert()
-        .success()
-        .stdout(contains("nothing to do"));
+    journeys::noop_resync_returns_nothing_to_do();
 }
 
-/// Updating the source value must propagate on the next sync. GitHub's
-/// `updated_at` for the secret advances when we PUT a new ciphertext, so we
-/// use that as our remote witness.
 #[test]
 fn live_update_value_propagates_on_resync() {
     skip_if_no_live!();
-    let s = LiveSession::new("update");
-    let name = s.secret_name("KEY");
-    let from = s.write_source_env(&[(&name, "v1")]);
-    let to = format!("github:{}", s.repo);
-    let args = ["sync", "--from", &from, "--to", &to, "--secret", &name];
-
-    s.cmd().args(args).assert().success();
-    let first = s
-        .remote_secret(&name)
-        .expect("secret exists after first sync");
-    let first_updated = first["updated_at"]
-        .as_str()
-        .expect("updated_at present")
-        .to_string();
-
-    // Pause long enough that GitHub's second-resolution `updated_at` is
-    // guaranteed to advance even if our second PUT lands very fast.
-    std::thread::sleep(std::time::Duration::from_secs(2));
-
-    s.write_source_env(&[(&name, "v2")]);
-    s.cmd()
-        .args(args)
-        .assert()
-        .success()
-        .stdout(contains(format!("github:{}: updated '{name}'", s.repo)));
-    let second = s
-        .remote_secret(&name)
-        .expect("secret still exists after update");
-    let second_updated = second["updated_at"]
-        .as_str()
-        .expect("updated_at present")
-        .to_string();
-    assert!(
-        second_updated > first_updated,
-        "expected updated_at to advance: first={first_updated} second={second_updated}"
-    );
+    journeys::update_value_propagates_on_resync();
 }
 
-/// Bad token first → real 401 from GitHub → rerun with the good token →
-/// success. Proves the error message guides the user to the fix and that the
-/// fix works.
 #[test]
 fn live_recovers_from_invalid_token() {
     skip_if_no_live!();
-    let s = LiveSession::new("rotate");
-    let name = s.secret_name("KEY");
-    let from = s.write_source_env(&[(&name, "v1")]);
-    let to = format!("github:{}", s.repo);
-    let args = ["sync", "--from", &from, "--to", &to, "--secret", &name];
-
-    s.cmd()
-        .env("GH_TOKEN", "ghp_obviously_invalid_token_for_e2e_testing")
-        .args(args)
-        .assert()
-        .failure()
-        .stderr(contains("401"));
-
-    s.cmd()
-        .env("GH_TOKEN", token())
-        .args(args)
-        .assert()
-        .success()
-        .stdout(contains(format!("github:{}: created '{name}'", s.repo)));
-    assert!(s.remote_secret_names().contains(&name));
+    journeys::recovers_from_invalid_token();
 }
 
-/// Removing a secret from the pipeline must NOT touch the remote secret. The
-/// CLI deliberately stays out of GitHub-side cleanup: if a user wants the
-/// remote secret gone too, they delete it themselves.
 #[test]
 fn live_undeclared_secret_is_not_deleted_remotely() {
     skip_if_no_live!();
-    let s = LiveSession::new("undeclare");
-    let name = s.secret_name("KEY");
-    let from = s.write_source_env(&[(&name, "v1")]);
-    let to = format!("github:{}", s.repo);
-
-    s.cmd()
-        .args(["sync", "--from", &from, "--to", &to, "--secret", &name])
-        .assert()
-        .success();
-    assert!(s.remote_secret_names().contains(&name));
-
-    // Same pipeline without the secret declared: nothing to push, and the
-    // remote secret survives.
-    s.cmd()
-        .args(["sync", "--from", &from, "--to", &to])
-        .assert()
-        .success()
-        .stdout(contains("nothing to do"));
-    assert!(
-        s.remote_secret_names().contains(&name),
-        "an undeclared secret must not be deleted remotely"
-    );
+    journeys::undeclared_secret_is_not_deleted_remotely();
 }
 
 /// The cross-platform install script (`scripts/install.sh`) must download the
@@ -199,15 +75,19 @@ fn live_install_script_downloads_and_verifies_release() {
     let bindir = TempDir::new().expect("tempdir for install target");
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/install.sh");
 
-    let output = StdCommand::new("sh")
-        .arg(script)
+    let mut cmd = StdCommand::new("sh");
+    cmd.arg(script)
         .arg("--to")
         .arg(bindir.path())
-        // The script reads GITHUB_TOKEN (not GH_TOKEN) to authenticate the
-        // "latest release" API call and lift the unauthenticated rate limit.
-        .env("GITHUB_TOKEN", token())
-        .output()
-        .expect("run scripts/install.sh");
+        .env_remove("GITHUB_TOKEN");
+    // The script reads GITHUB_TOKEN (not GH_TOKEN) to authenticate the
+    // "latest release" API call and lift the unauthenticated rate limit. The
+    // token belongs to the suite's API base, so it goes to GitHub only when
+    // that base is GitHub (not a double's token under GH_SECRETS_LIVE_API_BASE).
+    if targets_real_github() {
+        cmd.env("GITHUB_TOKEN", token());
+    }
+    let output = cmd.output().expect("run scripts/install.sh");
 
     assert!(
         output.status.success(),

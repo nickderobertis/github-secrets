@@ -1,10 +1,12 @@
 // The workflow contract checker against the real workflows, and against copies
 // of them with one realistic regression each.
 import { afterEach, expect, test } from "bun:test";
-import { cpSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkContract } from "../check-workflow-contract.mjs";
 import { REPO, scratch } from "../../scripts/tests/helpers.mjs";
+
+const SANDBOX_RUST = "tests/live-github/tests/live_common/mod.rs";
 
 let cleanups = [];
 afterEach(() => {
@@ -18,7 +20,8 @@ function mutated(file, from, to) {
   cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
   cpSync(join(REPO, "rust-toolchain.toml"), join(s.dir, "rust-toolchain.toml"));
   cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
-  const path = join(s.dir, ".github/workflows", file);
+  cpSync(join(REPO, SANDBOX_RUST), join(s.dir, SANDBOX_RUST));
+  const path = join(s.dir, file.includes("/") ? file : join(".github/workflows", file));
   const text = readFileSync(path, "utf8");
   expect(text).toContain(from);
   writeFileSync(path, text.replace(from, to));
@@ -67,6 +70,7 @@ test("a release target missing from rust-toolchain.toml is caught", () => {
   expect(toolchain).toContain('    "aarch64-apple-darwin",\n');
   writeFileSync(join(s.dir, "rust-toolchain.toml"), toolchain.replace('    "aarch64-apple-darwin",\n', ""));
   cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
+  cpSync(join(REPO, SANDBOX_RUST), join(s.dir, SANDBOX_RUST));
   expect(checkContract(s.dir).join("\n")).toContain("differ from release.yml's build matrix");
 });
 
@@ -93,4 +97,82 @@ test("the llmlint job installing a harness other than oneharness.toml's primary 
 test("an include list where only some entries name an os is reported", () => {
   const errors = mutated("ci.yml", "          - os: macos-latest\n            target: aarch64-apple-darwin", "          - target: aarch64-apple-darwin");
   expect(errors.join("\n")).toContain("ci.yml:install has a name, needs, strategy or strategy.matrix (os / include) of an unexpected shape");
+});
+
+const SANDBOX_ENV = "          GH_SECRETS_E2E_SANDBOX_REPO: ${{ secrets.GH_SECRETS_E2E_SANDBOX_REPO }}\n";
+
+test("the live GitHub step losing its sandbox-repo secret mapping is caught", () => {
+  const errors = mutated("ci.yml", SANDBOX_ENV, "");
+  expect(errors.join("\n")).toContain("must set env GH_SECRETS_E2E_SANDBOX_REPO: ${{ secrets.GH_SECRETS_E2E_SANDBOX_REPO }}");
+});
+
+test("mapping the sandbox repo from a differently named secret is caught", () => {
+  const errors = mutated("ci.yml", SANDBOX_ENV, "          GH_SECRETS_E2E_SANDBOX_REPO: ${{ secrets.SANDBOX }}\n");
+  expect(errors.join("\n")).toContain("must set env GH_SECRETS_E2E_SANDBOX_REPO");
+});
+
+test("a hard-coded sandbox repo on the live GitHub step is caught", () => {
+  const errors = mutated("ci.yml", SANDBOX_ENV, "          GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n");
+  expect(errors.join("\n")).toContain("hard-codes env GH_SECRETS_E2E_SANDBOX_REPO");
+});
+
+test("a sandbox repo assigned in the live step's script is caught", () => {
+  const errors = mutated("ci.yml", "          just test-live\n", "          GH_SECRETS_E2E_SANDBOX_REPO=hiddenco/quietharbor just test-live\n");
+  expect(errors.join("\n")).toContain("assigns GH_SECRETS_E2E_SANDBOX_REPO in a script");
+});
+
+test("a sandbox repo set as a literal in job env is caught", () => {
+  const errors = mutated("ci.yml", "  live-e2e:\n    needs: check\n", "  live-e2e:\n    needs: check\n    env:\n      GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n");
+  expect(errors.join("\n")).toContain("live-e2e sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
+});
+
+test("a literal value for any env on the live GitHub step is caught", () => {
+  const errors = mutated("ci.yml", "          GH_TOKEN: ${{ secrets.GH_E2E_TOKEN }}\n", "          GH_TOKEN: ghp_literal\n");
+  expect(errors.join("\n")).toContain("hard-codes env GH_TOKEN");
+});
+
+test("a job env that is not a mapping is reported, not crashed on", () => {
+  const errors = mutated("ci.yml", "  live-e2e:\n    needs: check\n", "  live-e2e:\n    needs: check\n    env: [GH_SECRETS_E2E_SANDBOX_REPO]\n");
+  expect(errors.join("\n")).toContain("live-e2e has an `env` that is not a mapping");
+});
+
+test("the live suite renaming its sandbox key away from the workflows' is caught", () => {
+  const errors = mutated(SANDBOX_RUST, '"GH_SECRETS_E2E_SANDBOX_REPO"', '"GH_SECRETS_SANDBOX"');
+  expect(errors.join("\n")).toContain('reads SANDBOX_REPO_ENV "GH_SECRETS_SANDBOX", but the workflows map GH_SECRETS_E2E_SANDBOX_REPO');
+});
+
+test("the live suite's sandbox key declaration changing shape is caught", () => {
+  const errors = mutated(SANDBOX_RUST, "pub const SANDBOX_REPO_ENV: &str =", "pub static SANDBOX_REPO_ENV: &str =");
+  expect(errors.join("\n")).toContain("no longer declares `pub const SANDBOX_REPO_ENV");
+});
+
+test("a missing live suite sandbox-key source is reported as unreadable", () => {
+  const s = scratch();
+  cleanups.push(s.cleanup);
+  cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
+  cpSync(join(REPO, "rust-toolchain.toml"), join(s.dir, "rust-toolchain.toml"));
+  cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
+  cpSync(join(REPO, SANDBOX_RUST), join(s.dir, SANDBOX_RUST));
+  rmSync(join(s.dir, SANDBOX_RUST));
+  expect(checkContract(s.dir).join("\n")).toContain(`${SANDBOX_RUST} is not readable`);
+});
+
+test("ci.yml losing its live GitHub run is caught", () => {
+  const errors = mutated("ci.yml", "          just test-live\n", "          echo live run removed\n");
+  expect(errors.join("\n")).toContain("ci.yml has no step running `just test-live`.");
+});
+
+test("a sandbox repo assigned in another workflow's script is caught", () => {
+  const errors = mutated("release.yml", "        run: rustup toolchain install\n", "        run: GH_SECRETS_E2E_SANDBOX_REPO=hiddenco/quietharbor rustup toolchain install\n");
+  expect(errors.join("\n")).toContain("release.yml:build assigns GH_SECRETS_E2E_SANDBOX_REPO in a script");
+});
+
+test("a sandbox repo set as a literal in workflow-level env is caught", () => {
+  const errors = mutated("release.yml", "env:\n  CARGO_TERM_COLOR: always\n", "env:\n  CARGO_TERM_COLOR: always\n  GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n");
+  expect(errors.join("\n")).toContain("release.yml:(workflow) sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
+});
+
+test("a sandbox repo set as a literal on a step outside the live job is caught", () => {
+  const errors = mutated("notignored.yml", "      - uses: actions/checkout@v4\n        with:\n", "      - uses: actions/checkout@v4\n        env:\n          GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n        with:\n");
+  expect(errors.join("\n")).toContain("notignored.yml:suppressions sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
 });
