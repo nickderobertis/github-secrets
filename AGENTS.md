@@ -453,19 +453,13 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   authenticates the codex CLI, the primary harness in `oneharness.toml`, and the
   job fails naming that secret when it is absent (never a green no-op). The
   model-free `llmlint validate` runs before it and needs nothing.
-- Live e2e in CI is gated on a `GH_E2E_TOKEN` repo secret. Set it with a
-  fine-grained PAT limited to the sandbox repo, granting only Metadata: read
-  and Secrets: read and write (what the suite's requests exercise):
+- Live e2e in CI is gated on two repo secrets: `GH_E2E_TOKEN`, a fine-grained
+  PAT limited to the sandbox repo with Metadata: read and Secrets: read and
+  write, and `GH_SECRETS_E2E_SANDBOX_REPO`, that private repo's `owner/name`.
+  Without the token the `live-e2e` step is a no-op; with it, a missing sandbox
+  secret fails naming it.
   ```
   gh secret set GH_E2E_TOKEN --repo <owner>/<repo>
-  # paste the token when prompted
-  ```
-  Without the secret, the GitHub `live-e2e` step in `.github/workflows/ci.yml`
-  is a no-op. Rotate the PAT through the same command whenever needed. With the
-  token, the step also needs a `GH_SECRETS_E2E_SANDBOX_REPO` repo secret (the
-  private sandbox repo's `owner/name`; the same-named env var locally) and fails
-  naming it when unset — the sandbox identity is never a literal in the tree:
-  ```
   gh secret set GH_SECRETS_E2E_SANDBOX_REPO --repo <owner>/<repo>
   ```
 - The **isolated Bitwarden e2e account** is a throwaway Bitwarden account used
