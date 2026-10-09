@@ -87,12 +87,28 @@ pub fn sandbox_repo() -> String {
 }
 
 /// `GH_SECRETS_LIVE_API_BASE` when set (a double), else the real GitHub API.
+/// The override carries the token, so it must be a plain-HTTP loopback
+/// address (where a test double listens); anything else panics naming it.
 pub fn api_base() -> String {
-    env::var(API_BASE_ENV)
+    let Some(base) = env::var(API_BASE_ENV)
         .ok()
         .map(|b| b.trim().trim_end_matches('/').to_string())
         .filter(|b| !b.is_empty())
-        .unwrap_or_else(|| GITHUB_API_BASE.to_string())
+    else {
+        return GITHUB_API_BASE.to_string();
+    };
+    let loopback = ["http://127.0.0.1:", "http://localhost:", "http://[::1]:"]
+        .iter()
+        .any(|p| {
+            base.strip_prefix(p)
+                .is_some_and(|port| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()))
+        });
+    assert!(
+        loopback,
+        "{API_BASE_ENV} must be a loopback double's http://127.0.0.1:<port> (or localhost / [::1]); \
+         unset it to target the real GitHub API"
+    );
+    base
 }
 
 /// Whether the suite targets the real GitHub API (no double configured).
@@ -101,16 +117,27 @@ pub fn targets_real_github() -> bool {
 }
 
 /// Check once per process that the configured sandbox repo is reachable with
-/// the token, failing with the key to fix when it is not.
+/// the token and is the private repo it names, failing with the key to fix
+/// when it is not.
 pub fn ensure_sandbox_repo(repo: &str) {
     static ONCE: OnceLock<()> = OnceLock::new();
     ONCE.get_or_init(|| {
-        if let Err(e) = http_get(&format!("/repos/{repo}")) {
+        let v = http_get(&format!("/repos/{repo}")).unwrap_or_else(|e| {
             panic!(
                 "the sandbox repo named by {SANDBOX_REPO_ENV} is not reachable with {TOKEN_ENV} \
                  ({e}); create it (private) on the token's account or fix {SANDBOX_REPO_ENV}"
-            );
-        }
+            )
+        });
+        let same_repo = v["full_name"]
+            .as_str()
+            .is_some_and(|n| n.eq_ignore_ascii_case(repo));
+        assert!(
+            same_repo && v["private"] == true,
+            "the repo named by {SANDBOX_REPO_ENV} must be that private repo itself \
+             (got full_name {}, private {}); make it private or fix {SANDBOX_REPO_ENV}",
+            v["full_name"],
+            v["private"]
+        );
     });
 }
 

@@ -19,6 +19,7 @@ const KEY_ID: &str = "fake-key-id";
 
 struct State {
     repo: String,
+    private: bool,
     token: String,
     /// name -> (created_at, updated_at)
     secrets: Mutex<BTreeMap<String, (String, String)>>,
@@ -58,7 +59,7 @@ impl State {
         match (method, rest) {
             ("GET", "") => ResponseTemplate::new(200).set_body_json(json!({
                 "full_name": self.repo,
-                "private": true,
+                "private": self.private,
             })),
             ("GET", "/actions/secrets/public-key") => {
                 ResponseTemplate::new(200).set_body_json(json!({
@@ -154,11 +155,17 @@ pub struct FakeGithub {
 }
 
 impl FakeGithub {
-    /// Serve one repo (`owner/name`) to callers presenting `token`.
+    /// Serve one private repo (`owner/name`) to callers presenting `token`.
     pub fn start(repo: &str, token: &str) -> Self {
+        Self::start_with(repo, token, true)
+    }
+
+    /// As [`FakeGithub::start`], choosing the repo's visibility.
+    pub fn start_with(repo: &str, token: &str, private: bool) -> Self {
         let rt = Runtime::new().expect("tokio runtime for the GitHub double");
         let state = std::sync::Arc::new(State {
             repo: repo.to_string(),
+            private,
             token: token.to_string(),
             secrets: Mutex::new(BTreeMap::new()),
             clock: Mutex::new(0),

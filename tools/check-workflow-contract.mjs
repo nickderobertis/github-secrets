@@ -226,7 +226,7 @@ export function checkContract(root) {
   );
   if (!liveSteps.length) errors.push("ci.yml has no step running `just test-live`.");
   for (const [id, st] of liveSteps) {
-    const env = st.env ?? {};
+    const env = st.env && typeof st.env === "object" && !Array.isArray(st.env) ? st.env : {};
     if (env[SANDBOX_REPO_KEY] !== SANDBOX_REPO_SECRET) {
       errors.push(`ci.yml:${id} step running \`just test-live\` must set env ${SANDBOX_REPO_KEY}: ${SANDBOX_REPO_SECRET}.`);
     }
@@ -246,7 +246,12 @@ export function checkContract(root) {
       }
     }
     for (const [id, env] of envs) {
-      if (env && SANDBOX_REPO_KEY in env && env[SANDBOX_REPO_KEY] !== SANDBOX_REPO_SECRET) {
+      if (env === undefined) continue;
+      if (env === null || typeof env !== "object" || Array.isArray(env)) {
+        errors.push(`${file}:${id} has an \`env\` that is not a mapping.`);
+        continue;
+      }
+      if (SANDBOX_REPO_KEY in env && env[SANDBOX_REPO_KEY] !== SANDBOX_REPO_SECRET) {
         errors.push(`${file}:${id} sets ${SANDBOX_REPO_KEY} to something other than ${SANDBOX_REPO_SECRET}.`);
       }
     }

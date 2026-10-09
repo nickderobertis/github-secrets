@@ -14,13 +14,10 @@ latest release. Live contact puts it outside the deterministic gate's real runs:
   identity is configuration and never a literal in the tree. Unset or
   unreachable, the sandbox tests fail naming the key — they never skip. Do not
   run it from an agent session.
-- `tests/sandbox_fixture.rs` runs the same sandbox journeys
-  (`live_common/journeys.rs`) inside the gate against a loopback GitHub double
-  (`tests/fake_github`), with `GH_SECRETS_LIVE_API_BASE` pointing helpers and
-  binary at it and a synthetic sandbox identity, proving the requests land on
-  the configured repo and that an unset, malformed or wrong key fails naming it.
-  `GH_SECRETS_LIVE_API_BASE` is test-only; with it set, the install test sends
-  no token to GitHub.
+- Sandbox journeys live once, in `live_common/journeys.rs`; any offline proof
+  (`tests/sandbox_fixture.rs`, against a loopback double) must call those same
+  functions rather than restate them, so it proves what the live run does.
+  `GH_SECRETS_LIVE_API_BASE` is a test-only, loopback-only override.
 - `live_install_script_downloads_and_verifies_release` runs `scripts/install.sh`
   against the real release, which is what catches release-asset naming drift
   for users; the `install (<os>)` CI job proves the same path offline per PR.

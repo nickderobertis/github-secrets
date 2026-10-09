@@ -177,3 +177,39 @@ fn the_double_rejects_a_malformed_secret_put() {
         422
     );
 }
+
+#[test]
+fn a_public_sandbox_repo_fails_naming_the_key() {
+    // Secrets pushed by the suite must land in a private repo; a key naming a
+    // public one stops at the probe.
+    let fake = FakeGithub::start_with(SYNTHETIC_REPO, FAKE_TOKEN, false);
+    configure(&fake, Some(SYNTHETIC_REPO));
+    let msg = panic_message(journeys::sync_creates_secret_visible_via_api);
+    assert!(
+        msg.contains(SANDBOX_REPO_ENV),
+        "message must name the key: {msg}"
+    );
+    assert_eq!(
+        fake.requests(),
+        vec![format!("GET /repos/{SYNTHETIC_REPO}")]
+    );
+}
+
+#[test]
+fn a_non_loopback_api_override_is_refused_before_any_call() {
+    // The override carries GH_TOKEN, so it may only name a local double.
+    let fake = FakeGithub::start(SYNTHETIC_REPO, FAKE_TOKEN);
+    configure(&fake, Some(SYNTHETIC_REPO));
+    for bad in [
+        "https://example.invalid",
+        "http://127.0.0.1.example.invalid:80",
+    ] {
+        std::env::set_var(API_BASE_ENV, bad);
+        let msg = panic_message(journeys::sync_creates_secret_visible_via_api);
+        assert!(
+            msg.contains(API_BASE_ENV),
+            "{bad:?}: message must name the override: {msg}"
+        );
+    }
+    assert!(fake.requests().is_empty());
+}

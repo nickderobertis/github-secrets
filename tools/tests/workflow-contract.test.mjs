@@ -121,3 +121,13 @@ test("a sandbox repo set as a literal in job env is caught", () => {
   const errors = mutated("ci.yml", "  live-e2e:\n    needs: check\n", "  live-e2e:\n    needs: check\n    env:\n      GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n");
   expect(errors.join("\n")).toContain("live-e2e sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
 });
+
+test("a literal value for any env on the live GitHub step is caught", () => {
+  const errors = mutated("ci.yml", "          GH_TOKEN: ${{ secrets.GH_E2E_TOKEN }}\n", "          GH_TOKEN: ghp_literal\n");
+  expect(errors.join("\n")).toContain("hard-codes env GH_TOKEN");
+});
+
+test("a job env that is not a mapping is reported, not crashed on", () => {
+  const errors = mutated("ci.yml", "  live-e2e:\n    needs: check\n", "  live-e2e:\n    needs: check\n    env: [GH_SECRETS_E2E_SANDBOX_REPO]\n");
+  expect(errors.join("\n")).toContain("live-e2e has an `env` that is not a mapping");
+});
