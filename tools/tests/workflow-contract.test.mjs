@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { checkContract } from "../check-workflow-contract.mjs";
 import { REPO, scratch } from "../../scripts/tests/helpers.mjs";
 
+const SANDBOX_RUST = "tests/live-github/tests/live_common/mod.rs";
+
 let cleanups = [];
 afterEach(() => {
   for (const c of cleanups) c();
@@ -18,7 +20,8 @@ function mutated(file, from, to) {
   cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
   cpSync(join(REPO, "rust-toolchain.toml"), join(s.dir, "rust-toolchain.toml"));
   cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
-  const path = join(s.dir, ".github/workflows", file);
+  cpSync(join(REPO, SANDBOX_RUST), join(s.dir, SANDBOX_RUST));
+  const path = join(s.dir, file.includes("/") ? file : join(".github/workflows", file));
   const text = readFileSync(path, "utf8");
   expect(text).toContain(from);
   writeFileSync(path, text.replace(from, to));
@@ -67,6 +70,7 @@ test("a release target missing from rust-toolchain.toml is caught", () => {
   expect(toolchain).toContain('    "aarch64-apple-darwin",\n');
   writeFileSync(join(s.dir, "rust-toolchain.toml"), toolchain.replace('    "aarch64-apple-darwin",\n', ""));
   cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
+  cpSync(join(REPO, SANDBOX_RUST), join(s.dir, SANDBOX_RUST));
   expect(checkContract(s.dir).join("\n")).toContain("differ from release.yml's build matrix");
 });
 
@@ -130,4 +134,14 @@ test("a literal value for any env on the live GitHub step is caught", () => {
 test("a job env that is not a mapping is reported, not crashed on", () => {
   const errors = mutated("ci.yml", "  live-e2e:\n    needs: check\n", "  live-e2e:\n    needs: check\n    env: [GH_SECRETS_E2E_SANDBOX_REPO]\n");
   expect(errors.join("\n")).toContain("live-e2e has an `env` that is not a mapping");
+});
+
+test("the live suite renaming its sandbox key away from the workflows' is caught", () => {
+  const errors = mutated(SANDBOX_RUST, '"GH_SECRETS_E2E_SANDBOX_REPO"', '"GH_SECRETS_SANDBOX"');
+  expect(errors.join("\n")).toContain('reads SANDBOX_REPO_ENV "GH_SECRETS_SANDBOX", but the workflows map GH_SECRETS_E2E_SANDBOX_REPO');
+});
+
+test("the live suite's sandbox key declaration changing shape is caught", () => {
+  const errors = mutated(SANDBOX_RUST, "pub const SANDBOX_REPO_ENV: &str =", "pub static SANDBOX_REPO_ENV: &str =");
+  expect(errors.join("\n")).toContain("no longer declares `pub const SANDBOX_REPO_ENV");
 });
