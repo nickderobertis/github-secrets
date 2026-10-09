@@ -73,8 +73,9 @@ impl State {
                 ResponseTemplate::new(200)
                     .set_body_json(json!({ "total_count": list.len(), "secrets": list }))
             }
-            (m, r) if r.starts_with("/actions/secrets/") => {
-                let name = r.trim_start_matches("/actions/secrets/").to_string();
+            (m, r) if r.starts_with(SECRET_ROUTE) => {
+                // Strip the route once: any leftover `/` fails the name rule.
+                let name = r[SECRET_ROUTE.len()..].to_string();
                 if !valid_secret_name(&name) {
                     return ResponseTemplate::new(422).set_body_json(
                         json!({ "message": format!("invalid secret name {name:?}") }),
@@ -119,6 +120,8 @@ impl State {
         }
     }
 }
+
+const SECRET_ROUTE: &str = "/actions/secrets/";
 
 /// GitHub's secret-name rule: `[A-Za-z_][A-Za-z0-9_]*`, never `GITHUB_`-prefixed.
 /// So an empty name or an extra path segment is refused, not stored.

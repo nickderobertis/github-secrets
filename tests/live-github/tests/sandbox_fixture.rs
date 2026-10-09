@@ -200,7 +200,14 @@ fn the_double_rejects_an_invalid_secret_name() {
             .as_u16()
     };
     assert_eq!(put("E2E_OK"), 201, "a valid name is stored");
-    for bad in ["", "E2E_X/extra", "1E2E", "GITHUB_E2E", "E2E-X"] {
+    for bad in [
+        "",
+        "E2E_X/extra",
+        "/actions/secrets/E2E_X",
+        "1E2E",
+        "GITHUB_E2E",
+        "E2E-X",
+    ] {
         assert_eq!(put(bad), 422, "{bad:?} must be refused");
     }
 }
