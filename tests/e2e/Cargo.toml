@@ -4,7 +4,7 @@
 # produces (see project.json), never links the library.
 [package]
 name = "gh-secrets-e2e"
-version = "1.0.3"
+version = "1.0.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
