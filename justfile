@@ -61,9 +61,11 @@ test tier="affected":
 test-e2e:
     bash scripts/nx run gh-secrets-e2e:test
 
-# Live end-to-end tests against the real GitHub API. Requires `GH_TOKEN` with
-# `repo` scope (covers `secrets:write`) and `GH_SECRETS_E2E_SANDBOX_REPO` set to the
-# private sandbox repo's `owner/name`; fails naming either one when it is unset.
+# Live end-to-end tests against the real GitHub API. Requires `GH_SECRETS_E2E_SANDBOX_REPO`
+# set to the private sandbox repo's `owner/name` and `GH_TOKEN` set to a fine-grained
+# token limited to that one repo with Metadata: read and Secrets: read and write (the
+# suite only reads the repo and lists/reads/writes/deletes its Actions secrets; the
+# install test's public release lookup needs no grant); fails naming either key when unset.
 test-live:
     bash scripts/nx run gh-secrets-live-github:live
 

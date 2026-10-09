@@ -9,9 +9,13 @@ latest release. Live contact puts it outside the deterministic gate's real runs:
   code cannot rot. Never `#[cfg]` it out.
 - The real run is the `live` target (`just test-live`), which the `live-e2e`
   CI job runs with the `GH_E2E_TOKEN` and `GH_SECRETS_E2E_SANDBOX_REPO` Actions
-  secrets. It needs `GH_TOKEN` with `repo` scope and
-  `GH_SECRETS_E2E_SANDBOX_REPO` = the private sandbox repo's `owner/name`; the
-  identity is configuration and never a literal in the tree. Unset or
+  secrets. It needs `GH_SECRETS_E2E_SANDBOX_REPO` = the private sandbox repo's
+  `owner/name` (configuration, never a literal in the tree) and `GH_TOKEN` = a
+  fine-grained token limited to that one repo with Metadata: read and Secrets:
+  read and write — every request is `GET /repos/{repo}` or the repo's
+  `actions/secrets` endpoints (list, get, public key, put, delete), and the
+  install test's `releases/latest` read of this public repo needs no grant.
+  Never a classic `repo`-scope token. Unset or
   unreachable, the sandbox tests fail naming the key — they never skip. Do not
   run it from an agent session.
 - Sandbox journeys live once, in `live_common/journeys.rs`; any offline proof

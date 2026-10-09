@@ -453,8 +453,10 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   authenticates the codex CLI, the primary harness in `oneharness.toml`, and the
   job fails naming that secret when it is absent (never a green no-op). The
   model-free `llmlint validate` runs before it and needs nothing.
-- Live e2e in CI is gated on a `GH_E2E_TOKEN` repo secret. Set it with a PAT
-  that has `repo` scope on the account that should host the sandbox repo:
+- Live e2e in CI is gated on a `GH_E2E_TOKEN` repo secret. Set it with a
+  fine-grained PAT limited to the sandbox repo, granting only Metadata: read
+  and Secrets: read and write (what the suite's requests exercise; see
+  `tests/live-github/AGENTS.md`):
   ```
   gh secret set GH_E2E_TOKEN --repo <owner>/<repo>
   # paste the token when prompted
