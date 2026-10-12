@@ -5,7 +5,7 @@
 # sandbox journeys offline against a loopback GitHub double (wiremock).
 [package]
 name = "gh-secrets-live-github"
-version = "1.0.3"
+version = "1.0.4"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
