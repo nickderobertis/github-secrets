@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.4](https://github.com/nickderobertis/github-secrets/compare/v1.0.3...v1.0.4) (2026-10-12)
+
+
+### Bug Fixes
+
+* read private sandbox identities from configuration ([#59](https://github.com/nickderobertis/github-secrets/issues/59)) ([b0bcb6b](https://github.com/nickderobertis/github-secrets/commit/b0bcb6b5cc713353be002a3618cca19c0766896b))
+
+
+### Performance
+
+* **build:** build dev and test profiles without debuginfo ([#62](https://github.com/nickderobertis/github-secrets/issues/62)) ([d08c2d3](https://github.com/nickderobertis/github-secrets/commit/d08c2d3485ec618dd80d280c26c021792e76ab70))
+
 ## [1.0.3](https://github.com/nickderobertis/github-secrets/compare/v1.0.2...v1.0.3) (2026-06-11)
 
 
