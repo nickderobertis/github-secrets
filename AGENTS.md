@@ -312,6 +312,11 @@ Project-local layout and credentials:
   `e2e_auth.rs`, and intentionally undocumented in `--help`, mirroring
   `GH_SECRETS_API_BASE`.
 
+Git hook installation is not part of bootstrap. CI runs `llmlint validate`
+and the diff-scoped judge; `just lint-llm-validate` and `just lint-llm-diff`
+remain available for manual checks. Existing `core.hooksPath` settings are
+left intact so other locally managed hooks keep working.
+
 ## Scripts and output are context
 
 - Scripts and the CLI itself are quiet on success — a single line, or nothing.
@@ -333,7 +338,7 @@ Project-local layout and credentials:
   `tests/live-github`, `tests/live-bitwarden`). When you touch a feature,
   prefer extending the offline e2e suite — it sees what the user sees, and it
   counts toward the coverage floor.
-- The repo's own tooling (tier selection, CI routing, the pre-push hook, the
+- The repo's own tooling (tier selection, CI routing, local push journeys, the
   boundary and workflow-contract checks, `install.sh --from-dir`) is tested by
   real-subprocess tests in `tools/tests` (`workspace:test`).
 - Deliberately *not* e2e-tested: the interactive passphrase prompt and the

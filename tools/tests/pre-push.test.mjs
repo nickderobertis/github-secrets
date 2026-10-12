@@ -1,82 +1,66 @@
-// The pre-push hook, activated the way `just bootstrap` activates it
-// (core.hooksPath .githooks), driven by real `git push`es to a bare remote. A
-// stand-in `llmlint` on PATH decides whether `llmlint validate` passes, and a
-// PATH without one proves the skip.
+// Real local pushes with both a fresh clone and the legacy hooksPath setting.
+// Git's trace records child execution without replacing any tool on PATH.
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
-import { REPO, gitRepo, ok, run, scratch } from "../../scripts/tests/helpers.mjs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { REPO, gitRepo, ok, run } from "../../scripts/tests/helpers.mjs";
 
-const isWindows = process.platform === "win32";
 let cleanups = [];
 afterEach(() => {
-  for (const c of cleanups) c();
+  for (const cleanup of cleanups) cleanup();
   cleanups = [];
 });
 
-/** A clone-like repo with the hook activated, a bare origin, and a fake-llmlint dir. */
-function setup(llmlintExit) {
-  const s = scratch();
-  cleanups.push(s.cleanup);
-  const origin = join(s.dir, "origin.git");
-  ok("git", ["init", "-q", "--bare", "-b", "master", origin]);
-  const repo = join(s.dir, "work");
-  ok("git", ["init", "-q", "-b", "master", repo]);
-  const { git, commit } = gitRepo(repo);
-  mkdirSync(join(repo, ".githooks"));
-  cpSync(join(REPO, ".githooks/pre-push"), join(repo, ".githooks/pre-push"));
-  git("config", "core.hooksPath", ".githooks");
-  git("remote", "add", "origin", origin);
-  commit("initial");
-
-  const fakeBin = join(s.dir, "fake-bin");
-  mkdirSync(fakeBin);
-  const calls = join(s.dir, "llmlint-calls");
-  if (llmlintExit !== null) {
-    const fake = join(fakeBin, "llmlint");
-    writeFileSync(
-      fake,
-      `#!/bin/sh\necho "$*" >> "${calls}"\n[ ${llmlintExit} -eq 0 ] || echo "validate: unknown rule in ignore directive" >&2\nexit ${llmlintExit}\n`,
-    );
-    chmodSync(fake, 0o755);
-  }
-  // Only the system tool dirs plus the fake: no real llmlint can resolve.
-  const toolDirs = ["git", "bash", "sh"].map((t) => dirname(ok("bash", ["-c", `command -v ${t}`])));
-  const PATH = [fakeBin, ...new Set([...toolDirs, "/usr/bin", "/bin"])].join(delimiter);
-  const push = () => run("git", ["push", "origin", "master"], { cwd: repo, env: { ...process.env, PATH } });
-  const remoteHead = () => run("git", ["rev-parse", "--verify", "--quiet", "master"], { cwd: origin }).stdout.trim();
-  const llmlintOnPath = run("bash", ["-c", "command -v llmlint"], { env: { ...process.env, PATH } }).stdout.trim();
-  return { repo, git, commit, push, remoteHead, calls, llmlintOnPath, fakeBin };
+for (const legacy of [false, true]) {
+  test(`ordinary pushes have no duplicate checks (${legacy ? "existing" : "fresh"} clone)`, () => {
+    const dir = mkdtempSync(join(process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? tmpdir(), "ghs-push-"));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const remote = join(dir, "remote.git");
+    ok("git", ["init", "-q", "--bare", "-b", "master", remote]);
+    const { git, commit } = gitRepo(dir);
+    git("remote", "add", "origin", remote);
+    if (legacy) git("config", "core.hooksPath", ".githooks");
+    const justfile = readFileSync(join(REPO, "justfile"), "utf8");
+    writeFileSync(join(dir, "justfile"), justfile);
+    const baseline = join(dir, "baseline.png");
+    const gallery = join(dir, "gallery.html");
+    writeFileSync(baseline, "baseline sentinel");
+    writeFileSync(gallery, "gallery sentinel");
+    commit("initial");
+    const trace = join(dir, "push.trace");
+    const push = () => {
+      const result = run("git", ["push", "origin", "master"], {
+        cwd: dir,
+        env: { ...process.env, GIT_TRACE: trace },
+      });
+      expect(result.code).toBe(0);
+      expect(ok("git", ["--git-dir", remote, "rev-parse", "master"])).toBe(git("rev-parse", "HEAD"));
+    };
+    push();
+    writeFileSync(join(dir, "llmlint.yml"), "changed guarded path\n");
+    commit("change validator config");
+    push();
+    push();
+    // Bootstrap no longer installs any hooks. Inspect its real command expansion
+    // without provisioning unrelated Rust and network dependencies in the fixture.
+    for (let rerun = 0; rerun < 2; rerun++) {
+      const expansion = run("just", ["--dry-run", "bootstrap"], { cwd: dir });
+      expect(expansion.code).toBe(0);
+      expect(expansion.stdout + expansion.stderr).not.toMatch(/git config|hooksPath|pre-push/);
+      push();
+    }
+    expect(run("git", ["config", "--get", "core.hooksPath"], { cwd: dir }).stdout.trim()).toBe(legacy ? ".githooks" : "");
+    expect(readFileSync(trace, "utf8")).not.toMatch(/pre-push|llmlint|capture/);
+    expect(readFileSync(baseline, "utf8")).toBe("baseline sentinel");
+    expect(readFileSync(gallery, "utf8")).toBe("gallery sentinel");
+    // A genuine remote refusal still fails and leaves its refs unchanged.
+    git("remote", "set-url", "origin", join(dir, "missing.git"));
+    expect(run("git", ["push", "origin", "master"], { cwd: dir }).code).not.toBe(0);
+    expect(ok("git", ["--git-dir", remote, "rev-parse", "master"])).toBe(git("rev-parse", "HEAD"));
+  });
 }
 
-test.skipIf(isWindows)("a passing llmlint validate lets the push through", () => {
-  const t = setup(0);
-  const r = t.push();
-  expect(r.code).toBe(0);
-  expect(t.remoteHead()).toBe(t.git("rev-parse", "HEAD"));
-  expect(readFileSync(t.calls, "utf8").trim()).toBe("validate");
-
-  // Once origin/master exists, validate is scoped to the branch's changes.
-  t.git("fetch", "-q", "origin");
-  t.commit("second");
-  expect(t.push().code).toBe(0);
-  expect(readFileSync(t.calls, "utf8").trim().split("\n")[1]).toBe("validate --diff-base origin/master");
-});
-
-test.skipIf(isWindows)("a failing llmlint validate blocks the push", () => {
-  const t = setup(1);
-  const r = t.push();
-  expect(r.code).not.toBe(0);
-  expect(r.stderr).toContain("unknown rule in ignore directive");
-  expect(r.stderr).toContain("pre-push: 'llmlint validate' failed");
-  expect(t.remoteHead()).toBe("");
-});
-
-test.skipIf(isWindows)("without llmlint on PATH the hook skips with its message", () => {
-  const t = setup(null);
-  expect(t.llmlintOnPath).toBe("");
-  const r = t.push();
-  expect(r.code).toBe(0);
-  expect(r.stderr).toContain("pre-push: llmlint is not installed; skipping 'llmlint validate'");
-  expect(t.remoteHead()).toBe(t.git("rev-parse", "HEAD"));
+test("the obsolete repository hook is absent", () => {
+  expect(() => readFileSync(join(REPO, ".githooks/pre-push"))).toThrow();
 });

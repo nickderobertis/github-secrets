@@ -20,14 +20,13 @@ default:
 
 # Set up from a clean clone: the pinned Rust toolchain (rustup >= 1.28 reads
 # rust-toolchain.toml), cargo-nextest and cargo-llvm-cov (CI provides both
-# prebuilt), the pinned bun + the locked Nx install, the git hooks, the
+# prebuilt), the pinned bun + the locked Nx install, the
 # llmlint tier (best effort; CI's llmlint job installs it itself), and a crate pre-fetch.
 bootstrap: toolchain
     sh scripts/install-nextest.sh
     @cargo llvm-cov --version >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
     bash scripts/bun.sh ensure
     bash scripts/nx --version >/dev/null
-    git config core.hooksPath .githooks
     @[ -n "${CI:-}" ] || bash scripts/setup-llmlint.sh
     cargo fetch --locked
 
