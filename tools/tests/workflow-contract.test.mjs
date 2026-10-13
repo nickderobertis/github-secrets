@@ -7,6 +7,9 @@ import { checkContract } from "../check-workflow-contract.mjs";
 import { REPO, scratch } from "../../scripts/tests/helpers.mjs";
 
 const SANDBOX_RUST = "tests/live-github/tests/live_common/mod.rs";
+// The checker reads workflows and tooling sources only; copying the workflow
+// tooling's installed packages and telemetry per case blew Windows' 5s timeout.
+const COPY_GITHUB = { recursive: true, filter: (src) => !/[\\/]\.github[\\/](node_modules|\.telemetry)([\\/]|$)/.test(src) };
 
 let cleanups = [];
 afterEach(() => {
@@ -17,7 +20,7 @@ afterEach(() => {
 function mutated(file, from, to) {
   const s = scratch();
   cleanups.push(s.cleanup);
-  cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
+  cpSync(join(REPO, ".github"), join(s.dir, ".github"), COPY_GITHUB);
   cpSync(join(REPO, "rust-toolchain.toml"), join(s.dir, "rust-toolchain.toml"));
   cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
   cpSync(join(REPO, SANDBOX_RUST), join(s.dir, SANDBOX_RUST));
@@ -65,7 +68,7 @@ test("a ci.yml job without the pinned just is caught", () => {
 test("a release target missing from rust-toolchain.toml is caught", () => {
   const s = scratch();
   cleanups.push(s.cleanup);
-  cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
+  cpSync(join(REPO, ".github"), join(s.dir, ".github"), COPY_GITHUB);
   const toolchain = readFileSync(join(REPO, "rust-toolchain.toml"), "utf8");
   expect(toolchain).toContain('    "aarch64-apple-darwin",\n');
   writeFileSync(join(s.dir, "rust-toolchain.toml"), toolchain.replace('    "aarch64-apple-darwin",\n', ""));
@@ -149,7 +152,7 @@ test("the live suite's sandbox key declaration changing shape is caught", () => 
 test("a missing live suite sandbox-key source is reported as unreadable", () => {
   const s = scratch();
   cleanups.push(s.cleanup);
-  cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
+  cpSync(join(REPO, ".github"), join(s.dir, ".github"), COPY_GITHUB);
   cpSync(join(REPO, "rust-toolchain.toml"), join(s.dir, "rust-toolchain.toml"));
   cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
   cpSync(join(REPO, SANDBOX_RUST), join(s.dir, SANDBOX_RUST));
