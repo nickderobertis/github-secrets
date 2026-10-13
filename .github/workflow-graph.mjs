@@ -35,7 +35,8 @@ export function interpolate(text, context, allowMissing = false) {
 }
 export function matrixRows(matrix) {
   if (!matrix) return [{}];
-  if (typeof matrix !== 'object') throw new Error('unresolved matrix');
+  if (typeof matrix !== 'object' || Array.isArray(matrix)) throw new Error('unresolved matrix');
+  for (const key of ['include', 'exclude']) if (key in matrix && (!Array.isArray(matrix[key]) || !matrix[key].every(e => e && typeof e === 'object' && !Array.isArray(e)))) throw new Error(`unresolved matrix ${key}`);
   let rows = [{}];
   for (const [key, values] of Object.entries(matrix).filter(([k]) => !['include', 'exclude'].includes(k))) {
     if (!Array.isArray(values)) throw new Error(`unresolved matrix axis ${key}`);
@@ -61,6 +62,10 @@ function validateWorkflow(file, wf) {
     const allowed = event === 'workflow_dispatch' ? ['inputs'] : event === 'workflow_call' ? ['inputs', 'secrets', 'outputs'] : event === 'push' ? ['branches', 'tags'] : event === 'pull_request' ? ['types'] : ['types', 'workflows'];
     if (Object.keys(filters).some(k => !allowed.includes(k))) throw new Error(`unsupported trigger filter ${file}:${event}`);
     for (const key of ['branches', 'tags', 'types', 'workflows']) if (key in filters && (!Array.isArray(filters[key]) || !filters[key].every(v => typeof v === 'string'))) throw new Error(`unsupported filter ${file}:${key}`);
+    // matches() implements literal characters and `*` only; refuse other glob syntax.
+    for (const key of ['branches', 'tags']) if (key in filters && !filters[key].every(v => /^[A-Za-z0-9._/*-]+$/.test(v))) throw new Error(`unsupported ${key} pattern ${file}:${event}`);
+    // Only boolean dispatch inputs are modelled; their defaults must be booleans.
+    if (event === 'workflow_dispatch' && 'inputs' in filters && (!object(filters.inputs) || !Object.values(filters.inputs).every(spec => object(spec) && spec.type === 'boolean' && (spec.default === undefined || typeof spec.default === 'boolean')))) throw new Error(`unsupported dispatch inputs ${file}`);
   }
   for (const [id, job] of Object.entries(wf.jobs)) {
     if (!object(job) || (job.if !== undefined && typeof job.if !== 'string') || (job.needs !== undefined && typeof job.needs !== 'string' && (!Array.isArray(job.needs) || !job.needs.every(n => typeof n === 'string')))) throw new Error(`unsupported job ${file}:${id}`);
@@ -93,7 +98,12 @@ export function workflows(dir = join(root, '.github/workflows')) {
   return Object.fromEntries(readdirSync(dir).filter(f => /\.ya?ml$/.test(f)).sort().map(f => [f, validateWorkflow(f, parse(readFileSync(join(dir, f), 'utf8')))]));
 }
 function matches(pattern, ref) { return new RegExp('^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*') + '$').test(ref); }
-function triggered(wf, scenario) {
+function triggered(file, wf, scenario) {
+  // A manual dispatch names exactly one workflow; other events fan out.
+  if (scenario.event === 'workflow_dispatch') {
+    if (typeof scenario.workflow !== 'string') throw new Error('workflow_dispatch scenario must name its target workflow');
+    if (scenario.workflow !== file) return false;
+  }
   const on = wf.on;
   if (typeof on === 'string') return on === scenario.event;
   if (Array.isArray(on)) return on.includes(scenario.event);
@@ -117,7 +127,10 @@ export function resolveRuns(scenario, graph = workflows()) {
   function inputsFor(wf) {
     if (scenario.event !== 'workflow_dispatch') return {};
     const declared = (typeof wf.on === 'object' && !Array.isArray(wf.on) ? wf.on.workflow_dispatch?.inputs : null) ?? {};
-    return { ...Object.fromEntries(Object.entries(declared).map(([key, spec]) => [key, spec?.default ?? null])), ...(scenario.payload?.inputs ?? {}) };
+    const supplied = scenario.payload?.inputs ?? {};
+    if (!supplied || typeof supplied !== 'object' || Array.isArray(supplied)) throw new Error('unsupported dispatch payload inputs');
+    for (const [key, value] of Object.entries(supplied)) if (!(key in declared) || typeof value !== 'boolean') throw new Error(`unsupported dispatch input ${key}`);
+    return { ...Object.fromEntries(Object.entries(declared).map(([key, spec]) => [key, spec.default ?? false])), ...supplied };
   }
   function jobs(file, wf, prefix = '', stack = [], inputs = inputsFor(wf)) {
     if (stack.includes(file)) throw new Error(`recursive workflow call ${file}`);
@@ -162,7 +175,7 @@ export function resolveRuns(scenario, graph = workflows()) {
     }
     return rows;
   }
-  for (const [file, wf] of Object.entries(graph)) if (triggered(wf, scenario)) runs.push({ workflow: file, event: scenario.id, jobs: jobs(file, wf) });
+  for (const [file, wf] of Object.entries(graph)) if (triggered(file, wf, scenario)) runs.push({ workflow: file, event: scenario.id, jobs: jobs(file, wf) });
   return runs;
 }
 export function digest() {

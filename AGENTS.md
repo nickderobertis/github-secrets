@@ -400,8 +400,9 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   carriers `check (macos-latest)` / `build (macos-latest)` keep the protected
   names and fail unless the lane passed or the classifier authorized its
   omission. `macos-diagnostic.yml` is the manual, default-off opt-in. The
-  `github-workflows:budgets` target holds both bounds (1 Mac job/run, 2
-  Mac-spending runs/change) from telemetry its `test` target records.
+  `github-workflows:budgets` target checks the Mac jobs/run and
+  Mac-spending runs/change bounds in `.github/budgets.yaml` against telemetry
+  its `test` target records.
 - **Fixed status-check contexts** (what branch protection names; keep the job
   ids and matrix values): `check (ubuntu-latest|macos-latest|windows-latest)`,
   `build (…)`, `live-e2e`, `live-e2e-bitwarden`, `llmlint`, `lint PR title`.

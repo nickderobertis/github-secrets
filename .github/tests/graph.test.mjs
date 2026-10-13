@@ -17,7 +17,7 @@ test('actual event/call/matrix graph and complete lifecycle record telemetry', (
    const p = event === 'pull_request' ? payload(h, kind, fork) : event === 'push' ? { before: h.base, after: h.heads[kind], ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master' } : event === 'release' ? { release: { tag_name: 'v1.1.0' } } : event === 'workflow_run' ? { workflow_run: { head_sha: h.heads[kind], conclusion: 'success' } } : event === 'repository_dispatch' ? { event_type: 'downstream-smoke', client_payload: { sha: h.heads[kind] } } : event === 'workflow_dispatch' ? (id === 'manual-opt-in' ? { inputs: { macos_diagnostic: true } } : { inputs: {} }) : {};
    if (action) p.action = action;
    const decision = classify(h, p, event);
-   const scenario = { cwd: h.cwd, id: `${id}/${kind}/${fork ? 'fork' : 'same-repo'}`, event, action, payload: p, ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master', macosRequired: decision.macosRequired, classification: decision, releaseCreated: id === 'release-merge', tag: 'v1.1.0' };
+   const scenario = { cwd: h.cwd, id: `${id}/${kind}/${fork ? 'fork' : 'same-repo'}`, event, action, payload: p, ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master', macosRequired: decision.macosRequired, classification: decision, releaseCreated: id === 'release-merge', tag: 'v1.1.0', ...(event === 'workflow_dispatch' ? { workflow: 'macos-diagnostic.yml' } : {}) };
    const runs = resolveRuns(scenario, graph);
    if (event === 'pull_request') {
     const names = runs.flatMap(r => r.jobs.map(j => j.name));
@@ -148,5 +148,26 @@ test('automatic events cannot carry the diagnostic opt-in into a Mac job', () =>
    const runs = resolveRuns({ cwd: h.cwd, id: `evade/${event}`, event, payload: p, ref }, workflows());
    assert.equal(runs.flatMap(r => r.jobs).some(j => j.macos), false, event);
   }
+  // Every other dispatchable workflow, dispatched with its defaults, stays Mac-free.
+  const graph = workflows();
+  for (const file of Object.keys(graph).filter(f => f !== 'macos-diagnostic.yml' && graph[f].on && typeof graph[f].on === 'object' && 'workflow_dispatch' in graph[f].on)) {
+   const runs = resolveRuns({ cwd: h.cwd, id: `dispatch/${file}`, event: 'workflow_dispatch', workflow: file, payload: { inputs: {} }, ref: 'refs/heads/master' }, graph);
+   assert.equal(runs.length, 1, file); assert.equal(runs[0].jobs.some(j => j.macos), false, file);
+  }
  } finally { h.cleanup(); }
+});
+
+test('array matrices, unsupported branch globs and mistyped dispatch inputs are refused, not guessed', () => {
+ assert.throws(() => matrixRows([]), /unresolved matrix/);
+ assert.throws(() => matrixRows({ include: 'macos-latest' }), /unresolved matrix include/);
+ const pr = { id: 'invalid', event: 'pull_request', action: 'opened', payload: {}, ref: 'refs/heads/feature' };
+ const job = { proof: { 'runs-on': 'macos-latest' } };
+ for (const pattern of ['!master', 'release/[ab]', 'v?.*']) assert.throws(() => resolveRuns({ ...pr, event: 'push' }, { 'test.yml': { on: { push: { branches: [pattern] } }, jobs: job } }), /unsupported branches pattern/);
+ assert.throws(() => resolveRuns(pr, { 'test.yml': { on: { workflow_dispatch: { inputs: { macos_diagnostic: { type: 'string', default: 'false' } } } }, jobs: job } }), /unsupported dispatch inputs/);
+ const dispatch = { 'test.yml': { on: { workflow_dispatch: { inputs: { macos_diagnostic: { type: 'boolean', default: false } } } }, jobs: { proof: { 'runs-on': 'macos-latest', if: 'inputs.macos_diagnostic' } } } };
+ for (const inputs of [{ macos_diagnostic: 'false' }, { undeclared: true }, ['macos_diagnostic']]) assert.throws(() => resolveRuns({ ...pr, event: 'workflow_dispatch', workflow: 'test.yml', payload: { inputs } }, dispatch), /unsupported dispatch/);
+ assert.equal(resolveRuns({ ...pr, event: 'workflow_dispatch', workflow: 'test.yml', payload: { inputs: {} } }, dispatch)[0].jobs[0].macos, false);
+ assert.throws(() => resolveRuns({ ...pr, event: 'workflow_dispatch', payload: { inputs: {} } }, dispatch), /must name its target workflow/);
+ assert.deepEqual(resolveRuns({ ...pr, event: 'workflow_dispatch', workflow: 'other.yml', payload: { inputs: {} } }, dispatch), []);
+ assert.equal(resolveRuns({ ...pr, event: 'workflow_dispatch', workflow: 'test.yml', payload: { inputs: { macos_diagnostic: true } } }, dispatch)[0].jobs[0].macos, true);
 });
