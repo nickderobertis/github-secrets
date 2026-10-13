@@ -173,10 +173,12 @@ nested `AGENTS.md` for its own rules.
 | `coverage-aggregate` | `tools/coverage-aggregate` | `type:workspace` | the coverage gate: merges every crate's profiles, enforces the floor |
 | `github-workflows` | `.github` | `type:tooling` | macOS routing (release-only classifier, carriers), workflow-graph proofs, Mac scheduling budgets |
 
-- The root project owns every file no other project claims (`.github/`, the
-  justfile, docs), so a change there selects everything; its own inputs are
-  narrowed to `src/` and the manifests, so lint/format replay from cache.
-  `scripts/` is its own project, so script changes reach only what uses them.
+- The root project owns every file no other project claims (the justfile,
+  docs), so a change there selects everything; its own inputs are narrowed to
+  `src/` and the manifests, so lint/format replay from cache. `scripts/` and
+  `.github/` (`github-workflows`) are their own projects, so a script or
+  workflow change reaches only what uses it — plus `workspace`, whose
+  workflow-contract check depends on every project.
 - Boundaries: `tools/project-boundaries.json`, enforced in `workspace:lint` over
   Cargo *and* Nx edges. `type:app` may depend only on `type:app`, so the
   published crate can never be made to depend on a test, live, bench or
