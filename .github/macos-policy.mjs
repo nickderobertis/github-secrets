@@ -1,8 +1,10 @@
+// Exit 0: classification (including conservative unreadable PR); exit 1: invalid usage.
 // One release-only authority for production routing and graph journeys.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { options } from './inputs.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const git = (args, cwd) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
@@ -10,32 +12,35 @@ function toml(text) {
   const bun = execFileSync('bash', [root + 'scripts/bun.sh', 'path'], { encoding: 'utf8' }).trim();
   return JSON.parse(execFileSync(bun, ['-e', 'console.log(JSON.stringify(Bun.TOML.parse(await Bun.stdin.text())))'], { input: text, encoding: 'utf8' }));
 }
+const version = v => typeof v === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(v);
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-export function releaseBranch() {
-  const workflow = parse(readFileSync(root + '.github/workflows/release.yml', 'utf8'));
-  const config = JSON.parse(readFileSync(root + 'release-please-config.json', 'utf8'));
-  const branch = workflow.on.push.branches;
-  if (branch.length !== 1 || config.packages['.']['release-type'] !== 'rust') throw new Error('unsupported release configuration');
-  const name = toml(readFileSync(root + 'Cargo.toml', 'utf8')).package.name;
+export function releaseBranch(configRoot = root) {
+  const workflow = parse(readFileSync(configRoot + '.github/workflows/release.yml', 'utf8'));
+  const config = JSON.parse(readFileSync(configRoot + 'release-please-config.json', 'utf8'));
+  const branch = workflow?.on?.push?.branches;
+  if (!Array.isArray(branch) || branch.length !== 1 || typeof branch[0] !== 'string' || !/^[A-Za-z0-9._/-]+$/.test(branch[0]) || config?.packages?.['.']?.['release-type'] !== 'rust') throw new Error('unsupported release configuration');
+  const name = toml(readFileSync(configRoot + 'Cargo.toml', 'utf8')).package?.name;
+  if (typeof name !== 'string' || !/^[A-Za-z0-9_-]+$/.test(name)) throw new Error('invalid release package name');
   return `release-please--branches--${branch[0]}--components--${name}`;
 }
 function semanticVersions(a, b, path, names) {
   if (path.endsWith('Cargo.toml')) {
     const old = toml(a), next = toml(b);
     if (!names.has(old.package?.name) || old.package.name !== next.package?.name) return false;
+    if (!version(old.package.version) || !version(next.package.version)) return false;
     delete old.package.version; delete next.package.version;
     return equal(old, next);
   }
   if (path === 'Cargo.lock') {
     const old = toml(a), next = toml(b);
     for (const doc of [old, next]) for (const pkg of doc.package ?? []) {
-      if (names.has(pkg.name) && !pkg.source) delete pkg.version;
+      if (names.has(pkg.name) && !pkg.source) { if (!version(pkg.version)) return false; delete pkg.version; }
     }
     return equal(old, next);
   }
   if (path === '.release-please-manifest.json') {
     const old = JSON.parse(a), next = JSON.parse(b);
-    return equal(Object.keys(old), Object.keys(next)) && Object.keys(old).every(k => k === '.' && typeof old[k] === 'string' && typeof next[k] === 'string' && /^\d+\.\d+\.\d+$/.test(next[k]));
+    return equal(Object.keys(old), Object.keys(next)) && Object.keys(old).every(k => k === '.' && version(old[k]) && version(next[k]));
   }
   return false;
 }
@@ -68,11 +73,10 @@ export function classify(eventName, payload, base, head, cwd = process.cwd()) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.shift() !== 'classify') throw new Error('usage: macos-policy.mjs classify --event PATH --base REF --head REF');
-  const options = {};
-  while (args.length) { const key = args.shift(); options[key] = args.shift(); }
+  const opts = options(args, ['--event', '--base', '--head']);
   let payload = {};
-  try { payload = JSON.parse(readFileSync(options['--event'], 'utf8')); } catch { /* A PR must fail closed. */ }
+  try { payload = JSON.parse(readFileSync(opts['--event'], 'utf8')); } catch { /* A PR must fail closed. */ }
   // Without Actions' event identity, classify conservatively as an unknown PR.
   const event = process.env.GITHUB_EVENT_NAME || 'pull_request';
-  console.log(JSON.stringify(classify(event, payload, options['--base'], options['--head'])));
+  console.log(JSON.stringify(classify(event, payload, opts['--base'], opts['--head'])));
 }

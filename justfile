@@ -27,9 +27,13 @@ bootstrap: toolchain
     @cargo llvm-cov --version >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
     bash scripts/bun.sh ensure
     bash scripts/nx --version >/dev/null
-    npm ci --prefix .github --ignore-scripts --silent
+    just setup-workflows
     @[ -n "${CI:-}" ] || bash scripts/setup-llmlint.sh
     cargo fetch --locked
+
+# Locked, private workflow-tooling dependencies (no product dependency).
+setup-workflows:
+    npm ci --prefix .github --ignore-scripts --silent
 
 # Install the Rust toolchain rust-toolchain.toml pins (channel, components, release targets).
 toolchain:

@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { releaseBranch } from '../macos-policy.mjs';
 import { root } from '../workflow-graph.mjs';
 import { history, payload, classify } from './helpers.mjs';
 test('classifier drives real git diffs, fails closed, and ignores author/title authority', () => {
@@ -32,4 +33,58 @@ test('real carrier command accepts only success or classifier-authorized omissio
   }
   const r = spawnSync(process.execPath, [join(root, '.github/macos-result.mjs')], { env: { ...process.env, POLICY_RESULT: 'success', CHECK_RESULT: 'failure', MACOS_REQUIRED: 'true', MACOS_RESULT: 'success' } });
   assert.notEqual(r.status, 0);
+});
+
+test('route subprocess validates classifier output and only permits explicit manual diagnostic', () => {
+ const h = history();
+ try {
+  for (const [event, p, diagnostic, expected] of [
+   ['pull_request', payload(h, 'source'), 'false', true],
+   ['pull_request', payload(h, 'version'), 'false', false],
+   ['workflow_dispatch', {}, 'false', false],
+   ['workflow_dispatch', {}, 'true', true],
+   ['push', {}, 'true', false],
+  ]) {
+   const policy = join(h.cwd, '.git/policy.json'), output = join(h.cwd, '.git/output');
+   writeFileSync(policy, JSON.stringify(classify(h, p, event))); writeFileSync(output, '');
+   const r = spawnSync(process.execPath, [join(root, '.github/macos-route.mjs'), policy], { env: { ...process.env, GITHUB_EVENT_NAME: event, DIAGNOSTIC: diagnostic, GITHUB_OUTPUT: output } });
+   assert.equal(r.status, 0); assert.equal(readFileSync(output, 'utf8'), `macosRequired=${expected}\n`);
+  }
+  const policy = join(h.cwd, '.git/policy.json'); writeFileSync(policy, '{"macosRequired":"false"}');
+  assert.notEqual(spawnSync(process.execPath, [join(root, '.github/macos-route.mjs'), policy]).status, 0);
+ } finally { h.cleanup(); }
+});
+test('semantic classifier rejects empty, deleted, renamed, malformed and mixed contracts', () => {
+ const h = history();
+ try {
+  h.heads.version = h.base; assert.equal(classify(h, payload(h, 'version')).macosRequired, true);
+  const cases = [
+   () => h.git('rm', 'Cargo.toml'),
+   () => h.git('mv', 'Cargo.toml', 'Renamed.toml'),
+   () => writeFileSync(join(h.cwd, 'Cargo.toml'), '[package]\nname="other"\nversion="1.1.0"\n'),
+   () => writeFileSync(join(h.cwd, 'Cargo.toml'), '[package]\nname="gh-secrets"\nversion=123\n'),
+   () => writeFileSync(join(h.cwd, 'Cargo.toml'), '[package]\nname="gh-secrets"\n'),
+   () => writeFileSync(join(h.cwd, 'Cargo.toml'), 'broken [toml'),
+   () => { writeFileSync(join(h.cwd, 'Cargo.toml'), '[package]\nname="gh-secrets"\nversion="1.1.0"\nedition="2021"\n[dependencies]\nserde="1"\n'); writeFileSync(join(h.cwd, 'source.rs'), 'changed source'); },
+  ];
+  for (let i = 0; i < cases.length; i++) {
+   h.git('checkout', '-q', '-B', `invalid-${i}`, h.base); cases[i](); h.heads.version = h.commit();
+   assert.equal(classify(h, payload(h, 'version')).macosRequired, true, `case ${i}`);
+  }
+  const r = spawnSync(process.execPath, [join(root, '.github/macos-policy.mjs'), 'classify', '--bogus', 'value']);
+  assert.notEqual(r.status, 0);
+ } finally { h.cleanup(); }
+});
+
+
+test('unsupported release configuration is explicitly refused', () => {
+ const h = history();
+ try {
+  mkdirSync(join(h.cwd, '.github/workflows'), { recursive: true });
+  writeFileSync(join(h.cwd, 'release-please-config.json'), '{"packages":{".":{"release-type":"rust"}}}');
+  for (const branches of ['master', [], ['master', 'other'], [123]]) {
+   writeFileSync(join(h.cwd, '.github/workflows/release.yml'), JSON.stringify({ on: { push: { branches } } }));
+   assert.throws(() => releaseBranch(h.cwd + '/'), /unsupported release configuration/);
+  }
+ } finally { h.cleanup(); }
 });

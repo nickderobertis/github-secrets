@@ -46,7 +46,13 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .tool-versions
-      - run: npm ci --prefix .github --ignore-scripts
+      - name: Read tool pins (.tool-versions)
+        id: pins
+        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just@${{ steps.pins.outputs.just }}
+      - run: just setup-workflows
       - id: policy
         env:
           BASE: ${{ github.event.pull_request.base.sha }}

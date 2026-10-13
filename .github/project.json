@@ -7,7 +7,7 @@
     "test": {
       "executor": "nx:run-commands",
       "cache": false,
-      "options": {"command": "npm ci --prefix .github --ignore-scripts && node --test .github/tests/*.test.mjs"}
+      "options": {"command": "just setup-workflows && node --test .github/tests/*.test.mjs"}
     },
     "lint": {
       "executor": "nx:run-commands",

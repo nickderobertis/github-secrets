@@ -1,3 +1,4 @@
+// Exit 0: required proof passed or omission authorized; exit 1: any other outcome.
 // GitHub job outcomes are the only doubled boundary in carrier journeys.
 const { POLICY_RESULT, MACOS_RESULT, CHECK_RESULT, MACOS_REQUIRED } = process.env;
 if (POLICY_RESULT !== 'success' || CHECK_RESULT !== 'success' || !['true', 'false'].includes(MACOS_REQUIRED)) {

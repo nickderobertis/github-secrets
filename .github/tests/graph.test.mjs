@@ -16,7 +16,7 @@ test('actual event/call/matrix graph and complete lifecycle record telemetry', (
   for (const kind of ['source', 'version', 'dependency']) for (const fork of [false, true]) for (const [id, event, action] of classes) {
    const p = payload(h, kind, fork); p.action = action;
    const decision = classify(h, p, event);
-   const scenario = { id: `${id}/${kind}/${fork ? 'fork' : 'same-repo'}`, event, action, payload: p, ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master', macosRequired: decision.macosRequired, diagnostic: id === 'manual-opt-in', releaseCreated: id === 'release-merge', tag: 'v1.1.0' };
+   const scenario = { id: `${id}/${kind}/${fork ? 'fork' : 'same-repo'}`, event, action, payload: p, ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master', macosRequired: decision.macosRequired, classification: decision, diagnostic: id === 'manual-opt-in', releaseCreated: id === 'release-merge', tag: 'v1.1.0' };
    const runs = resolveRuns(scenario, graph);
    if (event === 'pull_request') {
     const names = runs.flatMap(r => r.jobs.map(j => j.name));
@@ -30,12 +30,14 @@ test('actual event/call/matrix graph and complete lifecycle record telemetry', (
    if (id === 'manual-default') assert.equal(runs.flatMap(r => r.jobs).some(j => j.macos), false);
    scenarios.push({ ...scenario, classification: decision, runs });
   }
+  // Optional credentials affect the publication STEP, not job scheduling.
+  // The real guarded publish command is exercised by the packaging journey.
   // Ordinary feature PR, its merge, generated release PR, its merge/build,
   // then every automatic downstream event. Diagnostics are expressly excluded.
   const lifecycles = [false, true].flatMap(fork => [false, true].map(publish => {
    const suffix = fork ? 'fork' : 'same-repo';
    const ids = [`synchronize/source/${suffix}`, `base-push/source/${suffix}`, 'synchronize/version/same-repo', 'release-merge/version/same-repo', 'release-tag/version/same-repo', 'release-published/version/same-repo', 'downstream/version/same-repo', 'repository-dispatch/version/same-repo', 'scheduled/version/same-repo'];
-   return { ownership: suffix, optionalPublish: publish, runs: ids.flatMap(id => scenarios.find(s => s.id === id).runs) };
+   return { ownership: suffix, registryCredential: publish ? 'configured' : 'absent', runs: ids.flatMap(id => scenarios.find(s => s.id === id).runs) };
   }));
   mkdirSync(root + '.github/.telemetry', { recursive: true });
   writeFileSync(root + '.github/.telemetry/macos-policy.json', JSON.stringify({ schemaVersion: 1, sourceDigest: digest(), scenarios, lifecycles }, null, 2));
@@ -52,9 +54,14 @@ test('preserved native proof and release artifact dependency contract', () => {
  const graph = workflows(); const ci = graph['ci.yml'].jobs, release = graph['release.yml'].jobs;
  assert.deepEqual(release.build.strategy.matrix.include.map(r => r.target).sort(), ['aarch64-apple-darwin', 'aarch64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu'].sort());
  for (const name of ['Check', 'Build release binary', 'Build', 'Package (unix)', 'Install through scripts/install.sh', 'Run the installed binary']) assert.ok(ci.macos.steps.some(s => s.name === name), name);
+ // Commands are exercised by the slow host-native journey in scripts/tests/release-packaging.test.mjs; Linux cannot execute a Darwin binary.
+ assert.equal(ci.macos.strategy.matrix.include[0].target, release.build.strategy.matrix.include.find(r => r.os === 'macos-latest').target);
  const install = release.build.steps.findIndex(s => s.name === 'Install staged native archive');
  const upload = release.build.steps.findIndex(s => s.uses?.startsWith('actions/upload-artifact@'));
  assert.ok(install >= 0 && install < upload);
+ const producerName = release.build.steps.find(s => s.uses?.startsWith('actions/upload-artifact@')).with.name;
+ const consumerPattern = release.upload.steps.find(s => s.uses?.startsWith('actions/download-artifact@')).with.pattern;
+ for (const row of release.build.strategy.matrix.include) assert.match(producerName.replace('${{ matrix.target }}', row.target), new RegExp('^' + consumerPattern.replaceAll('*', '.*') + '$'));
  assert.equal(release.upload['runs-on'], 'ubuntu-latest');
  assert.deepEqual(release.upload.needs, ['release-please', 'build']);
  assert.deepEqual(release['crates-io'].needs, ['release-please', 'build']);

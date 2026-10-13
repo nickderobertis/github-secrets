@@ -1,6 +1,8 @@
 // Repo-private graph proof. Unsupported expressions/calls are errors, never zero cost.
+import { execFileSync } from 'node:child_process';
+import { truthy } from '@actions/expressions/result';
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { parse } from 'yaml';
@@ -48,8 +50,40 @@ export function matrixRows(matrix) {
   }
   return rows;
 }
+function validateWorkflow(file, wf) {
+  const object = v => v && typeof v === 'object' && !Array.isArray(v);
+  if (!object(wf) || !object(wf.jobs) || !wf.on) throw new Error(`unsupported workflow ${file}`);
+  if (object(wf.on)) for (const [event, filters] of Object.entries(wf.on)) {
+    if (filters === null) continue;
+    if (!object(filters)) throw new Error(`unsupported trigger ${file}:${event}`);
+    if (['workflow_run', 'workflow_call'].includes(event) && Object.keys(filters).length) throw new Error(`unresolved event/call inputs ${file}:${event}`);
+    const allowed = event === 'workflow_dispatch' ? ['inputs'] : event === 'workflow_call' ? ['inputs', 'secrets', 'outputs'] : event === 'push' ? ['branches', 'tags'] : event === 'pull_request' ? ['types'] : ['types', 'workflows'];
+    if (Object.keys(filters).some(k => !allowed.includes(k))) throw new Error(`unsupported trigger filter ${file}:${event}`);
+    for (const key of ['branches', 'tags', 'types', 'workflows']) if (key in filters && (!Array.isArray(filters[key]) || !filters[key].every(v => typeof v === 'string'))) throw new Error(`unsupported filter ${file}:${key}`);
+  }
+  for (const [id, job] of Object.entries(wf.jobs)) {
+    if (!object(job) || (job.if !== undefined && typeof job.if !== 'string') || (job.needs !== undefined && typeof job.needs !== 'string' && (!Array.isArray(job.needs) || !job.needs.every(n => typeof n === 'string')))) throw new Error(`unsupported job ${file}:${id}`);
+    if (job.uses && (job.with || job.secrets || job.strategy)) throw new Error(`unresolved reusable workflow inputs ${file}:${id}`);
+    if (job.steps !== undefined && (!Array.isArray(job.steps) || !job.steps.every(object))) throw new Error(`unsupported steps ${file}:${id}`);
+  }
+  return wf;
+}
+function routingOutput(scenario) {
+  const parent = process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? process.env.RUNNER_TEMP ?? join(root, '.github/.telemetry');
+  mkdirSync(parent, { recursive: true });
+  const dir = mkdtempSync(join(parent, 'route-'));
+  try {
+    const policy = join(dir, 'policy.json'), output = join(dir, 'output');
+    writeFileSync(policy, JSON.stringify(scenario.classification ?? { isReleaseOnly: false, macosRequired: scenario.macosRequired ?? false, reason: 'graph fixture' }));
+    writeFileSync(output, '');
+    execFileSync(process.execPath, [join(root, '.github/macos-route.mjs'), policy], { env: { ...process.env, GITHUB_EVENT_NAME: scenario.event, DIAGNOSTIC: String(scenario.diagnostic ?? false), GITHUB_OUTPUT: output } });
+    const text = readFileSync(output, 'utf8').trim();
+    if (!/^macosRequired=(true|false)$/.test(text)) throw new Error('invalid route output');
+    return text.split('=')[1];
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}
 export function workflows(dir = join(root, '.github/workflows')) {
-  return Object.fromEntries(readdirSync(dir).filter(f => /\.ya?ml$/.test(f)).sort().map(f => [f, parse(readFileSync(join(dir, f), 'utf8'))]));
+  return Object.fromEntries(readdirSync(dir).filter(f => /\.ya?ml$/.test(f)).sort().map(f => [f, validateWorkflow(f, parse(readFileSync(join(dir, f), 'utf8')))]));
 }
 function matches(pattern, ref) { return new RegExp('^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*') + '$').test(ref); }
 function triggered(wf, scenario) {
@@ -70,6 +104,7 @@ function triggered(wf, scenario) {
 }
 export function resolveRuns(scenario, graph = workflows()) {
   const runs = [];
+  for (const [file, wf] of Object.entries(graph)) validateWorkflow(file, wf);
   function jobs(file, wf, prefix = '', stack = []) {
     if (stack.includes(file)) throw new Error(`recursive workflow call ${file}`);
     const rows = [];
@@ -91,8 +126,8 @@ export function resolveRuns(scenario, graph = workflows()) {
       const context = { github: { event_name: scenario.event, event: scenario.payload, repository: 'nickderobertis/github-secrets', ref: scenario.ref }, inputs: { macos_diagnostic: scenario.diagnostic ?? false }, needs };
       const explicitStatus = /\b(always|success|failure|cancelled)\(/.test(job.if ?? '');
       const prerequisites = Object.values(needs).every(n => n.result === 'success');
-      const enabled = (explicitStatus || prerequisites) && (!job.if || evaluate(job.if, context).value === true);
-      const outputs = id === 'policy' ? { macosRequired: String(scenario.macosRequired || scenario.diagnostic === true) } : id === 'release-please' ? { release_created: String(scenario.releaseCreated ?? false), tag_name: scenario.tag ?? 'v1.0.0' } : {};
+      const enabled = (explicitStatus || prerequisites) && (!job.if || truthy(evaluate(job.if, context)));
+      const outputs = id === 'policy' ? { macosRequired: routingOutput(scenario) } : id === 'release-please' ? { release_created: String(scenario.releaseCreated ?? false), tag_name: scenario.tag ?? 'v1.0.0' } : {};
       outcomes[id] = { result: enabled ? 'success' : 'skipped', outputs };
       for (const matrix of matrixRows(job.strategy?.matrix)) {
         const ctx = { ...context, matrix };
@@ -117,12 +152,9 @@ export function resolveRuns(scenario, graph = workflows()) {
 }
 export function digest() {
   const hash = createHash('sha256');
-  const walk = dir => { for (const file of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-    if (['node_modules', '.telemetry'].includes(file.name)) continue;
-    const path = join(dir, file.name);
-    if (file.isDirectory()) walk(path); else { hash.update(path.slice(root.length)); hash.update(readFileSync(path)); }
-  } };
-  walk(join(root, '.github'));
-  for (const path of ['scripts/ci-gate-tier.mjs', 'scripts/install.sh', 'Cargo.toml', 'rust-toolchain.toml', 'release-please-config.json']) { hash.update(path); hash.update(readFileSync(join(root, path))); }
+  // Include the full source tree, including newly added source before staging.
+  // Git's exclusions keep build products, credentials and telemetry out.
+  const files = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean).sort();
+  for (const file of files) { hash.update(file); hash.update(readFileSync(join(root, file))); }
   return hash.digest('hex');
 }
