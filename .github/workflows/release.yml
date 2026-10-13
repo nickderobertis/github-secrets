@@ -154,6 +154,34 @@ jobs:
         env:
           VERSION: ${{ needs.release-please.outputs.tag_name }}
 
+      - name: Install staged native archive
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          sh scripts/install.sh --version "$VERSION" --from-dir "$PWD" --to "$RUNNER_TEMP/bin"
+          out="$("$RUNNER_TEMP/bin/gh-secrets" --version)"
+          [ "$out" = "gh-secrets ${VERSION#v}" ]
+          "$RUNNER_TEMP/bin/gh-secrets" --help >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            gh-secrets-*.tar.gz*
+            gh-secrets-*.zip*
+          if-no-files-found: error
+
+  upload:
+    runs-on: ubuntu-latest
+    needs: [release-please, build]
+    if: needs.release-please.outputs.release_created == 'true'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
       - name: Attach assets to the release
         shell: bash
         env:
@@ -173,7 +201,7 @@ jobs:
   # never blocks a release.
   crates-io:
     name: publish to crates.io
-    needs: release-please
+    needs: [release-please, build]
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:

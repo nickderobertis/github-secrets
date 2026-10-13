@@ -1,0 +1,23 @@
+{
+  "name": "github-workflows",
+  "projectType": "library",
+  "tags": ["type:tooling"],
+  "implicitDependencies": ["scripts"],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {"command": "npm ci --prefix .github --ignore-scripts && node --test .github/tests/*.test.mjs"}
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {"command": "node .github/syntax.mjs"}
+    },
+    "budgets": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["test"],
+      "cache": false,
+      "options": {"command": "node .github/node_modules/@onebudgetspec/cli/bin/onebudgetspec.js check .github/budgets.yaml"}
+    }
+  }
+}

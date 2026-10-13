@@ -38,12 +38,12 @@ test("a path filter on ci.yml's pull_request trigger is caught", () => {
 });
 
 test("a fixed-context job gaining a needs edge on a non-fixed job is caught", () => {
-  const errors = mutated("ci.yml", "  build:\n    needs: check\n", "  build:\n    needs: [check, install]\n");
+  const errors = mutated("ci.yml", "  build:\n    needs: [check, check-macos]\n", "  build:\n    needs: [check, check-macos, install]\n");
   expect(errors.join("\n")).toContain("needs 'install', which reports none");
 });
 
 test("a new condition on a fixed-context job is caught", () => {
-  const errors = mutated("ci.yml", "  build:\n    needs: check\n", "  build:\n    needs: check\n    if: github.event_name == 'push'\n");
+  const errors = mutated("ci.yml", "  build:\n    needs: [check, check-macos]\n", "  build:\n    needs: [check, check-macos]\n    if: github.event_name == 'push'\n");
   expect(errors.join("\n")).toContain("unrecognised condition");
 });
 
@@ -80,7 +80,7 @@ test("a workflow whose jobs are not a mapping is refused rather than skipped", (
 });
 
 test("a matrix of an unexpected shape is reported, not crashed on", () => {
-  const errors = mutated("ci.yml", "        os: [ubuntu-latest, macos-latest, windows-latest]\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history", "        os: ubuntu-latest\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history");
+  const errors = mutated("ci.yml", "        os: [ubuntu-latest, windows-latest]\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history", "        os: ubuntu-latest\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history");
   expect(errors.join("\n")).toContain("ci.yml:check has a name, needs, strategy or strategy.matrix (os / include) of an unexpected shape");
 });
 
@@ -95,7 +95,7 @@ test("the llmlint job installing a harness other than oneharness.toml's primary 
 });
 
 test("an include list where only some entries name an os is reported", () => {
-  const errors = mutated("ci.yml", "          - os: macos-latest\n            target: aarch64-apple-darwin", "          - target: aarch64-apple-darwin");
+  const errors = mutated("ci.yml", "          - os: windows-latest\n            target: x86_64-pc-windows-msvc", "          - target: x86_64-pc-windows-msvc");
   expect(errors.join("\n")).toContain("ci.yml:install has a name, needs, strategy or strategy.matrix (os / include) of an unexpected shape");
 });
 
@@ -122,7 +122,7 @@ test("a sandbox repo assigned in the live step's script is caught", () => {
 });
 
 test("a sandbox repo set as a literal in job env is caught", () => {
-  const errors = mutated("ci.yml", "  live-e2e:\n    needs: check\n", "  live-e2e:\n    needs: check\n    env:\n      GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n");
+  const errors = mutated("ci.yml", "  live-e2e:\n    needs: [check, check-macos]\n", "  live-e2e:\n    needs: [check, check-macos]\n    env:\n      GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n");
   expect(errors.join("\n")).toContain("live-e2e sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
 });
 
@@ -132,7 +132,7 @@ test("a literal value for any env on the live GitHub step is caught", () => {
 });
 
 test("a job env that is not a mapping is reported, not crashed on", () => {
-  const errors = mutated("ci.yml", "  live-e2e:\n    needs: check\n", "  live-e2e:\n    needs: check\n    env: [GH_SECRETS_E2E_SANDBOX_REPO]\n");
+  const errors = mutated("ci.yml", "  live-e2e:\n    needs: [check, check-macos]\n", "  live-e2e:\n    needs: [check, check-macos]\n    env: [GH_SECRETS_E2E_SANDBOX_REPO]\n");
   expect(errors.join("\n")).toContain("live-e2e has an `env` that is not a mapping");
 });
 

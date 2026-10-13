@@ -52,11 +52,11 @@ const pr = (headRef, headRepo = "nickderobertis/github-secrets") => ({
   },
 });
 
-test("the release-please release PR runs the full sweep", () => {
+test("a release-please branch containing source changes keeps the affected tier", () => {
   const r = route("pull_request", pr("release-please--branches--master--components--gh-secrets"));
   expect(r.code).toBe(0);
-  expect(r.tier).toBe("all");
-  expect(r.base).toBe("");
+  expect(r.tier).toBe("affected");
+  expect(r.base).toBe(forkPoint);
   expect(r.stdout).toBe("");
   expect(r.stderr.trim().split("\n")).toHaveLength(1);
 });
@@ -147,4 +147,22 @@ test("outside Actions (no GITHUB_OUTPUT) the decision goes to stdout", () => {
   expect(r.code).toBe(0);
   expect(r.stdout).toBe("tier=all\nbase=\n");
   expect(r.stderr).toBe("");
+});
+
+
+test("semantic release-only PR gets the full sweep through the production classifier", () => {
+  const local = scratch();
+  try {
+    const { git, commit } = gitRepo(local.dir);
+    writeFileSync(join(local.dir, "Cargo.toml"), '[package]\nname="gh-secrets"\nversion="1.0.0"\nedition="2021"\n');
+    commit("initial");
+    git("update-ref", "refs/remotes/origin/master", "HEAD");
+    writeFileSync(join(local.dir, "Cargo.toml"), '[package]\nname="gh-secrets"\nversion="1.1.0"\nedition="2021"\n');
+    commit("version");
+    const event = join(local.dir, ".git/event.json");
+    writeFileSync(event, JSON.stringify(pr("release-please--branches--master--components--gh-secrets")));
+    const r = run("bun", [SCRIPT], { cwd: local.dir, env: { ...process.env, GITHUB_EVENT_NAME: "pull_request", GITHUB_EVENT_PATH: event, GITHUB_OUTPUT: "" } });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe("tier=all\nbase=\n");
+  } finally { local.cleanup(); }
 });

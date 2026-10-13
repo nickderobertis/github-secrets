@@ -1,0 +1,15 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { report } from '@onebudgetspec/sdk';
+import { digest } from './workflow-graph.mjs';
+const args = process.argv.slice(2);
+const options = {};
+while (args.length) options[args.shift()] = args.shift();
+const telemetry = JSON.parse(readFileSync(resolve(options['--telemetry']), 'utf8'));
+if (telemetry.schemaVersion !== 1 || telemetry.sourceDigest !== digest()) throw new Error('missing/stale telemetry: run github-workflows:test for this tree');
+const metric = options['--metric'];
+if (!['jobs-per-run', 'runs-per-change'].includes(metric)) throw new Error('unknown metric');
+const measured = metric === 'jobs-per-run' ? Math.max(...telemetry.scenarios.flatMap(s => s.runs.map(r => r.jobs.filter(j => j.macos).length))) : Math.max(...telemetry.lifecycles.map(l => l.runs.filter(r => r.jobs.some(j => j.macos)).length));
+const detail = JSON.stringify({ scenarios: telemetry.scenarios, lifecycles: telemetry.lifecycles });
+report(measured, detail);
+console.log(`${metric}: ${measured}`);
