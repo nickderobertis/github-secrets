@@ -64,7 +64,6 @@ test('unsupported runners, matrices and calls fail explicitly; actual matrix exp
 });
 test('preserved native proof and release artifact dependency contract', () => {
  const graph = workflows(); const ci = graph['ci.yml'].jobs, release = graph['release.yml'].jobs, lane = graph['macos.yml'].jobs.macos;
- // CI and the manual diagnostic call the one Mac lane; neither declares Mac work itself.
  for (const caller of [ci.macos, graph['macos-diagnostic.yml'].jobs.macos]) assert.equal(caller.uses, './.github/workflows/macos.yml');
  assert.deepEqual(release.build.strategy.matrix.include.map(r => r.target).sort(), ['aarch64-apple-darwin', 'aarch64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu'].sort());
  for (const name of ['Check', 'Build release binary', 'Build', 'Package (unix)', 'Install through scripts/install.sh', 'Run the installed binary']) assert.ok(lane.steps.some(s => s.name === name), name);
