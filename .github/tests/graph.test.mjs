@@ -82,7 +82,7 @@ test('preserved native proof and release artifact dependency contract', () => {
  }
  for (const id of ['check-macos', 'build-macos']) {
   assert.equal(ci[id].if, '${{ always() }}');
-  assert.deepEqual(ci[id].needs, ['policy', 'macos', 'check']);
+  assert.deepEqual(ci[id].needs, id === 'build-macos' ? ['policy', 'macos', 'check'] : ['policy', 'macos']);
   assert.equal(ci[id].steps.at(-1).run, 'node .github/macos-result.mjs');
  }
 });
@@ -108,6 +108,13 @@ test('carrier expressions and actual outcome handling never hide failed required
   const env = Object.fromEntries(Object.entries(step.env).map(([key, value]) => [key, interpolate(value, context)]));
   const run = spawnSync('bash', ['-c', step.run], { cwd: root, env: { ...process.env, ...env }, encoding: 'utf8' });
   assert.equal(run.status === 0, required ? result === 'success' : result === 'skipped');
+ }
+ // check (macos-latest) reports the Mac proof alone; build (macos-latest) also
+ // waits on the Linux/Windows check legs, as the old build matrix did.
+ for (const check of ['failure', 'cancelled', 'skipped']) {
+  const context = { needs: { policy: { result: 'success', outputs: { macosRequired: 'true' } }, macos: { result: 'success' }, check: { result: check } } };
+  const status = id => { const step = ci[id].steps.at(-1); const env = Object.fromEntries(Object.entries(step.env).map(([key, value]) => [key, interpolate(value, context)])); return spawnSync('bash', ['-c', step.run], { cwd: root, env: { ...process.env, ...env } }).status; };
+  assert.equal(status('check-macos'), 0); assert.notEqual(status('build-macos'), 0);
  }
 });
 

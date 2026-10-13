@@ -182,14 +182,13 @@ jobs:
     name: check (macos-latest)
     runs-on: ubuntu-latest
     if: ${{ always() }}
-    needs: [policy, macos, check]
+    needs: [policy, macos]
     steps:
       - uses: actions/checkout@v4
       - name: Report Mac proof or authorized omission
         env:
           POLICY_RESULT: ${{ needs.policy.result }}
           MACOS_RESULT: ${{ needs.macos.result }}
-          CHECK_RESULT: ${{ needs.check.result }}
           MACOS_REQUIRED: ${{ needs.policy.outputs.macosRequired }}
         run: node .github/macos-result.mjs
 
@@ -514,6 +513,7 @@ jobs:
   # Standing deviation from the skill's live-tier rule (AGENTS.md): this stays
   # in the PR workflow and finishes green without its secret.
   live-e2e:
+    # llmlint: ignore[live_tier_compiles_and_requires_credential] standing, recorded decision (AGENTS.md "Stack and composition"): live-e2e finishes green without its secrets; this edge only replaces the old all-OS check need with the Linux/Windows legs plus the Mac carrier.
     needs: [check, check-macos]
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
@@ -574,6 +574,7 @@ jobs:
   # `secrets` context is not allowed in a job/step `if:`), so it is skipped — not
   # failed — when they're absent, keeping forks and unconfigured repos green.
   live-e2e-bitwarden:
+    # llmlint: ignore[live_tier_compiles_and_requires_credential] standing, recorded decision (AGENTS.md "Stack and composition"): live-e2e-bitwarden finishes green without its secrets; this edge only replaces the old all-OS check need with the Linux/Windows legs plus the Mac carrier.
     needs: [check, check-macos]
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest

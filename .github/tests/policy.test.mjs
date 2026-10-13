@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { releaseBranch } from '../macos-policy.mjs';
+import { releaseBranchPrefix } from '../macos-policy.mjs';
 import { root } from '../workflow-graph.mjs';
 import { history, payload, classify } from './helpers.mjs';
 test('classifier drives real git diffs, fails closed, and ignores author/title authority', () => {
@@ -31,8 +31,12 @@ test('real carrier command accepts only success or classifier-authorized omissio
     assert.equal(r.status === 0, accepted, `${required}/${mac}/${prerequisite}`);
     if (accepted && required === 'false') assert.match(r.stdout, /no Mac assertions ran/);
   }
-  const r = spawnSync(process.execPath, [join(root, '.github/macos-result.mjs')], { env: { ...process.env, POLICY_RESULT: 'success', CHECK_RESULT: 'failure', MACOS_REQUIRED: 'true', MACOS_RESULT: 'success' } });
-  assert.notEqual(r.status, 0);
+  for (const check of ['failure', 'cancelled', 'skipped', '']) {
+   const r = spawnSync(process.execPath, [join(root, '.github/macos-result.mjs')], { encoding: 'utf8', env: { ...process.env, POLICY_RESULT: 'success', CHECK_RESULT: check, MACOS_REQUIRED: 'true', MACOS_RESULT: 'success' } });
+   assert.notEqual(r.status, 0); assert.match(r.stderr, new RegExp(`check=${check || 'missing'}`));
+  }
+  const env = { ...process.env, POLICY_RESULT: 'success', MACOS_REQUIRED: 'true', MACOS_RESULT: 'success' }; delete env.CHECK_RESULT;
+  assert.equal(spawnSync(process.execPath, [join(root, '.github/macos-result.mjs')], { env }).status, 0);
 });
 
 test('route subprocess validates classifier output and only permits explicit manual diagnostic', () => {
@@ -52,6 +56,12 @@ test('route subprocess validates classifier output and only permits explicit man
   }
   const policy = join(h.cwd, '.git/policy.json'); writeFileSync(policy, '{"macosRequired":"false"}');
   assert.notEqual(spawnSync(process.execPath, [join(root, '.github/macos-route.mjs'), policy]).status, 0);
+  writeFileSync(policy, JSON.stringify(classify(h, payload(h, 'source'))));
+  for (const output of [undefined, '', join(h.cwd, '.git/missing-dir/output')]) {
+   const env = { ...process.env, GITHUB_EVENT_NAME: 'pull_request' }; if (output === undefined) delete env.GITHUB_OUTPUT; else env.GITHUB_OUTPUT = output;
+   const r = spawnSync(process.execPath, [join(root, '.github/macos-route.mjs'), policy], { env, encoding: 'utf8' });
+   assert.notEqual(r.status, 0); assert.match(r.stderr, /GITHUB_OUTPUT must name/);
+  }
  } finally { h.cleanup(); }
 });
 test('semantic classifier rejects empty, deleted, renamed, malformed and mixed contracts', () => {
@@ -85,7 +95,7 @@ test('unsupported release configuration is explicitly refused', () => {
   writeFileSync(join(h.cwd, 'release-please-config.json'), '{"packages":{".":{"release-type":"rust"}}}');
   for (const branches of ['master', [], ['master', 'other'], [123]]) {
    writeFileSync(join(h.cwd, '.github/workflows/release.yml'), JSON.stringify({ on: { push: { branches } } }));
-   assert.throws(() => releaseBranch(h.cwd + '/'), /unsupported release configuration/);
+   assert.throws(() => releaseBranchPrefix(h.cwd + '/'), /unsupported release configuration/);
   }
  } finally { h.cleanup(); }
 });
@@ -103,6 +113,56 @@ test('member manifests and release metadata round-trip only version changes', ()
    h.git('checkout', '-q', '-B', 'metadata', h.base); writeFileSync(join(h.cwd, '.release-please-manifest.json'), metadata); h.heads.version = h.commit();
    assert.equal(classify(h, payload(h, 'version')).macosRequired, true);
   }
-  assert.notEqual(spawnSync(process.execPath, [join(root, '.github/macos-policy.mjs'), 'classify', '--event', join(h.cwd, '.git/event.json'), '--base', h.base, '--head', h.heads.version], { env: { ...process.env, GITHUB_EVENT_NAME: 'unrecognized' } }).status, 0);
+ } finally { h.cleanup(); }
+});
+
+test('unrecognized event names require Mac and name the event; known non-PR events stay Mac-free', () => {
+ const h = history();
+ try {
+  for (const event of ['merge_group', 'pull_request_target']) {
+   const decision = classify(h, payload(h, 'version'), event);
+   assert.equal(decision.macosRequired, true);
+   assert.match(decision.reason, new RegExp(`unrecognized event "${event}"`));
+  }
+  for (const event of ['push', 'release', 'workflow_run', 'repository_dispatch', 'schedule', 'workflow_dispatch']) {
+   const decision = classify(h, payload(h, 'version'), event);
+   assert.equal(decision.macosRequired, false, event);
+   assert.match(decision.reason, new RegExp(`non-PR event ${event}`));
+  }
+ } finally { h.cleanup(); }
+});
+test('release-only is decided by a same-repository head under the release prefix and the diff alone', () => {
+ const h = history();
+ try {
+  const withRef = (ref, fork = false) => { const p = payload(h, 'version', fork); p.pull_request.head.ref = ref; return p; };
+  assert.equal(classify(h, withRef('release-please--branches--master')).isReleaseOnly, true);
+  assert.equal(classify(h, withRef('release-please--branches--master--components--other')).isReleaseOnly, true);
+  for (const ref of ['release-please--branches--masterx', 'feature/release-please--branches--master', 'release-please--branches--main']) {
+   const decision = classify(h, withRef(ref));
+   assert.equal(decision.macosRequired, true, ref); assert.match(decision.reason, /not under release-please--branches--master/);
+  }
+  const fork = classify(h, withRef('release-please--branches--master--components--gh-secrets', true));
+  assert.equal(fork.macosRequired, true); assert.match(fork.reason, /not a same-repository head/);
+  // A bot author and release title on a feature branch carry no authority.
+  const bot = payload(h, 'version', false, false); bot.pull_request.user.login = 'release-please[bot]';
+  assert.equal(classify(h, bot).macosRequired, true);
+  // The base advancing after the release branch was cut does not leak into its diff.
+  h.git('checkout', '-q', '-B', 'advanced', h.base); writeFileSync(join(h.cwd, 'later.rs'), 'fn later() {}');
+  const advanced = h.commit(); const p = payload(h, 'version'); p.pull_request.base.sha = advanced;
+  const file = join(h.cwd, '.git/event.json'); writeFileSync(file, JSON.stringify(p));
+  const r = spawnSync(process.execPath, [join(root, '.github/macos-policy.mjs'), 'classify', '--event', file, '--base', advanced, '--head', h.heads.version], { cwd: h.cwd, encoding: 'utf8', env: { ...process.env, GITHUB_EVENT_NAME: 'pull_request' } });
+  assert.equal(JSON.parse(r.stdout).isReleaseOnly, true);
+ } finally { h.cleanup(); }
+});
+test('a registry dependency sharing the local package name is a dependency change, not a release bump', () => {
+ const h = history();
+ try {
+  const lock = (local, registry) => `version = 4\n[[package]]\nname = "gh-secrets"\nversion = "${local}"\n[[package]]\nname = "gh-secrets"\nversion = "${registry}"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n`;
+  h.git('checkout', '-q', '-B', 'same-name-base', h.base); writeFileSync(join(h.cwd, 'Cargo.lock'), lock('1.0.0', '0.9.0')); h.base = h.commit();
+  writeFileSync(join(h.cwd, 'Cargo.lock'), lock('1.0.0', '0.9.1')); h.heads.version = h.commit();
+  const decision = classify(h, payload(h, 'version'));
+  assert.equal(decision.macosRequired, true); assert.match(decision.reason, /Cargo.lock changes more than its own version/);
+  h.git('checkout', '-q', '-B', 'same-name-local', h.base); writeFileSync(join(h.cwd, 'Cargo.lock'), lock('1.1.0', '0.9.0')); h.heads.version = h.commit();
+  assert.equal(classify(h, payload(h, 'version')).isReleaseOnly, true);
  } finally { h.cleanup(); }
 });

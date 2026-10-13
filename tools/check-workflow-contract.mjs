@@ -157,13 +157,18 @@ export function checkContract(root) {
       for (const need of [job.needs ?? []].flat()) {
         const needed = wf.jobs[need];
         const neededFixed = needed && contextsOf(need, needed).some((c) => FIXED_CONTEXTS.includes(c));
+        // Mac carriers: Linux jobs whose real outcome command fails on any failed,
+        // cancelled or missing prerequisite. build also waits on check.
+        const usesCheck = id === "build-macos";
+        const env = job.steps?.at(-1)?.env;
         const carrier = ["check-macos", "build-macos"].includes(id) &&
-          job.if === "${{ always() }}" && JSON.stringify(job.needs) === JSON.stringify(["policy", "macos", "check"]) &&
-          job.steps?.at(-1)?.run === "node .github/macos-result.mjs" &&
-          job.steps.at(-1).env?.POLICY_RESULT === "${{ needs.policy.result }}" &&
-          job.steps.at(-1).env?.MACOS_RESULT === "${{ needs.macos.result }}" &&
-          job.steps.at(-1).env?.CHECK_RESULT === "${{ needs.check.result }}" &&
-          job.steps.at(-1).env?.MACOS_REQUIRED === "${{ needs.policy.outputs.macosRequired }}";
+          job.if === "${{ always() }}" &&
+          JSON.stringify(job.needs) === JSON.stringify(usesCheck ? ["policy", "macos", "check"] : ["policy", "macos"]) &&
+          job.steps.at(-1).run === "node .github/macos-result.mjs" &&
+          env?.POLICY_RESULT === "${{ needs.policy.result }}" &&
+          env?.MACOS_RESULT === "${{ needs.macos.result }}" &&
+          (usesCheck ? env?.CHECK_RESULT === "${{ needs.check.result }}" : !("CHECK_RESULT" in env)) &&
+          env?.MACOS_REQUIRED === "${{ needs.policy.outputs.macosRequired }}";
         if (!neededFixed && !carrier) errors.push(`${file}:${id} reports a fixed context but needs '${need}', which reports none.`);
       }
     }
