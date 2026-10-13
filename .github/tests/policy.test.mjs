@@ -176,3 +176,17 @@ test('non-string or malformed repository identities never authorize omission', (
   }
  } finally { h.cleanup(); }
 });
+test('changelog-only and valid prerelease/build-metadata release diffs are release-only', () => {
+ const h = history();
+ try {
+  h.git('checkout', '-q', '-B', 'changelog-only', h.base); writeFileSync(join(h.cwd, 'CHANGELOG.md'), '# Changelog\nNotes only\n'); h.heads.version = h.commit();
+  assert.equal(classify(h, payload(h, 'version')).isReleaseOnly, true);
+  for (const v of ['1.1.0-rc.1', '1.1.0-alpha.0+build.5', '2.0.0+20261013']) {
+   h.git('checkout', '-q', '-B', `pre-${v}`, h.base);
+   writeFileSync(join(h.cwd, 'Cargo.toml'), `[package]\nname = "gh-secrets"\nversion = "${v}"\nedition = "2021"\n[dependencies]\nserde = "1"\n`);
+   writeFileSync(join(h.cwd, '.release-please-manifest.json'), JSON.stringify({ '.': v }));
+   h.heads.version = h.commit();
+   assert.equal(classify(h, payload(h, 'version')).isReleaseOnly, true, v);
+  }
+ } finally { h.cleanup(); }
+});
