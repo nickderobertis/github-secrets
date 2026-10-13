@@ -160,11 +160,12 @@ export function checkContract(root) {
         // Mac carriers: Linux jobs whose real outcome command fails on any failed,
         // cancelled or missing prerequisite. build also waits on check.
         const usesCheck = id === "build-macos";
-        const env = job.steps?.at(-1)?.env;
+        const last = Array.isArray(job.steps) ? job.steps.at(-1) : undefined;
+        const env = last && typeof last.env === "object" && last.env !== null ? last.env : undefined;
         const carrier = ["check-macos", "build-macos"].includes(id) &&
           job.if === "${{ always() }}" &&
           JSON.stringify(job.needs) === JSON.stringify(usesCheck ? ["policy", "macos", "check"] : ["policy", "macos"]) &&
-          job.steps.at(-1).run === "node .github/macos-result.mjs" &&
+          env !== undefined && last.run === "node .github/macos-result.mjs" &&
           env?.POLICY_RESULT === "${{ needs.policy.result }}" &&
           env?.MACOS_RESULT === "${{ needs.macos.result }}" &&
           (usesCheck ? env?.CHECK_RESULT === "${{ needs.check.result }}" : !("CHECK_RESULT" in env)) &&

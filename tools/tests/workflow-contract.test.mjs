@@ -191,3 +191,9 @@ test("the Mac lane's install-and-run commands drifting from the install job are 
   const errors = mutated("macos.yml", '[ "$out" = "gh-secrets ${VERSION#v}" ]', 'true');
   expect(errors.join("\n")).toContain("'Run the installed binary' differs between ci.yml:install and macos.yml:macos");
 });
+
+test("a Mac carrier without steps is reported, not crashed on", () => {
+  const errors = mutated("ci.yml", "    needs: [policy, macos]\n    steps:\n", "    needs: [policy, macos]\n    steps: []\n    old-steps:\n");
+  expect(errors.join("\n")).toContain("ci.yml:check-macos reports a fixed context but needs 'policy', which reports none.");
+  expect(errors.join("\n")).toContain("ci.yml:check-macos must invoke the production Mac result command.");
+});
