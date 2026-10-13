@@ -76,6 +76,11 @@ function validateWorkflow(file, wf) {
     if (!object(job) || (job.if !== undefined && typeof job.if !== 'string') || (job.needs !== undefined && typeof job.needs !== 'string' && (!Array.isArray(job.needs) || !job.needs.every(n => typeof n === 'string')))) throw new Error(`unsupported job ${file}:${id}`);
     if (job.uses && (job.with || job.secrets || job.strategy)) throw new Error(`unresolved reusable workflow inputs ${file}:${id}`);
     if (job.steps !== undefined && (!Array.isArray(job.steps) || !job.steps.every(object))) throw new Error(`unsupported steps ${file}:${id}`);
+    const str = v => v === undefined || typeof v === 'string';
+    const strings = v => v === undefined || (object(v) && Object.values(v).every(x => typeof x === 'string'));
+    if (!str(job.name) || !str(job.uses) || !strings(job.outputs) || (job.strategy !== undefined && (!object(job.strategy) || (job.strategy.matrix !== undefined && !object(job.strategy.matrix))))) throw new Error(`unsupported job fields ${file}:${id}`);
+    if (job.uses === undefined && typeof job['runs-on'] !== 'string') throw new Error(`unresolved runner ${file}:${id}`);
+    for (const step of job.steps ?? []) if (!str(step.id) || !str(step.run) || !str(step.uses) || !(step.env === undefined || (object(step.env) && Object.values(step.env).every(v => ['string', 'number', 'boolean'].includes(typeof v))))) throw new Error(`unsupported step fields ${file}:${id}`);
   }
   return wf;
 }
@@ -183,11 +188,12 @@ export function resolveRuns(scenario, graph = workflows()) {
   for (const [file, wf] of Object.entries(graph)) if (triggered(file, wf, scenario)) runs.push({ workflow: file, event: scenario.id, jobs: jobs(file, wf) });
   return runs;
 }
-export function digest() {
+export function digest(dir = root) {
   const hash = createHash('sha256');
   // Include the full source tree, including newly added source before staging.
   // Git's exclusions keep build products, credentials and telemetry out.
-  const files = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean).sort();
-  for (const file of files) { hash.update(file); hash.update(readFileSync(join(root, file))); }
+  const files = [...new Set(execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: dir, encoding: 'utf8' }).split('\0').filter(Boolean))].sort();
+  // A tracked file deleted from the work tree still changes the digest.
+  for (const file of files) { hash.update(file + '\0'); hash.update(existsSync(join(dir, file)) ? readFileSync(join(dir, file)) : '\0deleted'); }
   return hash.digest('hex');
 }

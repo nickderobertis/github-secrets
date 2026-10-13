@@ -160,6 +160,7 @@ test('automatic events cannot carry the diagnostic opt-in into a Mac job', () =>
 test('array matrices, unsupported branch globs and mistyped dispatch inputs are refused, not guessed', () => {
  assert.throws(() => matrixRows([]), /unresolved matrix/);
  for (const matrix of [false, 0, '', null]) assert.throws(() => matrixRows(matrix), /unresolved matrix/);
+ for (const proof of [{ 'runs-on': 'macos-latest', strategy: 'matrix' }, { 'runs-on': 'macos-latest', name: 7 }, { 'runs-on': 'macos-latest', outputs: { x: 1 } }, { uses: 7 }, { 'runs-on': ['macos-latest'] }, {}, { 'runs-on': 'macos-latest', steps: [{ run: ['echo'] }] }, { 'runs-on': 'macos-latest', steps: [{ run: 'echo', env: { A: { nested: 1 } } }] }]) assert.throws(() => resolveRuns({ id: 'x', event: 'pull_request', payload: {}, ref: 'refs/heads/f' }, { 'test.yml': { on: { pull_request: null }, jobs: { proof } } }), /unsupported|unresolved/, JSON.stringify(proof));
  for (const on of [[123], [], 7, 'issues', ['pull_request', 'merge_group'], { issues: null }]) assert.throws(() => resolveRuns({ id: 'x', event: 'pull_request', payload: {}, ref: 'refs/heads/f' }, { 'test.yml': { on, jobs: { proof: { 'runs-on': 'macos-latest' } } } }), /unsupported trigger/);
  assert.throws(() => matrixRows({ include: 'macos-latest' }), /unresolved matrix include/);
  const pr = { id: 'invalid', event: 'pull_request', action: 'opened', payload: {}, ref: 'refs/heads/feature' };

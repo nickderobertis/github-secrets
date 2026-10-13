@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { root, digest } from '../workflow-graph.mjs';
 import { history } from './helpers.mjs';
@@ -32,7 +32,6 @@ test('budget reporter rejects unknown argv and missing, stale or malformed telem
   assert.match(run(args).stderr, /empty workflow graph/);
   writeFileSync(path, JSON.stringify({ schemaVersion: 1, sourceDigest: digest(), scenarios: [{ id: 'opened/source/same-repo', runs: [mac] }], lifecycles: [lifecycle] }));
   assert.match(run(['--metric', 'mac-minutes', '--telemetry', path]).stderr, /unknown metric/);
-  // The reporter's printed figure and SDK detail carry the workflow/event/target breakdown.
   const result = join(h.cwd, '.git/result.json');
   const ok = spawnSync(process.execPath, [join(root, '.github/macos-budget.mjs'), '--metric', 'runs-per-change', '--telemetry', path], { encoding: 'utf8', env: { ...process.env, ONEBUDGETSPEC_RESULT: result } });
   assert.equal(ok.status, 0, ok.stderr); assert.equal(ok.stdout, 'runs-per-change: 1\n');
@@ -42,5 +41,21 @@ test('budget reporter rejects unknown argv and missing, stale or malformed telem
    scenarios: [{ event: 'opened/source/same-repo', runs: [{ workflow: 'ci.yml', jobs: [{ job: 'macos/macos', target: 'aarch64-apple-darwin', enabled: true }] }] }],
    lifecycles: [{ ownership: 'same-repo', registryCredential: 'absent', macosRuns: [{ workflow: 'ci.yml', event: 'opened/source/same-repo' }] }],
   });
+ } finally { h.cleanup(); }
+});
+test('the telemetry digest follows real tracked, untracked and deleted source but not ignored telemetry', () => {
+ const h = history();
+ try {
+  writeFileSync(join(h.cwd, '.gitignore'), '.telemetry/\n'); h.commit();
+  const before = digest(h.cwd);
+  assert.equal(digest(h.cwd), before);
+  mkdirSync(join(h.cwd, '.telemetry')); writeFileSync(join(h.cwd, '.telemetry/macos-policy.json'), '{}');
+  assert.equal(digest(h.cwd), before);
+  assert.ok(h.git('ls-files', 'Cargo.toml')); writeFileSync(join(h.cwd, 'Cargo.toml'), '[package]\nname = "gh-secrets"\nversion = "9.9.9"\n');
+  const edited = digest(h.cwd); assert.notEqual(edited, before);
+  writeFileSync(join(h.cwd, 'new.rs'), 'fn added() {}');
+  const added = digest(h.cwd); assert.notEqual(added, edited);
+  rmSync(join(h.cwd, 'CHANGELOG.md'));
+  assert.notEqual(digest(h.cwd), added);
  } finally { h.cleanup(); }
 });
