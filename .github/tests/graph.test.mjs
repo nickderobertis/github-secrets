@@ -59,7 +59,7 @@ test('actual event/call/matrix graph and complete lifecycle record telemetry', (
 test('unsupported runners, matrices and calls fail explicitly; actual matrix expansion handles include/exclude', () => {
  assert.deepEqual(matrixRows({ os: ['ubuntu-latest', 'macos-latest'], exclude: [{ os: 'ubuntu-latest' }], include: [{ os: 'macos-latest', target: 'darwin' }] }), [{ os: 'macos-latest', target: 'darwin' }]);
  const scenario = { id: 'fixture', event: 'pull_request', payload: {}, ref: 'refs/heads/feature' };
- for (const job of [{ 'runs-on': '${{ inputs.unknown }}' }, { uses: 'owner/repo/.github/workflows/test.yml@main' }, { 'runs-on': 'macos-latest', strategy: { matrix: '${{ inputs.matrix }}' } }]) assert.throws(() => resolveRuns(scenario, { 'test.yml': { on: { pull_request: null }, jobs: { test: job } } }), /unresolved|unsupported/);
+ for (const job of [{ 'runs-on': '${{ inputs.unknown }}' }, { uses: 'owner/repo/.github/workflows/test.yml@main' }, { 'runs-on': 'macos-latest', strategy: { matrix: '${{ inputs.matrix }}' } }]) assert.throws(() => resolveRuns(scenario, { 'test.yml': { on: { pull_request: null }, jobs: { test: job } } }), /unresolved|unsupported|unmodelled/);
  const graph = { 'caller.yml': { on: { pull_request: null }, jobs: { call: { uses: './.github/workflows/callee.yml' } } }, 'callee.yml': { on: { workflow_call: null }, jobs: { native: { 'runs-on': 'macos-latest' } } } };
  assert.equal(resolveRuns(scenario, graph)[0].jobs[0].macos, true);
 });
@@ -159,6 +159,10 @@ test('automatic events cannot carry the diagnostic opt-in into a Mac job', () =>
 
 test('array matrices, unsupported branch globs and mistyped dispatch inputs are refused, not guessed', () => {
  assert.throws(() => matrixRows([]), /unresolved matrix/);
+ const conditioned = cond => ({ 'test.yml': { on: { pull_request: null }, jobs: { proof: { 'runs-on': 'macos-latest', if: cond } } } });
+ for (const cond of ["github.actor == 'release-please[bot]'", "inputs.macos_diagnostic", "needs.policy.result == 'success'"]) assert.throws(() => resolveRuns({ id: 'x', event: 'pull_request', payload: {}, ref: 'refs/heads/f' }, conditioned(cond)), /unmodelled context property/, cond);
+ // Absent event-payload fields are null in Actions too, so they stay readable.
+ assert.equal(resolveRuns({ id: 'x', event: 'pull_request', payload: {}, ref: 'refs/heads/f' }, conditioned('github.event.pull_request.head.repo.fork'))[0].jobs[0].macos, false);
  for (const matrix of [false, 0, '', null]) assert.throws(() => matrixRows(matrix), /unresolved matrix/);
  for (const proof of [{ 'runs-on': 'macos-latest', strategy: 'matrix' }, { 'runs-on': 'macos-latest', name: 7 }, { 'runs-on': 'macos-latest', outputs: { x: 1 } }, { uses: 7 }, { 'runs-on': ['macos-latest'] }, {}, { 'runs-on': 'macos-latest', steps: [{ run: ['echo'] }] }, { 'runs-on': 'macos-latest', steps: [{ run: 'echo', env: { A: { nested: 1 } } }] }]) assert.throws(() => resolveRuns({ id: 'x', event: 'pull_request', payload: {}, ref: 'refs/heads/f' }, { 'test.yml': { on: { pull_request: null }, jobs: { proof } } }), /unsupported|unresolved/, JSON.stringify(proof));
  for (const on of [[123], [], 7, 'issues', ['pull_request', 'merge_group'], { issues: null }]) assert.throws(() => resolveRuns({ id: 'x', event: 'pull_request', payload: {}, ref: 'refs/heads/f' }, { 'test.yml': { on, jobs: { proof: { 'runs-on': 'macos-latest' } } } }), /unsupported trigger/);

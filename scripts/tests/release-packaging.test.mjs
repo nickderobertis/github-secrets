@@ -37,21 +37,39 @@ test.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('real native
     // The producer's actual path list and consumer's actual pattern drive copying.
     const producer = workflow.jobs.build.steps.find(s => s.uses?.startsWith('actions/upload-artifact@'));
     const consumer = workflow.jobs.upload.steps.find(s => s.uses?.startsWith('actions/download-artifact@'));
-    const artifactName = replace(producer.with.name);
     const matches = (pattern, value) => new RegExp('^' + pattern.replaceAll('.', '\\.').replaceAll('*', '.*') + '$').test(value);
-    expect(matches(consumer.with.pattern, artifactName)).toBe(true);
-    const transport = join(stage, 'transport', artifactName), downloaded = join(stage, 'downloaded');
-    mkdirSync(transport, { recursive: true }); mkdirSync(downloaded);
     const patterns = producer.with.path.trim().split('\n');
-    const assets = readdirSync(stage).filter(file => patterns.some(pattern => matches(pattern, file)));
-    expect(assets.sort()).toEqual([name + '.tar.gz', name + '.tar.gz.sha256'].sort());
-    for (const file of assets) { cpSync(join(stage, file), join(transport, file)); cpSync(join(transport, file), join(downloaded, file)); expect(hash(join(downloaded, file))).toBe(hash(join(stage, file))); }
+    const downloaded = join(stage, 'downloaded'); mkdirSync(downloaded);
+    const expected = [];
+    // Every release target crosses the same handoff. The host target carries the
+    // archive built above; the others (whose pwsh/Darwin packaging this Linux
+    // host cannot run) carry named placeholders, proving their .tar.gz/.zip and
+    // .sha256 names are selected, transported and attached, not their bytes.
+    for (const row of workflow.jobs.build.strategy.matrix.include) {
+      const produced = join(stage, 'produced', row.target); mkdirSync(produced, { recursive: true });
+      const asset = `gh-secrets-${tag}-${row.target}.${row.archive}`;
+      for (const file of [asset, asset + '.sha256']) {
+        if (row.target === target) cpSync(join(stage, file), join(produced, file));
+        else writeFileSync(join(produced, file), `placeholder ${file}\n`);
+      }
+      writeFileSync(join(produced, 'unrelated.log'), 'not an asset');
+      const artifactName = producer.with.name.replaceAll('${{ matrix.target }}', row.target);
+      expect(matches(consumer.with.pattern, artifactName)).toBe(true);
+      const selected = readdirSync(produced).filter(file => patterns.some(pattern => matches(pattern, file)));
+      expect(selected.sort()).toEqual([asset, asset + '.sha256'].sort());
+      for (const file of selected) { cpSync(join(produced, file), join(downloaded, file)); expect(hash(join(downloaded, file))).toBe(hash(join(produced, file))); }
+      expected.push(asset, asset + '.sha256');
+    }
+    expect(expected.filter(f => f.endsWith('.zip'))).toEqual([`gh-secrets-${tag}-x86_64-pc-windows-msvc.zip`]);
     const doubles = join(stage, 'transport-bin'); mkdirSync(doubles);
     writeFileSync(join(doubles, 'gh'), '#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE"\n'); chmodSync(join(doubles, 'gh'), 0o755);
     const attach = workflow.jobs.upload.steps.find(step => step.name === 'Attach assets to the release');
     const capture = join(stage, 'forge-args');
     execFileSync('bash', ['-e', '-c', attach.run], { cwd: downloaded, env: { ...process.env, PATH: doubles + ':' + process.env.PATH, TAG: tag, GITHUB_REPOSITORY: 'fixture/repo', CAPTURE: capture } });
-    expect(readFileSync(capture, 'utf8').trim().split('\n')).toEqual(['release', 'upload', tag, ...assets.sort(), '--clobber', '--repo', 'fixture/repo']);
+    const args = readFileSync(capture, 'utf8').trim().split('\n');
+    expect(args.slice(0, 3)).toEqual(['release', 'upload', tag]);
+    expect(args.slice(-3)).toEqual(['--clobber', '--repo', 'fixture/repo']);
+    expect(args.slice(3, -3).sort()).toEqual(expected.sort());
     writeFileSync(join(doubles, 'cargo'), '#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE"\n'); chmodSync(join(doubles, 'cargo'), 0o755);
     const publish = workflow.jobs['crates-io'].steps.find(step => step.name === 'Publish (if configured)');
     for (const configured of [false, true]) {

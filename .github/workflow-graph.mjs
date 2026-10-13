@@ -8,13 +8,26 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 import { Lexer, Parser, Evaluator, data } from '@actions/expressions';
 export const root = fileURLToPath(new URL('../', import.meta.url));
-function value(v) {
+// Modelled contexts refuse unknown keys, so a condition reading an unmodelled
+// property (e.g. github.actor) is an error rather than a silent null. Only the
+// github.event payload stays lenient: absent payload fields are null in Actions.
+class StrictDictionary extends data.Dictionary {
+  constructor(path, ...pairs) { super(...pairs); this.path = path; }
+  get(key) {
+    const found = super.get(key);
+    if (found === undefined) throw new Error(`unmodelled context property ${this.path}.${key}`);
+    return found;
+  }
+}
+function value(v, path = '') {
   if (v === null || v === undefined) return new data.Null();
   if (typeof v === 'boolean') return new data.BooleanData(v);
   if (typeof v === 'number') return new data.NumberData(v);
   if (typeof v === 'string') return new data.StringData(v);
-  if (Array.isArray(v)) return new data.Array(...v.map(value));
-  return new data.Dictionary(...Object.entries(v).map(([key, v]) => ({ key, value: value(v) })));
+  if (Array.isArray(v)) return new data.Array(...v.map((x, i) => value(x, `${path}[${i}]`)));
+  const pairs = Object.entries(v).map(([key, x]) => ({ key, value: value(x, path ? `${path}.${key}` : key) }));
+  const lenient = path === 'github.event' || path.startsWith('github.event.') || path.startsWith('github.event[');
+  return lenient ? new data.Dictionary(...pairs) : new StrictDictionary(path || 'context', ...pairs);
 }
 export function evaluate(expression, context) {
   const text = expression.replace(/^\s*\$\{\{\s*|\s*\}\}\s*$/g, '');
