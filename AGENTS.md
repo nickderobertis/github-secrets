@@ -393,8 +393,7 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 - **macOS is scarce and shared across repositories**, so a change spends at
   most one Mac job per workflow run and two Mac-spending runs per lifecycle:
   the ordinary PR's one consolidated lane and the release build's Darwin leg.
-  Release-only PRs, master pushes and downstream events spend none. How that
-  is routed and proved: `.github/AGENTS.md`.
+  Release-only PRs, master pushes and downstream events spend none.
 - **Fixed status-check contexts** (what branch protection names; keep the job
   ids and matrix values): `check (ubuntu-latest|macos-latest|windows-latest)`,
   `build (…)`, `live-e2e`, `live-e2e-bitwarden`, `llmlint`, `lint PR title`.
