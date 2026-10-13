@@ -381,28 +381,20 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 - **Placement** (`ci.md` "Gate a given commit once"): the release PR can
   accumulate several merges, so this repo *batches* releases and the
   **broader tier — the full `just check all` sweep — runs on the release PR**
-  (release-prep), over the exact tree that ships. **Ordinary pull requests and
-  pushes to `master` run the affected tier** against an explicit base (the
-  merge base with `origin/master`; the previous `master` tip for a push).
+  (release-prep), over the exact tree that ships. **Ordinary pull requests,
+  pushes to `master` and the manual macOS diagnostic run the affected tier**
+  against an explicit base (the merge base with `origin/master`; the previous
+  `master` tip for a push).
   `scripts/ci-gate-tier.mjs` makes that choice in every `check` leg (a release
   PR is a same-repo PR whose head branch starts with
   `release-please--branches--master`), and `tools/tests/ci-gate-tier.test.mjs`
   pins it. `release.yml` builds and publishes the tagged commit and re-gates
   nothing.
-- **macOS is scheduled once per change.** The shared Mac pool is scarce, so
-  the only automatic Mac jobs are ci.yml's one consolidated lane
-  (`.github/workflows/macos.yml`: check, release build, package, install, run)
-  on ordinary PRs, and release.yml's aarch64-apple-darwin build on the
-  release-producing push. `.github/macos-policy.mjs classify` is the one
-  release-only authority: a same-repo head under `release-please--branches--master`
-  whose diff is semantically version/changelog-only skips the lane; anything
-  unreadable, forked, mixed, or an unknown event requires it. The Linux
-  carriers `check (macos-latest)` / `build (macos-latest)` keep the protected
-  names and fail unless the lane passed or the classifier authorized its
-  omission. `macos-diagnostic.yml` is the manual, default-off opt-in. The
-  `github-workflows:budgets` target checks the Mac jobs/run and
-  Mac-spending runs/change bounds in `.github/budgets.yaml` against telemetry
-  its `test` target records.
+- **macOS is scarce and shared across repositories**, so a change spends at
+  most one Mac job per workflow run and two Mac-spending runs per lifecycle:
+  the ordinary PR's one consolidated lane and the release build's Darwin leg.
+  Release-only PRs, master pushes and downstream events spend none. How that
+  is routed and proved: `.github/AGENTS.md`.
 - **Fixed status-check contexts** (what branch protection names; keep the job
   ids and matrix values): `check (ubuntu-latest|macos-latest|windows-latest)`,
   `build (…)`, `live-e2e`, `live-e2e-bitwarden`, `llmlint`, `lint PR title`.

@@ -87,9 +87,19 @@ test("a push without a usable before falls back to HEAD~1", () => {
   expect(r.base).not.toBe(featureTip);
 });
 
-test("a manual dispatch runs the full sweep", () => {
-  const r = route("workflow_dispatch", {});
-  expect(r.tier).toBe("all");
+test("a manual dispatch runs the affected tier from the default branch's merge base", () => {
+  const r = route("workflow_dispatch", { repository: { default_branch: "master" } });
+  expect(r.code).toBe(0);
+  expect(r.tier).toBe("affected");
+  expect(r.base).toBe(forkPoint);
+});
+
+test("a manual dispatch without a usable default branch is refused, not swept", () => {
+  for (const payload of [{}, { repository: { default_branch: "master; curl evil" } }]) {
+    const r = route("workflow_dispatch", payload);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("no usable repository.default_branch");
+  }
 });
 
 test("a pull request whose base ref is not a plain ref name is refused", () => {
@@ -132,7 +142,7 @@ test("an unwritable GITHUB_OUTPUT fails with the next action", () => {
   writeFileSync(event, "{}");
   const r = run("bun", [SCRIPT], {
     cwd: repo,
-    env: { ...process.env, GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_EVENT_PATH: event, GITHUB_OUTPUT: join(s.dir, "no-such-dir", "out") },
+    env: { ...process.env, GITHUB_EVENT_NAME: "schedule", GITHUB_EVENT_PATH: event, GITHUB_OUTPUT: join(s.dir, "no-such-dir", "out") },
   });
   expect(r.code).toBe(1);
   expect(r.stderr).toContain("could not append to GITHUB_OUTPUT");
@@ -141,7 +151,7 @@ test("an unwritable GITHUB_OUTPUT fails with the next action", () => {
 test("outside Actions (no GITHUB_OUTPUT) the decision goes to stdout", () => {
   const event = join(s.dir, "dispatch2.json");
   writeFileSync(event, "{}");
-  const env = { ...process.env, GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_EVENT_PATH: event };
+  const env = { ...process.env, GITHUB_EVENT_NAME: "schedule", GITHUB_EVENT_PATH: event };
   delete env.GITHUB_OUTPUT;
   const r = run("bun", [SCRIPT], { cwd: repo, env });
   expect(r.code).toBe(0);
