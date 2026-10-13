@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.5](https://github.com/nickderobertis/github-secrets/compare/v1.0.4...v1.0.5) (2026-10-13)
+
+
+### Bug Fixes
+
+* **hooks:** remove CI-duplicated pre-push checks ([#65](https://github.com/nickderobertis/github-secrets/issues/65)) ([2f018b7](https://github.com/nickderobertis/github-secrets/commit/2f018b73f1c732076d97e5e26a0c1d27db14d2f9))
+
 ## [1.0.4](https://github.com/nickderobertis/github-secrets/compare/v1.0.3...v1.0.4) (2026-10-12)
 
 
