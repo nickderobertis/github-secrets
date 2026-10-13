@@ -14,6 +14,9 @@ and are installed by `just setup-workflows`; nothing in the product uses them.
   title carry no authority. Anything unreadable, forked or mixed — and any
   unrecognised event name — requires the Mac lane; known non-PR events never
   do. Widen it only by semantic comparison, never by path or name lists.
+  Because the tier router imports it and a `scripts -> github-workflows` edge
+  would be a cycle, `test` also runs `scripts/tests/ci-gate-tier.test.mjs`
+  (that file only); `tests/selection.test.mjs` pins the wiring via Nx.
 - The Mac lane is `workflows/macos.yml`, called by ci.yml and by the
   default-off `macos-diagnostic.yml`. The Linux carriers `check (macos-latest)`
   and `build (macos-latest)` keep the protected names and run
