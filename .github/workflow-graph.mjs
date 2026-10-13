@@ -34,7 +34,8 @@ export function interpolate(text, context, allowMissing = false) {
   });
 }
 export function matrixRows(matrix) {
-  if (!matrix) return [{}];
+  if (matrix === undefined) return [{}];
+  if (!matrix) throw new Error('unresolved matrix');
   if (typeof matrix !== 'object' || Array.isArray(matrix)) throw new Error('unresolved matrix');
   for (const key of ['include', 'exclude']) if (key in matrix && (!Array.isArray(matrix[key]) || !matrix[key].every(e => e && typeof e === 'object' && !Array.isArray(e)))) throw new Error(`unresolved matrix ${key}`);
   let rows = [{}];
@@ -55,6 +56,7 @@ export function matrixRows(matrix) {
 function validateWorkflow(file, wf) {
   const object = v => v && typeof v === 'object' && !Array.isArray(v);
   if (!object(wf) || !object(wf.jobs) || !wf.on) throw new Error(`unsupported workflow ${file}`);
+  if (!object(wf.on) && typeof wf.on !== 'string' && !(Array.isArray(wf.on) && wf.on.length && wf.on.every(e => typeof e === 'string'))) throw new Error(`unsupported trigger ${file}`);
   if (object(wf.on)) for (const [event, filters] of Object.entries(wf.on)) {
     if (filters === null) continue;
     if (!object(filters)) throw new Error(`unsupported trigger ${file}:${event}`);

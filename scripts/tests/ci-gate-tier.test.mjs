@@ -52,7 +52,7 @@ const pr = (headRef, headRepo = "nickderobertis/github-secrets") => ({
   },
 });
 
-test("a release-please branch containing source changes keeps the affected tier", () => {
+test("a release-please branch whose diff the classifier cannot admit as version-only keeps the affected tier", () => {
   const r = route("pull_request", pr("release-please--branches--master--components--gh-secrets"));
   expect(r.code).toBe(0);
   expect(r.tier).toBe("affected");

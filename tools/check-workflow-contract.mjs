@@ -220,6 +220,15 @@ export function checkContract(root) {
     pinsJust(`ci.yml:${id}`, job);
   }
 
+  // The Mac lane's install path is ci.yml:install's, step for step: the install
+  // job executes these commands on Linux and Windows every PR, and Linux cannot
+  // run the Darwin binary, so identity is what proves the Mac copy.
+  for (const name of ["Version this commit would ship as", "Build", "Install through scripts/install.sh", "Run the installed binary"]) {
+    const a = (ci?.jobs?.install?.steps ?? []).find((s) => s.name === name);
+    const b = (workflows["macos.yml"]?.jobs?.macos?.steps ?? []).find((s) => s.name === name);
+    if (!a || !b || JSON.stringify(a) !== JSON.stringify(b)) errors.push(`'${name}' differs between ci.yml:install and macos.yml:macos; keep them identical.`);
+  }
+
   // Packaging lockstep between the install-path job and the release build.
   const releaseBuild = workflows["release.yml"]?.jobs?.build?.steps ?? [];
   const installJob = ci?.jobs?.install?.steps ?? [];

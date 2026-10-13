@@ -390,9 +390,10 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   `release-please--branches--master`), and `tools/tests/ci-gate-tier.test.mjs`
   pins it. `release.yml` builds and publishes the tagged commit and re-gates
   nothing.
-- **macOS is scarce and shared across repositories**, so a change spends at
-  most one Mac job per workflow run and two Mac-spending runs per lifecycle:
-  the ordinary PR's one consolidated lane and the release build's Darwin leg.
+- **macOS is scarce and shared across repositories**, so Mac jobs per
+  workflow run and Mac-spending runs per change are budgeted
+  (`.github/budgets.yaml`): the only automatic Mac work is the ordinary PR's
+  one consolidated lane and the release build's Darwin leg.
   Release-only PRs, master pushes and downstream events spend none.
 - **Fixed status-check contexts** (what branch protection names; keep the job
   ids and matrix values): `check (ubuntu-latest|macos-latest|windows-latest)`,

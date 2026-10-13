@@ -186,3 +186,8 @@ test("a called Mac lane without the pinned just is caught", () => {
   const errors = mutated("macos.yml", "        id: pins\n", "        id: not-pins\n");
   expect(errors.join("\n")).toContain("./.github/workflows/macos.yml:macos must install just at the .tool-versions pin");
 });
+
+test("the Mac lane's install-and-run commands drifting from the install job are caught", () => {
+  const errors = mutated("macos.yml", '[ "$out" = "gh-secrets ${VERSION#v}" ]', 'true');
+  expect(errors.join("\n")).toContain("'Run the installed binary' differs between ci.yml:install and macos.yml:macos");
+});
