@@ -20,7 +20,8 @@
       "executor": "nx:run-commands",
       "options": {
         "command": "node .github/syntax.mjs"
-      }
+      },
+      "//ignore-budgets": "llmlint: ignore-block[new_projects_keep_the_graph_uniform] `budgets` is a gate target name here: the justfile's check recipe runs `-t format-check lint build test coverage budgets` on both tiers, so affected and run-many include it; it stays separate from `test` because the budget brief requires onebudgetspec, not the test, to compare the recorded figures against their limits."
     },
     "budgets": {
       "executor": "nx:run-commands",
@@ -30,7 +31,8 @@
       "cache": false,
       "options": {
         "command": "node .github/node_modules/@onebudgetspec/cli/bin/onebudgetspec.js check .github/budgets.yaml"
-      }
+      },
+      "//ignore-end": "llmlint: ignore-end[new_projects_keep_the_graph_uniform]"
     }
   }
 }
