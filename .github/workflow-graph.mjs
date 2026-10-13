@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { truthy } from '@actions/expressions/result';
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { parse } from 'yaml';
@@ -20,14 +20,15 @@ export function evaluate(expression, context) {
   const text = expression.replace(/^\s*\$\{\{\s*|\s*\}\}\s*$/g, '');
   const functions = new Map(['always', 'success', 'failure', 'cancelled'].map(name => [name, {
     name, minArgs: 0, maxArgs: 0,
-    call: () => new data.BooleanData(name === 'always' || (name === 'success' && Object.values(context.needs ?? {}).every(n => n.result === 'success')) || Object.values(context.needs ?? {}).some(n => n.result === (name === 'failure' ? 'failure' : 'cancelled'))),
+    call: () => new data.BooleanData(name === 'always' || (name === 'success' && Object.values(context.needs ?? {}).every(n => n.result === 'success')) || (['failure', 'cancelled'].includes(name) && Object.values(context.needs ?? {}).some(n => n.result === name))),
   }]));
   const tree = new Parser(new Lexer(text).lex().tokens, Object.keys(context), [...functions.values()]).parse();
   return new Evaluator(tree, value(context), functions).evaluate();
 }
-export function interpolate(text, context) {
+export function interpolate(text, context, allowMissing = false) {
   return String(text).replace(/\$\{\{(.*?)\}\}/g, (_, expr) => {
     const result = evaluate(expr, context);
+    if (result.kind === data.Kind.Null && allowMissing) return '';
     if (result.kind === data.Kind.Null) throw new Error(`unresolved expression: ${expr}`);
     return result.coerceString();
   });
@@ -68,18 +69,24 @@ function validateWorkflow(file, wf) {
   }
   return wf;
 }
-function routingOutput(scenario) {
+function routingOutput(scenario, job, context) {
   const parent = process.env.ONEPIPELINE_NODE_SCRATCH_DIR ?? process.env.RUNNER_TEMP ?? join(root, '.github/.telemetry');
   mkdirSync(parent, { recursive: true });
   const dir = mkdtempSync(join(parent, 'route-'));
   try {
-    const policy = join(dir, 'policy.json'), output = join(dir, 'output');
-    writeFileSync(policy, JSON.stringify(scenario.classification ?? { isReleaseOnly: false, macosRequired: scenario.macosRequired ?? false, reason: 'graph fixture' }));
-    writeFileSync(output, '');
-    execFileSync(process.execPath, [join(root, '.github/macos-route.mjs'), policy], { env: { ...process.env, GITHUB_EVENT_NAME: scenario.event, DIAGNOSTIC: String(scenario.diagnostic ?? false), GITHUB_OUTPUT: output } });
+    const event = join(dir, 'event.json'), output = join(dir, 'output');
+    writeFileSync(event, JSON.stringify(scenario.payload)); writeFileSync(output, '');
+    const step = job.steps.find(s => s.id === 'policy');
+    if (!step?.run || !step.env) throw new Error('missing policy routing step');
+    const env = Object.fromEntries(Object.entries(step.env).map(([key, value]) => [key, interpolate(value, context, true)]));
+    const cwd = scenario.cwd ?? root;
+    if (cwd !== root && !existsSync(join(cwd, '.github'))) symlinkSync(join(root, '.github'), join(cwd, '.github'), 'dir');
+    // Run the real two-command workflow step, in the generated git history.
+    // Only GitHub's event file and output-file transport are doubled.
+    execFileSync('bash', ['-e', '-c', step.run], { cwd, env: { ...process.env, ...env, GITHUB_EVENT_NAME: scenario.event, GITHUB_EVENT_PATH: event, GITHUB_OUTPUT: output } });
     const text = readFileSync(output, 'utf8').trim();
     if (!/^macosRequired=(true|false)$/.test(text)) throw new Error('invalid route output');
-    return text.split('=')[1];
+    return Object.fromEntries(text.split('\n').map(line => line.split('=')));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 export function workflows(dir = join(root, '.github/workflows')) {
@@ -127,7 +134,8 @@ export function resolveRuns(scenario, graph = workflows()) {
       const explicitStatus = /\b(always|success|failure|cancelled)\(/.test(job.if ?? '');
       const prerequisites = Object.values(needs).every(n => n.result === 'success');
       const enabled = (explicitStatus || prerequisites) && (!job.if || truthy(evaluate(job.if, context)));
-      const outputs = id === 'policy' ? { macosRequired: routingOutput(scenario) } : id === 'release-please' ? { release_created: String(scenario.releaseCreated ?? false), tag_name: scenario.tag ?? 'v1.0.0' } : {};
+      const steps = id === 'policy' ? { policy: { outputs: enabled ? routingOutput(scenario, job, context) : {} } } : id === 'release-please' ? { release: { outputs: { release_created: String(scenario.releaseCreated ?? false), tag_name: scenario.tag ?? 'v1.0.0' } } } : {};
+      const outputs = Object.fromEntries(Object.entries(job.outputs ?? {}).map(([key, expression]) => [key, interpolate(expression, { ...context, steps })]));
       outcomes[id] = { result: enabled ? 'success' : 'skipped', outputs };
       for (const matrix of matrixRows(job.strategy?.matrix)) {
         const ctx = { ...context, matrix };

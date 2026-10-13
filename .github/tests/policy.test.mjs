@@ -64,6 +64,7 @@ test('semantic classifier rejects empty, deleted, renamed, malformed and mixed c
    () => writeFileSync(join(h.cwd, 'Cargo.toml'), '[package]\nname="other"\nversion="1.1.0"\n'),
    () => writeFileSync(join(h.cwd, 'Cargo.toml'), '[package]\nname="gh-secrets"\nversion=123\n'),
    () => writeFileSync(join(h.cwd, 'Cargo.toml'), '[package]\nname="gh-secrets"\n'),
+   ...['1.2.3-01', '1.2.3-.', '1.2.3+a..b'].map(v => () => writeFileSync(join(h.cwd, 'Cargo.toml'), `[package]\nname="gh-secrets"\nversion="${v}"\n`)),
    () => writeFileSync(join(h.cwd, 'Cargo.toml'), 'broken [toml'),
    () => { writeFileSync(join(h.cwd, 'Cargo.toml'), '[package]\nname="gh-secrets"\nversion="1.1.0"\nedition="2021"\n[dependencies]\nserde="1"\n'); writeFileSync(join(h.cwd, 'source.rs'), 'changed source'); },
   ];
@@ -86,5 +87,22 @@ test('unsupported release configuration is explicitly refused', () => {
    writeFileSync(join(h.cwd, '.github/workflows/release.yml'), JSON.stringify({ on: { push: { branches } } }));
    assert.throws(() => releaseBranch(h.cwd + '/'), /unsupported release configuration/);
   }
+ } finally { h.cleanup(); }
+});
+
+
+test('member manifests and release metadata round-trip only version changes', () => {
+ const h = history();
+ try {
+  h.git('checkout', '-q', '-B', 'member-base', h.base);
+  mkdirSync(join(h.cwd, 'member')); writeFileSync(join(h.cwd, 'member/Cargo.toml'), '[package]\nname="member"\nversion="1.0.0"\nedition="2021"\n');
+  h.base = h.commit();
+  writeFileSync(join(h.cwd, 'member/Cargo.toml'), '[package]\nname="member"\nversion="1.1.0"\nedition="2021"\n');
+  h.heads.version = h.commit(); assert.equal(classify(h, payload(h, 'version')).isReleaseOnly, true);
+  for (const metadata of ['{broken', '{".":123}', '{".":"1.1.0","extra":"1.1.0"}', '{".":"1.2.3-01"}']) {
+   h.git('checkout', '-q', '-B', 'metadata', h.base); writeFileSync(join(h.cwd, '.release-please-manifest.json'), metadata); h.heads.version = h.commit();
+   assert.equal(classify(h, payload(h, 'version')).macosRequired, true);
+  }
+  assert.notEqual(spawnSync(process.execPath, [join(root, '.github/macos-policy.mjs'), 'classify', '--event', join(h.cwd, '.git/event.json'), '--base', h.base, '--head', h.heads.version], { env: { ...process.env, GITHUB_EVENT_NAME: 'unrecognized' } }).status, 0);
  } finally { h.cleanup(); }
 });

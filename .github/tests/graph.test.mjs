@@ -1,7 +1,7 @@
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { root, workflows, resolveRuns, digest, matrixRows, evaluate, interpolate } from '../workflow-graph.mjs';
 import { history, payload, classify } from './helpers.mjs';
 const required = ['check (macos-latest)', 'check (ubuntu-latest)', 'check (windows-latest)', 'build (macos-latest)', 'build (ubuntu-latest)', 'build (windows-latest)', 'live-e2e', 'live-e2e-bitwarden', 'llmlint', 'lint PR title'];
@@ -14,9 +14,10 @@ test('actual event/call/matrix graph and complete lifecycle record telemetry', (
  try {
   const graph = workflows(); const scenarios = [];
   for (const kind of ['source', 'version', 'dependency']) for (const fork of [false, true]) for (const [id, event, action] of classes) {
-   const p = payload(h, kind, fork); p.action = action;
+   const p = event === 'pull_request' ? payload(h, kind, fork) : event === 'push' ? { before: h.base, after: h.heads[kind], ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master' } : event === 'release' ? { release: { tag_name: 'v1.1.0' } } : event === 'workflow_run' ? { workflow_run: { head_sha: h.heads[kind], conclusion: 'success' } } : event === 'repository_dispatch' ? { event_type: 'downstream-smoke', client_payload: { sha: h.heads[kind] } } : event === 'workflow_dispatch' ? { inputs: { macos_diagnostic: id === 'manual-opt-in' } } : {};
+   if (action) p.action = action;
    const decision = classify(h, p, event);
-   const scenario = { id: `${id}/${kind}/${fork ? 'fork' : 'same-repo'}`, event, action, payload: p, ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master', macosRequired: decision.macosRequired, classification: decision, diagnostic: id === 'manual-opt-in', releaseCreated: id === 'release-merge', tag: 'v1.1.0' };
+   const scenario = { cwd: h.cwd, id: `${id}/${kind}/${fork ? 'fork' : 'same-repo'}`, event, action, payload: p, ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master', macosRequired: decision.macosRequired, classification: decision, diagnostic: id === 'manual-opt-in', releaseCreated: id === 'release-merge', tag: 'v1.1.0' };
    const runs = resolveRuns(scenario, graph);
    if (event === 'pull_request') {
     const names = runs.flatMap(r => r.jobs.map(j => j.name));
@@ -41,6 +42,16 @@ test('actual event/call/matrix graph and complete lifecycle record telemetry', (
   }));
   mkdirSync(root + '.github/.telemetry', { recursive: true });
   writeFileSync(root + '.github/.telemetry/macos-policy.json', JSON.stringify({ schemaVersion: 1, sourceDigest: digest(), scenarios, lifecycles }, null, 2));
+  // Measure the recorded production graph through the actual SDK command.
+  // Expected cardinalities come from distinct graph identities, not a cost fixture.
+  for (const metric of ['jobs-per-run', 'runs-per-change']) {
+   const resultFile = h.cwd + '/.git/report.json';
+   const report = spawnSync(process.execPath, [root + '.github/macos-budget.mjs', '--metric', metric, '--telemetry', root + '.github/.telemetry/macos-policy.json'], { env: { ...process.env, ONEBUDGETSPEC_RESULT: resultFile }, encoding: 'utf8' });
+   assert.equal(report.status, 0, report.stderr);
+   const values = metric === 'jobs-per-run' ? scenarios.flatMap(s => s.runs.map(r => new Set(r.jobs.filter(j => j.enabled && j.runner.startsWith('macos-')).map(j => j.job + '/' + j.target)).size)) : lifecycles.map(l => new Set(l.runs.filter(r => r.jobs.some(j => j.enabled && j.runner.startsWith('macos-'))).map(r => r.workflow + '/' + r.event)).size);
+   assert.equal(JSON.parse(readFileSync(resultFile, 'utf8')).value, Math.max(...values));
+  }
+
  } finally { h.cleanup(); }
 });
 test('unsupported runners, matrices and calls fail explicitly; actual matrix expansion handles include/exclude', () => {
@@ -81,7 +92,7 @@ test('unknown and forged PRs route through the actual graph to the Mac proof', (
  try {
   for (const p of [{}, payload(h, 'version', false, false), payload(h, 'dependency')]) {
    const decision = classify(h, p);
-   const runs = resolveRuns({ id: 'unknown-or-forged', event: 'pull_request', action: 'synchronize', payload: p, ref: 'refs/heads/master', macosRequired: decision.macosRequired });
+   const runs = resolveRuns({ cwd: h.cwd, id: 'unknown-or-forged', event: 'pull_request', action: 'synchronize', payload: p, ref: 'refs/heads/master', macosRequired: decision.macosRequired });
    assert.ok(runs.flatMap(r => r.jobs).some(j => j.macos));
   }
  } finally { h.cleanup(); }
@@ -98,4 +109,23 @@ test('carrier expressions and actual outcome handling never hide failed required
   const run = spawnSync('bash', ['-c', step.run], { cwd: root, env: { ...process.env, ...env }, encoding: 'utf8' });
   assert.equal(run.status === 0, required ? result === 'success' : result === 'skipped');
  }
+});
+
+test('status functions and malformed graph boundaries use actual expression evaluation', () => {
+ for (const result of ['success', 'failure', 'cancelled', 'skipped']) {
+  const context = { needs: { proof: { result } } };
+  for (const func of ['success', 'failure', 'cancelled']) assert.equal(evaluate(`${func}()`, context).value, result === func);
+ }
+ const scenario = { id: 'invalid-graph', event: 'pull_request', payload: {}, action: 'opened', ref: 'refs/heads/feature' };
+ const graphs = [
+  { 'test.yml': { on: { pull_request: { paths: ['src/**'] } }, jobs: {} } },
+  { 'test.yml': { on: { pull_request: null }, jobs: [] } },
+  { 'test.yml': { on: { pull_request: null }, jobs: { proof: { 'runs-on': 'ubuntu-latest', needs: 123 } } } },
+  { 'test.yml': { on: { pull_request: null }, jobs: { proof: { uses: './.github/workflows/missing.yml' } } } },
+  { 'test.yml': { on: { pull_request: null }, jobs: { proof: { uses: './.github/workflows/test.yml' } } } },
+  { 'test.yml': { on: { pull_request: null }, jobs: { proof: { 'runs-on': 'macos-latest', needs: 'missing' } } } },
+  { 'test.yml': { on: { pull_request: null }, jobs: { proof: { 'runs-on': 'macos-latest', needs: 'proof' } } } },
+  { 'test.yml': { on: { pull_request: null }, jobs: { proof: { uses: './.github/workflows/test.yml', with: { diagnostic: true } } } } },
+ ];
+ for (const graph of graphs) assert.throws(() => resolveRuns(scenario, graph), /unsupported|unresolved|missing|recursive/);
 });

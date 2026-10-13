@@ -33,7 +33,7 @@ bootstrap: toolchain
 
 # Locked, private workflow-tooling dependencies (no product dependency).
 setup-workflows:
-    npm ci --prefix .github --ignore-scripts --silent
+    @npm ci --prefix .github --ignore-scripts --no-audit --no-fund --loglevel=error || { echo "Workflow tooling install failed above; restore .github/package-lock.json and re-run just setup-workflows." >&2; exit 1; }
 
 # Install the Rust toolchain rust-toolchain.toml pins (channel, components, release targets).
 toolchain:

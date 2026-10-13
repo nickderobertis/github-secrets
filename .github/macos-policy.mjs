@@ -1,7 +1,7 @@
 // Exit 0: classification (including conservative unreadable PR); exit 1: invalid usage.
 // One release-only authority for production routing and graph journeys.
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { options } from './inputs.mjs';
@@ -12,7 +12,11 @@ function toml(text) {
   const bun = execFileSync('bash', [root + 'scripts/bun.sh', 'path'], { encoding: 'utf8' }).trim();
   return JSON.parse(execFileSync(bun, ['-e', 'console.log(JSON.stringify(Bun.TOML.parse(await Bun.stdin.text())))'], { input: text, encoding: 'utf8' }));
 }
-const version = v => typeof v === 'string' && /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(v);
+function version(v) {
+  if (typeof v !== 'string') return false;
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(v);
+  return !!match && (!match[4] || match[4].split('.').every(id => !/^\d+$/.test(id) || id === '0' || !id.startsWith('0')));
+}
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 export function releaseBranch(configRoot = root) {
   const workflow = parse(readFileSync(configRoot + '.github/workflows/release.yml', 'utf8'));
@@ -45,6 +49,7 @@ function semanticVersions(a, b, path, names) {
   return false;
 }
 export function classify(eventName, payload, base, head, cwd = process.cwd()) {
+  if (!['pull_request', 'push', 'release', 'workflow_run', 'repository_dispatch', 'schedule', 'workflow_dispatch'].includes(eventName)) throw new Error('unsupported event identity; provide a recognized GitHub event');
   const ordinary = { isReleaseOnly: false, macosRequired: eventName === 'pull_request', reason: 'ordinary PR or unknown classification' };
   if (eventName !== 'pull_request') return { ...ordinary, reason: 'non-PR event' };
   try {
@@ -70,10 +75,10 @@ export function classify(eventName, payload, base, head, cwd = process.cwd()) {
     return { ...ordinary, reason: `classification unavailable: ${err.message.split('\n')[0]}` };
   }
 }
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   if (args.shift() !== 'classify') throw new Error('usage: macos-policy.mjs classify --event PATH --base REF --head REF');
-  const opts = options(args, ['--event', '--base', '--head']);
+  const opts = options(args, ['--event', '--base', '--head'], ['--base', '--head']);
   let payload = {};
   try { payload = JSON.parse(readFileSync(opts['--event'], 'utf8')); } catch { /* A PR must fail closed. */ }
   // Without Actions' event identity, classify conservatively as an unknown PR.
