@@ -13,7 +13,8 @@
     },
     "coverage": {
       "executor": "nx:run-commands",
-      "dependsOn": [{ "projects": ["tag:coverage:profiles"], "target": "test" }],
+      "//dependsOn": "The report reads every object in target/llvm-cov-target, so it waits for every crate whose test writes there: the counted crates and the live crates (instrumented runtime no-ops in the gate). Without the live edge the report can open a live test binary cargo is still linking.",
+      "dependsOn": [{ "projects": ["tag:coverage:profiles", "tag:type:live"], "target": "test" }],
       "options": { "command": "bash scripts/coverage/coverage.sh report" }
     }
   }
