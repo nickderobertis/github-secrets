@@ -26,3 +26,5 @@ and are installed by `just setup-workflows`; nothing in the product uses them.
 - `test` records `.telemetry/macos-policy.json` (uncached; keyed to a digest of
   the source tree); `budgets` reads only that file through `macos-budget.mjs`
   and the onebudgetspec CLI, so thresholds live solely in `budgets.yaml`.
+  `budgets` is a gate-wide target name: `just check` fans out over it with
+  the others, so any project may register budgets under it.
