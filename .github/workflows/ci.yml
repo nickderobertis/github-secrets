@@ -15,12 +15,6 @@ on:
   push:
     branches: [master]
   pull_request:
-  workflow_dispatch:
-    inputs:
-      macos_diagnostic:
-        type: boolean
-        default: false
-        description: Run the consolidated Mac diagnostic
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -57,126 +51,16 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-          DIAGNOSTIC: ${{ github.event_name == 'workflow_dispatch' && inputs.macos_diagnostic }}
         run: |
           node .github/macos-policy.mjs classify --event "$GITHUB_EVENT_PATH" --base "$BASE" --head "$HEAD" > policy.json
           node .github/macos-route.mjs policy.json
 
+  # The one Mac lane (check, release build, package, install, run), in
+  # macos.yml so the manual diagnostic reuses it; the classifier decides.
   macos:
     needs: policy
     if: needs.policy.outputs.macosRequired == 'true'
-    name: Mac check, build and install
-    runs-on: macos-latest
-    strategy:
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            archive: tar.gz
-    defaults:
-      run:
-        shell: bash
-    steps:
-      # Full history: the affected tier resolves its base from it.
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Read tool pins (.tool-versions)
-        id: pins
-        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
-
-      - name: Install just (pinned)
-        uses: taiki-e/install-action@v2
-        with:
-          tool: just@${{ steps.pins.outputs.just }}
-
-      - name: Install bun (pinned)
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: .tool-versions
-
-      - name: Install Rust toolchain (rust-toolchain.toml)
-        run: just toolchain
-
-      - name: Install cargo-nextest + cargo-llvm-cov
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest,cargo-llvm-cov
-
-      - name: Cache Cargo registry + build
-        uses: Swatinem/rust-cache@v2
-
-      - name: Bootstrap
-        run: just bootstrap
-
-      - name: Choose the gate tier
-        id: tier
-        run: bun scripts/ci-gate-tier.mjs
-
-      - name: Check
-        env:
-          TIER: ${{ steps.tier.outputs.tier }}
-          BASE: ${{ steps.tier.outputs.base }}
-        run: |
-          if [ "$TIER" = "affected" ]; then
-            NX_BASE="$BASE" just check affected
-          else
-            just check all
-          fi
-
-      - name: Build release binary
-        run: just release
-
-      - name: Version this commit would ship as
-        id: version
-        run: echo "tag=v$(cargo pkgid -p gh-secrets | sed 's/.*[#@]//')" >> "$GITHUB_OUTPUT"
-
-      - name: Build
-        run: just release ${{ matrix.target }}
-
-      - name: Package (unix)
-        if: matrix.archive == 'tar.gz'
-        shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.tag }}
-        run: |
-          dist="gh-secrets-${VERSION}-${{ matrix.target }}"
-          mkdir "$dist"
-          cp "target/${{ matrix.target }}/release/gh-secrets" "$dist/"
-          cp README.md LICENSE "$dist/"
-          tar czf "${dist}.tar.gz" "$dist"
-          shasum -a 256 "${dist}.tar.gz" > "${dist}.tar.gz.sha256"
-
-      - name: Package (windows)
-        if: matrix.archive == 'zip'
-        shell: pwsh
-        run: |
-          $dist = "gh-secrets-$($env:VERSION)-${{ matrix.target }}"
-          New-Item -ItemType Directory -Path $dist | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/gh-secrets.exe" "$dist/"
-          Copy-Item README.md, LICENSE "$dist/"
-          Compress-Archive -Path $dist -DestinationPath "${dist}.zip"
-          $hash = (Get-FileHash "${dist}.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  ${dist}.zip" | Out-File -Encoding ascii "${dist}.zip.sha256"
-        env:
-          VERSION: ${{ steps.version.outputs.tag }}
-
-      - name: Install through scripts/install.sh
-        env:
-          VERSION: ${{ steps.version.outputs.tag }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/bin"
-          mv gh-secrets-"$VERSION"-* "$RUNNER_TEMP/release/"
-          sh scripts/install.sh --version "$VERSION" --from-dir "$RUNNER_TEMP/release" --to "$RUNNER_TEMP/bin"
-
-      - name: Run the installed binary
-        env:
-          VERSION: ${{ steps.version.outputs.tag }}
-        run: |
-          out="$("$RUNNER_TEMP/bin/gh-secrets" --version)"
-          echo "$out"
-          [ "$out" = "gh-secrets ${VERSION#v}" ]
-          "$RUNNER_TEMP/bin/gh-secrets" --help >/dev/null
+    uses: ./.github/workflows/macos.yml
 
   check-macos:
     name: check (macos-latest)

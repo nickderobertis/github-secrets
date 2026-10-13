@@ -14,21 +14,22 @@ test('actual event/call/matrix graph and complete lifecycle record telemetry', (
  try {
   const graph = workflows(); const scenarios = [];
   for (const kind of ['source', 'version', 'dependency']) for (const fork of [false, true]) for (const [id, event, action] of classes) {
-   const p = event === 'pull_request' ? payload(h, kind, fork) : event === 'push' ? { before: h.base, after: h.heads[kind], ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master' } : event === 'release' ? { release: { tag_name: 'v1.1.0' } } : event === 'workflow_run' ? { workflow_run: { head_sha: h.heads[kind], conclusion: 'success' } } : event === 'repository_dispatch' ? { event_type: 'downstream-smoke', client_payload: { sha: h.heads[kind] } } : event === 'workflow_dispatch' ? { inputs: { macos_diagnostic: id === 'manual-opt-in' } } : {};
+   const p = event === 'pull_request' ? payload(h, kind, fork) : event === 'push' ? { before: h.base, after: h.heads[kind], ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master' } : event === 'release' ? { release: { tag_name: 'v1.1.0' } } : event === 'workflow_run' ? { workflow_run: { head_sha: h.heads[kind], conclusion: 'success' } } : event === 'repository_dispatch' ? { event_type: 'downstream-smoke', client_payload: { sha: h.heads[kind] } } : event === 'workflow_dispatch' ? (id === 'manual-opt-in' ? { inputs: { macos_diagnostic: true } } : { inputs: {} }) : {};
    if (action) p.action = action;
    const decision = classify(h, p, event);
-   const scenario = { cwd: h.cwd, id: `${id}/${kind}/${fork ? 'fork' : 'same-repo'}`, event, action, payload: p, ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master', macosRequired: decision.macosRequired, classification: decision, diagnostic: id === 'manual-opt-in', releaseCreated: id === 'release-merge', tag: 'v1.1.0' };
+   const scenario = { cwd: h.cwd, id: `${id}/${kind}/${fork ? 'fork' : 'same-repo'}`, event, action, payload: p, ref: id === 'release-tag' ? 'refs/tags/v1.1.0' : 'refs/heads/master', macosRequired: decision.macosRequired, classification: decision, releaseCreated: id === 'release-merge', tag: 'v1.1.0' };
    const runs = resolveRuns(scenario, graph);
    if (event === 'pull_request') {
     const names = runs.flatMap(r => r.jobs.map(j => j.name));
     for (const name of required) assert.equal(names.filter(n => n === name).length, 1, `${scenario.id}: ${name}`);
     const mac = runs.flatMap(r => r.jobs).filter(j => j.macos);
-    assert.equal(mac.some(j => j.job === 'macos'), decision.macosRequired);
+    assert.equal(mac.map(j => `${j.workflow}:${j.job}`).join(), decision.macosRequired ? 'macos.yml:macos/macos' : '');
    }
    if (event === 'push' && !scenario.releaseCreated) assert.equal(runs.flatMap(r => r.jobs).some(j => j.macos), false);
    if (scenario.releaseCreated) assert.equal(runs.flatMap(r => r.jobs).filter(j => j.macos).map(j => j.target).join(), 'aarch64-apple-darwin');
    if (['release', 'workflow_run', 'repository_dispatch', 'schedule'].includes(event)) assert.equal(runs.flatMap(r => r.jobs).some(j => j.macos), false);
    if (id === 'manual-default') assert.equal(runs.flatMap(r => r.jobs).some(j => j.macos), false);
+   if (id === 'manual-opt-in') assert.deepEqual(runs.filter(r => r.jobs.some(j => j.macos)).map(r => [r.workflow, r.jobs.filter(j => j.macos).length]), [['macos-diagnostic.yml', 1]]);
    scenarios.push({ ...scenario, classification: decision, runs });
   }
   // Optional credentials affect the publication STEP, not job scheduling.
@@ -62,11 +63,13 @@ test('unsupported runners, matrices and calls fail explicitly; actual matrix exp
  assert.equal(resolveRuns(scenario, graph)[0].jobs[0].macos, true);
 });
 test('preserved native proof and release artifact dependency contract', () => {
- const graph = workflows(); const ci = graph['ci.yml'].jobs, release = graph['release.yml'].jobs;
+ const graph = workflows(); const ci = graph['ci.yml'].jobs, release = graph['release.yml'].jobs, lane = graph['macos.yml'].jobs.macos;
+ // CI and the manual diagnostic call the one Mac lane; neither declares Mac work itself.
+ for (const caller of [ci.macos, graph['macos-diagnostic.yml'].jobs.macos]) assert.equal(caller.uses, './.github/workflows/macos.yml');
  assert.deepEqual(release.build.strategy.matrix.include.map(r => r.target).sort(), ['aarch64-apple-darwin', 'aarch64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu'].sort());
- for (const name of ['Check', 'Build release binary', 'Build', 'Package (unix)', 'Install through scripts/install.sh', 'Run the installed binary']) assert.ok(ci.macos.steps.some(s => s.name === name), name);
+ for (const name of ['Check', 'Build release binary', 'Build', 'Package (unix)', 'Install through scripts/install.sh', 'Run the installed binary']) assert.ok(lane.steps.some(s => s.name === name), name);
  // Commands are exercised by the slow host-native journey in scripts/tests/release-packaging.test.mjs; Linux cannot execute a Darwin binary.
- assert.equal(ci.macos.strategy.matrix.include[0].target, release.build.strategy.matrix.include.find(r => r.os === 'macos-latest').target);
+ assert.equal(lane.strategy.matrix.include[0].target, release.build.strategy.matrix.include.find(r => r.os === 'macos-latest').target);
  const install = release.build.steps.findIndex(s => s.name === 'Install staged native archive');
  const upload = release.build.steps.findIndex(s => s.uses?.startsWith('actions/upload-artifact@'));
  assert.ok(install >= 0 && install < upload);
@@ -135,4 +138,15 @@ test('status functions and malformed graph boundaries use actual expression eval
   { 'test.yml': { on: { pull_request: null }, jobs: { proof: { uses: './.github/workflows/test.yml', with: { diagnostic: true } } } } },
  ];
  for (const graph of graphs) assert.throws(() => resolveRuns(scenario, graph), /unsupported|unresolved|missing|recursive/);
+});
+
+test('automatic events cannot carry the diagnostic opt-in into a Mac job', () => {
+ const h = history();
+ try {
+  for (const [event, ref] of [['push', 'refs/heads/master'], ['schedule', 'refs/heads/master'], ['repository_dispatch', 'refs/heads/master']]) {
+   const p = { before: h.base, after: h.heads.source, ref, inputs: { macos_diagnostic: true }, client_payload: { macos_diagnostic: true } };
+   const runs = resolveRuns({ cwd: h.cwd, id: `evade/${event}`, event, payload: p, ref }, workflows());
+   assert.equal(runs.flatMap(r => r.jobs).some(j => j.macos), false, event);
+  }
+ } finally { h.cleanup(); }
 });

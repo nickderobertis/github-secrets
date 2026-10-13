@@ -197,28 +197,38 @@ export function checkContract(root) {
   if (ci?.permissions?.contents !== "read" || Object.keys(ci.permissions).length !== 1) {
     errors.push("ci.yml must set top-level `permissions: contents: read` (and nothing wider).");
   }
-  for (const [id, job] of Object.entries(ci?.jobs ?? {})) {
-    // Routing/carriers run only repository Node commands; they do no just work.
-    if (["policy", "check-macos", "build-macos"].includes(id)) {
-      if (!(job.steps ?? []).some(s => /node .*macos-(policy|result)\.mjs/.test(s.run ?? ""))) errors.push(`ci.yml:${id} must invoke the production Mac policy/result command.`);
-      continue;
-    }
+  const pinsJust = (where, job) => {
     const steps = job.steps ?? [];
     const pins = steps.find((s) => s.id === "pins");
     const reads = pins && String(pins.run).includes(".tool-versions") && String(pins.run).includes('"just"');
     const installs = steps.some((s) => s.with?.tool === PIN_STEP);
-    if (!reads || !installs) errors.push(`ci.yml:${id} must install just at the .tool-versions pin (a 'pins' step + tool: ${PIN_STEP}).`);
+    if (!reads || !installs) errors.push(`${where} must install just at the .tool-versions pin (a 'pins' step + tool: ${PIN_STEP}).`);
+  };
+  for (const [id, job] of Object.entries(ci?.jobs ?? {})) {
+    // The Mac carriers run only the repository's Node result command; no just.
+    if (["check-macos", "build-macos"].includes(id)) {
+      if (!(job.steps ?? []).some((s) => s.run === "node .github/macos-result.mjs")) errors.push(`ci.yml:${id} must invoke the production Mac result command.`);
+      continue;
+    }
+    // A called workflow's jobs carry the pin themselves.
+    if (job.uses) {
+      const callee = workflows[String(job.uses).replace(/^\.\/\.github\/workflows\//, "")];
+      if (!callee) errors.push(`ci.yml:${id} calls ${job.uses}, which is not a workflow in this repository.`);
+      for (const [calleeId, calleeJob] of Object.entries(callee?.jobs ?? {})) pinsJust(`${job.uses}:${calleeId}`, calleeJob);
+      continue;
+    }
+    pinsJust(`ci.yml:${id}`, job);
   }
 
   // Packaging lockstep between the install-path job and the release build.
   const releaseBuild = workflows["release.yml"]?.jobs?.build?.steps ?? [];
   const installJob = ci?.jobs?.install?.steps ?? [];
-  const macInstall = ci?.jobs?.macos?.steps ?? [];
+  const macInstall = workflows["macos.yml"]?.jobs?.macos?.steps ?? [];
   for (const name of ["Package (unix)", "Package (windows)"]) {
     const a = releaseBuild.find((s) => s.name === name);
     const b = installJob.find((s) => s.name === name);
     const mac = macInstall.find(s => s.name === name);
-    if (!mac || (a && (a.run !== mac.run || a.shell !== mac.shell || a.if !== mac.if))) errors.push(`'${name}' differs between release.yml:build and ci.yml:macos; keep them identical.`);
+    if (!mac || (a && (a.run !== mac.run || a.shell !== mac.shell || a.if !== mac.if))) errors.push(`'${name}' differs between release.yml:build and macos.yml:macos; keep them identical.`);
     if (!a || !b) errors.push(`'${name}' must exist in both release.yml:build and ci.yml:install.`);
     else if (a.run !== b.run || a.shell !== b.shell || a.if !== b.if) {
       errors.push(`'${name}' differs between release.yml:build and ci.yml:install; keep them identical.`);

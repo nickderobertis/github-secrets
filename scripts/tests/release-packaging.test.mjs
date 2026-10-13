@@ -20,7 +20,7 @@ test.skipIf(process.platform !== 'linux' || process.arch !== 'x64')('real native
     return execFileSync('bash', ['-e', '-c', replace(step.run)], { cwd, env: { ...process.env, VERSION: tag, RUNNER_TEMP: stage, ...env }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   };
   try {
-    // llmlint: ignore[work_goes_through_command_surface] This task explicitly requires the dry run to execute the edited release workflow's exact production builder command; just release is a development wrapper, whereas this journey reconciles the actual release boundary without publishing.
+    // llmlint: ignore[work_goes_through_command_surface] the release boundary under test is release.yml's own Build command (cargo, no just), so the journey runs that step verbatim rather than the `just release` dev wrapper.
     command('Build', REPO);
     symlinkSync(join(REPO, 'target'), join(stage, 'target'), 'dir');
     cpSync(join(REPO, 'README.md'), join(stage, 'README.md')); cpSync(join(REPO, 'LICENSE'), join(stage, 'LICENSE'));

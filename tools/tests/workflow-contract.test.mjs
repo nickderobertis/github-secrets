@@ -122,7 +122,7 @@ test("a sandbox repo assigned in the live step's script is caught", () => {
 });
 
 test("a sandbox repo set as a literal in job env is caught", () => {
-  const errors = mutated("ci.yml", "  live-e2e:\n    needs: [check, check-macos]\n", "  live-e2e:\n    needs: [check, check-macos]\n    env:\n      GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n");
+  const errors = mutated("ci.yml", "  live-e2e:\n    # llmlint:", "  live-e2e:\n    env:\n      GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n    # llmlint:");
   expect(errors.join("\n")).toContain("live-e2e sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
 });
 
@@ -132,7 +132,7 @@ test("a literal value for any env on the live GitHub step is caught", () => {
 });
 
 test("a job env that is not a mapping is reported, not crashed on", () => {
-  const errors = mutated("ci.yml", "  live-e2e:\n    needs: [check, check-macos]\n", "  live-e2e:\n    needs: [check, check-macos]\n    env: [GH_SECRETS_E2E_SANDBOX_REPO]\n");
+  const errors = mutated("ci.yml", "  live-e2e:\n    # llmlint:", "  live-e2e:\n    env: [GH_SECRETS_E2E_SANDBOX_REPO]\n    # llmlint:");
   expect(errors.join("\n")).toContain("live-e2e has an `env` that is not a mapping");
 });
 
@@ -175,4 +175,14 @@ test("a sandbox repo set as a literal in workflow-level env is caught", () => {
 test("a sandbox repo set as a literal on a step outside the live job is caught", () => {
   const errors = mutated("notignored.yml", "      - uses: actions/checkout@v4\n        with:\n", "      - uses: actions/checkout@v4\n        env:\n          GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n        with:\n");
   expect(errors.join("\n")).toContain("notignored.yml:suppressions sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
+});
+
+test("the Mac lane's packaging drifting from the release build is caught", () => {
+  const errors = mutated("macos.yml", 'tar czf "${dist}.tar.gz" "$dist"', 'tar cjf "${dist}.tar.gz" "$dist"');
+  expect(errors.join("\n")).toContain("'Package (unix)' differs between release.yml:build and macos.yml:macos");
+});
+
+test("a called Mac lane without the pinned just is caught", () => {
+  const errors = mutated("macos.yml", "        id: pins\n", "        id: not-pins\n");
+  expect(errors.join("\n")).toContain("./.github/workflows/macos.yml:macos must install just at the .tool-versions pin");
 });

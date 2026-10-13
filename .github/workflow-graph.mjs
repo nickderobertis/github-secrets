@@ -112,7 +112,14 @@ function triggered(wf, scenario) {
 export function resolveRuns(scenario, graph = workflows()) {
   const runs = [];
   for (const [file, wf] of Object.entries(graph)) validateWorkflow(file, wf);
-  function jobs(file, wf, prefix = '', stack = []) {
+  // As Actions does: only a workflow_dispatch carries inputs (declared defaults
+  // overlaid by the dispatch payload); callees here take no `with:` inputs.
+  function inputsFor(wf) {
+    if (scenario.event !== 'workflow_dispatch') return {};
+    const declared = (typeof wf.on === 'object' && !Array.isArray(wf.on) ? wf.on.workflow_dispatch?.inputs : null) ?? {};
+    return { ...Object.fromEntries(Object.entries(declared).map(([key, spec]) => [key, spec?.default ?? null])), ...(scenario.payload?.inputs ?? {}) };
+  }
+  function jobs(file, wf, prefix = '', stack = [], inputs = inputsFor(wf)) {
     if (stack.includes(file)) throw new Error(`recursive workflow call ${file}`);
     const rows = [];
     const outcomes = {};
@@ -130,7 +137,7 @@ export function resolveRuns(scenario, graph = workflows()) {
         if (!outcomes[n]) throw new Error(`${file}:${id}: unresolved needs ${n}`);
         return [n, outcomes[n]];
       }));
-      const context = { github: { event_name: scenario.event, event: scenario.payload, repository: 'nickderobertis/github-secrets', ref: scenario.ref }, inputs: { macos_diagnostic: scenario.diagnostic ?? false }, needs };
+      const context = { github: { event_name: scenario.event, event: scenario.payload, repository: 'nickderobertis/github-secrets', ref: scenario.ref }, inputs, needs };
       const explicitStatus = /\b(always|success|failure|cancelled)\(/.test(job.if ?? '');
       const prerequisites = Object.values(needs).every(n => n.result === 'success');
       const enabled = (explicitStatus || prerequisites) && (!job.if || truthy(evaluate(job.if, context)));
@@ -143,7 +150,7 @@ export function resolveRuns(scenario, graph = workflows()) {
           if (!job.uses.startsWith('./.github/workflows/')) throw new Error(`unresolved reusable workflow ${job.uses}`);
           const call = job.uses.split('/').at(-1);
           if (!graph[call]) throw new Error(`missing reusable workflow ${call}`);
-          if (enabled) rows.push(...jobs(call, graph[call], `${prefix}${id}/`, [...stack, file]));
+          rows.push(...jobs(call, graph[call], `${prefix}${id}/`, [...stack, file], {}).map(row => ({ ...row, enabled: enabled && row.enabled, macos: enabled && row.macos })));
           continue;
         }
         if (!job['runs-on']) throw new Error(`unresolved runner ${file}:${id}`);

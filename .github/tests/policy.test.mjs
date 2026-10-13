@@ -39,19 +39,19 @@ test('real carrier command accepts only success or classifier-authorized omissio
   assert.equal(spawnSync(process.execPath, [join(root, '.github/macos-result.mjs')], { env }).status, 0);
 });
 
-test('route subprocess validates classifier output and only permits explicit manual diagnostic', () => {
+test('route subprocess validates classifier output and routes on it alone', () => {
  const h = history();
  try {
-  for (const [event, p, diagnostic, expected] of [
-   ['pull_request', payload(h, 'source'), 'false', true],
-   ['pull_request', payload(h, 'version'), 'false', false],
-   ['workflow_dispatch', {}, 'false', false],
-   ['workflow_dispatch', {}, 'true', true],
-   ['push', {}, 'true', false],
+  for (const [event, p, expected] of [
+   ['pull_request', payload(h, 'source'), true],
+   ['pull_request', payload(h, 'version'), false],
+   ['push', {}, false],
+   ['workflow_dispatch', { inputs: { macos_diagnostic: true } }, false],
   ]) {
    const policy = join(h.cwd, '.git/policy.json'), output = join(h.cwd, '.git/output');
    writeFileSync(policy, JSON.stringify(classify(h, p, event))); writeFileSync(output, '');
-   const r = spawnSync(process.execPath, [join(root, '.github/macos-route.mjs'), policy], { env: { ...process.env, GITHUB_EVENT_NAME: event, DIAGNOSTIC: diagnostic, GITHUB_OUTPUT: output } });
+   // An automatic caller's opt-in variable carries no authority here.
+   const r = spawnSync(process.execPath, [join(root, '.github/macos-route.mjs'), policy], { env: { ...process.env, GITHUB_EVENT_NAME: event, DIAGNOSTIC: 'true', GITHUB_OUTPUT: output } });
    assert.equal(r.status, 0); assert.equal(readFileSync(output, 'utf8'), `macosRequired=${expected}\n`);
   }
   const policy = join(h.cwd, '.git/policy.json'); writeFileSync(policy, '{"macosRequired":"false"}');
@@ -164,5 +164,15 @@ test('a registry dependency sharing the local package name is a dependency chang
   assert.equal(decision.macosRequired, true); assert.match(decision.reason, /Cargo.lock changes more than its own version/);
   h.git('checkout', '-q', '-B', 'same-name-local', h.base); writeFileSync(join(h.cwd, 'Cargo.lock'), lock('1.1.0', '0.9.0')); h.heads.version = h.commit();
   assert.equal(classify(h, payload(h, 'version')).isReleaseOnly, true);
+ } finally { h.cleanup(); }
+});
+test('non-string or malformed repository identities never authorize omission', () => {
+ const h = history();
+ try {
+  for (const name of [1, true, ['a/b'], { full_name: 'x' }, '', 'no-slash']) {
+   const p = payload(h, 'version'); p.pull_request.head.repo.full_name = name; p.pull_request.base.repo.full_name = name;
+   const decision = classify(h, p);
+   assert.equal(decision.macosRequired, true, JSON.stringify(name)); assert.match(decision.reason, /not a same-repository head/);
+  }
  } finally { h.cleanup(); }
 });

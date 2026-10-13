@@ -171,6 +171,7 @@ nested `AGENTS.md` for its own rules.
 | `coverage` | `scripts/coverage` | `type:tooling` | the coverage driver and its end-to-end test |
 | `workspace` | `tools` | `type:workspace` | supply chain, reconciling checks over root and cross-project facts |
 | `coverage-aggregate` | `tools/coverage-aggregate` | `type:workspace` | the coverage gate: merges every crate's profiles, enforces the floor |
+| `github-workflows` | `.github` | `type:tooling` | macOS routing (release-only classifier, carriers), workflow-graph proofs, Mac scheduling budgets |
 
 - The root project owns every file no other project claims (`.github/`, the
   justfile, docs), so a change there selects everything; its own inputs are
@@ -388,6 +389,19 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
   `release-please--branches--master`), and `tools/tests/ci-gate-tier.test.mjs`
   pins it. `release.yml` builds and publishes the tagged commit and re-gates
   nothing.
+- **macOS is scheduled once per change.** The shared Mac pool is scarce, so
+  the only automatic Mac jobs are ci.yml's one consolidated lane
+  (`.github/workflows/macos.yml`: check, release build, package, install, run)
+  on ordinary PRs, and release.yml's aarch64-apple-darwin build on the
+  release-producing push. `.github/macos-policy.mjs classify` is the one
+  release-only authority: a same-repo head under `release-please--branches--master`
+  whose diff is semantically version/changelog-only skips the lane; anything
+  unreadable, forked, mixed, or an unknown event requires it. The Linux
+  carriers `check (macos-latest)` / `build (macos-latest)` keep the protected
+  names and fail unless the lane passed or the classifier authorized its
+  omission. `macos-diagnostic.yml` is the manual, default-off opt-in. The
+  `github-workflows:budgets` target holds both bounds (1 Mac job/run, 2
+  Mac-spending runs/change) from telemetry its `test` target records.
 - **Fixed status-check contexts** (what branch protection names; keep the job
   ids and matrix values): `check (ubuntu-latest|macos-latest|windows-latest)`,
   `build (…)`, `live-e2e`, `live-e2e-bitwarden`, `llmlint`, `lint PR title`.

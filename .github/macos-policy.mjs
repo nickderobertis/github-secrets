@@ -59,7 +59,8 @@ export function classify(eventName, payload, base, head, cwd = process.cwd()) {
   try {
     // Authority is the head branch and the diff alone, never the author or title.
     const pr = payload.pull_request, prefix = releaseBranchPrefix();
-    if (!pr || !pr.base?.repo?.full_name || pr.head?.repo?.full_name !== pr.base.repo.full_name) return ordinary('not a same-repository head');
+    const repo = side => typeof side?.repo?.full_name === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(side.repo.full_name) ? side.repo.full_name : null;
+    if (!pr || !repo(pr.base) || repo(pr.head) !== repo(pr.base)) return ordinary('not a same-repository head');
     if (typeof pr.head.ref !== 'string' || (pr.head.ref !== prefix && !pr.head.ref.startsWith(prefix + '--'))) return ordinary(`head branch is not under ${prefix}`);
     if (!base || !head || base.startsWith('-') || head.startsWith('-')) throw new Error('missing or invalid refs');
     // Compare from the fork point, as the PR's own diff does.
