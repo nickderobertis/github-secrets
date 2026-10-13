@@ -53,10 +53,13 @@ export function matrixRows(matrix) {
   }
   return rows;
 }
+export const MODELLED_EVENTS = ['pull_request', 'push', 'release', 'workflow_run', 'repository_dispatch', 'schedule', 'workflow_dispatch', 'workflow_call'];
 function validateWorkflow(file, wf) {
   const object = v => v && typeof v === 'object' && !Array.isArray(v);
   if (!object(wf) || !object(wf.jobs) || !wf.on) throw new Error(`unsupported workflow ${file}`);
   if (!object(wf.on) && typeof wf.on !== 'string' && !(Array.isArray(wf.on) && wf.on.length && wf.on.every(e => typeof e === 'string'))) throw new Error(`unsupported trigger ${file}`);
+  // Only events the telemetry scenarios cover; anything else would count as no Mac work.
+  for (const event of object(wf.on) ? Object.keys(wf.on) : [wf.on].flat()) if (!MODELLED_EVENTS.includes(event)) throw new Error(`unsupported trigger ${file}:${event}: add it to the modelled scenarios first`);
   if (object(wf.on)) for (const [event, filters] of Object.entries(wf.on)) {
     if (filters === null) continue;
     if (!object(filters)) throw new Error(`unsupported trigger ${file}:${event}`);

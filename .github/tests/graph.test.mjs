@@ -2,7 +2,7 @@ import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { root, workflows, resolveRuns, digest, matrixRows, evaluate, interpolate } from '../workflow-graph.mjs';
+import { root, workflows, resolveRuns, digest, matrixRows, evaluate, interpolate, MODELLED_EVENTS } from '../workflow-graph.mjs';
 import { history, payload, classify } from './helpers.mjs';
 const required = ['check (macos-latest)', 'check (ubuntu-latest)', 'check (windows-latest)', 'build (macos-latest)', 'build (ubuntu-latest)', 'build (windows-latest)', 'live-e2e', 'live-e2e-bitwarden', 'llmlint', 'lint PR title'];
 const classes = [
@@ -10,6 +10,7 @@ const classes = [
  ['base-push', 'push'], ['release-merge', 'push'], ['release-tag', 'push'], ['release-published', 'release', 'published'], ['downstream', 'workflow_run', 'completed'], ['repository-dispatch', 'repository_dispatch'], ['scheduled', 'schedule'], ['manual-default', 'workflow_dispatch'], ['manual-opt-in', 'workflow_dispatch'],
 ];
 test('actual event/call/matrix graph and complete lifecycle record telemetry', () => {
+ assert.deepEqual([...new Set(classes.map(c => c[1]))].sort(), MODELLED_EVENTS.filter(e => e !== 'workflow_call').sort());
  const h = history();
  try {
   const graph = workflows(); const scenarios = [];
@@ -159,7 +160,7 @@ test('automatic events cannot carry the diagnostic opt-in into a Mac job', () =>
 test('array matrices, unsupported branch globs and mistyped dispatch inputs are refused, not guessed', () => {
  assert.throws(() => matrixRows([]), /unresolved matrix/);
  for (const matrix of [false, 0, '', null]) assert.throws(() => matrixRows(matrix), /unresolved matrix/);
- for (const on of [[123], [], 7]) assert.throws(() => resolveRuns({ id: 'x', event: 'pull_request', payload: {}, ref: 'refs/heads/f' }, { 'test.yml': { on, jobs: { proof: { 'runs-on': 'macos-latest' } } } }), /unsupported trigger/);
+ for (const on of [[123], [], 7, 'issues', ['pull_request', 'merge_group'], { issues: null }]) assert.throws(() => resolveRuns({ id: 'x', event: 'pull_request', payload: {}, ref: 'refs/heads/f' }, { 'test.yml': { on, jobs: { proof: { 'runs-on': 'macos-latest' } } } }), /unsupported trigger/);
  assert.throws(() => matrixRows({ include: 'macos-latest' }), /unresolved matrix include/);
  const pr = { id: 'invalid', event: 'pull_request', action: 'opened', payload: {}, ref: 'refs/heads/feature' };
  const job = { proof: { 'runs-on': 'macos-latest' } };
