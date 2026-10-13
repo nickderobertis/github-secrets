@@ -397,7 +397,7 @@ jobs:
   # Standing deviation from the skill's live-tier rule (AGENTS.md): this stays
   # in the PR workflow and finishes green without its secret.
   live-e2e:
-    # llmlint: ignore[live_tier_compiles_and_requires_credential] standing, recorded decision (AGENTS.md "Stack and composition"): live-e2e finishes green without its secrets; this edge only replaces the old all-OS check need with the Linux/Windows legs plus the Mac carrier.
+    # llmlint: ignore[live_tier_compiles_and_requires_credential] standing AGENTS.md deviation; this edge adds only the Mac carrier.
     needs: [check, check-macos]
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
@@ -458,7 +458,7 @@ jobs:
   # `secrets` context is not allowed in a job/step `if:`), so it is skipped — not
   # failed — when they're absent, keeping forks and unconfigured repos green.
   live-e2e-bitwarden:
-    # llmlint: ignore[live_tier_compiles_and_requires_credential] standing, recorded decision (AGENTS.md "Stack and composition"): live-e2e-bitwarden finishes green without its secrets; this edge only replaces the old all-OS check need with the Linux/Windows legs plus the Mac carrier.
+    # llmlint: ignore[live_tier_compiles_and_requires_credential] standing AGENTS.md deviation; this edge adds only the Mac carrier.
     needs: [check, check-macos]
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
