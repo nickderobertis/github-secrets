@@ -45,6 +45,12 @@ install-prune-superseded:
 pool-maintenance:
     cargo-prune-superseded --keep-within 2d target
 
+# Check the pool-maintenance pass-time budget (pool-maintenance/budgets.yaml). It
+# builds the workspace twice, so `check` never runs it: CI runs it on the release
+# PR only, after the gate.
+pool-maintenance-budget:
+    bash scripts/nx run pool-maintenance:budgets-release
+
 # Install the Rust toolchain rust-toolchain.toml pins (channel, components, release targets).
 toolchain:
     rustup toolchain install
