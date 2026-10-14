@@ -49,7 +49,7 @@ pool-maintenance:
 # builds the workspace twice, so `check` never runs it: CI runs it on the release
 # PR only, after the gate.
 pool-maintenance-budget:
-    bash scripts/nx run pool-maintenance:budgets-release
+    bash scripts/nx run pool-maintenance:budgets-host
 
 # Install the Rust toolchain rust-toolchain.toml pins (channel, components, release targets).
 toolchain:
@@ -69,13 +69,15 @@ check tier="affected": (budgets tier)
     esac
 
 # The onebudgetspec budgets `check` runs at its tier: every project's `budgets` and
-# `budgets-host` targets, then the root budgets.yaml when there is one.
+# `budgets-host` targets, then the root budgets.yaml when there is one. The
+# pool-maintenance project's budget builds the workspace twice, so it is excluded
+# here and runs only on the release PR (`pool-maintenance-budget`).
 budgets tier="affected":
     #!/usr/bin/env bash
     set -euo pipefail
     case {{ quote(tier) }} in
-        affected) base="$(bash scripts/nx-base.sh)"; bash scripts/nx affected --base="$base" -t budgets budgets-host ;;
-        all) bash scripts/nx run-many --all -t budgets budgets-host ;;
+        affected) base="$(bash scripts/nx-base.sh)"; bash scripts/nx affected --base="$base" -t budgets budgets-host --exclude=pool-maintenance ;;
+        all) bash scripts/nx run-many --all -t budgets budgets-host --exclude=pool-maintenance ;;
         *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
     esac
     [ ! -f budgets.yaml ] || "$(bash scripts/bun.sh path)" x onebudgetspec check budgets.yaml

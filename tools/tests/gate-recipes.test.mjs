@@ -46,8 +46,9 @@ function just(args, nxBase) {
 }
 
 const GATE = "-t format-check lint build test coverage";
-// `check` runs the onebudgetspec budget targets at its tier first (`budgets`).
-const BUDGETS = "-t budgets budgets-host";
+// `check` runs the onebudgetspec budget targets at its tier first (`budgets`),
+// never the release-PR-only pool-maintenance budget.
+const BUDGETS = "-t budgets budgets-host --exclude=pool-maintenance";
 
 test.skipIf(isWindows)("check without NX_BASE runs the affected tier from the merge base with origin/master", () => {
   const r = just(["check"]);

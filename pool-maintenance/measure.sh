@@ -81,7 +81,7 @@ backlog="$(mktemp "${TMPDIR:-/tmp}/pool-maintenance-backlog.XXXXXX")"
 trap 'rm -f "$backlog"' EXIT
 maintain "$backlog"
 backlog_seconds="$(bun -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).value.toFixed(3))' "$backlog")" \
-  || fail "the backlog pass wrote no readable figure to $backlog."
+  || fail "the backlog pass wrote no readable figure to $backlog; check that 'cargo-prune-superseded --version' is the release the justfile pins (re-run 'just bootstrap' if not)."
 entries >"$OUT/before-alternative.txt"
 
 # b. one run's worth of superseded builds, backdated past the window — and older
@@ -123,4 +123,4 @@ bun -e '
   const result = JSON.parse(fs.readFileSync(file, "utf8"));
   result.detail = `${result.detail}; untimed backlog pass (not in the figure): ${seconds} s`;
   fs.writeFileSync(file, JSON.stringify(result));
-' "$RESULT" "$backlog_seconds" || fail "could not add the backlog pass to the report in $RESULT."
+' "$RESULT" "$backlog_seconds" || fail "could not add the backlog pass to the report in $RESULT; check that the timed pass wrote valid JSON there, then re-run 'just pool-maintenance-budget'."

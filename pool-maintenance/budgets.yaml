@@ -1,7 +1,7 @@
 # The pool-maintenance project's one budget. It builds the workspace twice, so no
-# per-change target reaches it: its Nx target is `budgets-release`, not the
-# `budgets`/`budgets-host` pair `just check` runs, and CI runs it only on the
-# release PR, after the gate (`just pool-maintenance-budget`).
+# per-change run reaches it: `just budgets` (which `just check` runs) excludes this
+# project from its `budgets`/`budgets-host` fan-out, and CI runs this project's
+# `budgets-host` only on the release PR, after the gate (`just pool-maintenance-budget`).
 schema_version: 1
 budgets:
   - id: github-secrets-pool-maintenance-seconds

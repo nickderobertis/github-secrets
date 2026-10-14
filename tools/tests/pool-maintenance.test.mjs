@@ -93,3 +93,21 @@ test.skipIf(isWindows)("install-prune-superseded installs the pinned release unl
   expect(current.code).toBe(0);
   expect(current.cargo).toBeNull();
 });
+
+// The nx arguments the `budgets` recipe's `all` sweep passes, read from the justfile.
+const budgetsArgs = () => ok("just", ["--show", "budgets"], { cwd: REPO }).match(/all\) bash scripts\/nx (.+?) ;;/)[1];
+
+// The tasks of the graph real Nx builds for `args`.
+function tasks(args) {
+  const graph = join(s.dir, "graph.json");
+  ok("bash", ["scripts/nx", ...args.split(" "), `--graph=${graph}`], { cwd: REPO });
+  return Object.keys(JSON.parse(readFileSync(graph, "utf8")).tasks.tasks);
+}
+
+test.skipIf(isWindows)("check's budgets never select the pool-maintenance budget, which the release-PR recipe runs", () => {
+  const args = budgetsArgs();
+  expect(tasks(args).filter((t) => t.startsWith("pool-maintenance:"))).toEqual([]);
+  // The project carries the standard budgets-host target: the exclusion is what drops it.
+  expect(tasks(args.replace(" --exclude=pool-maintenance", ""))).toContain("pool-maintenance:budgets-host");
+  expect(ok("just", ["--show", "pool-maintenance-budget"], { cwd: REPO })).toContain("scripts/nx run pool-maintenance:budgets-host");
+}, 60_000);
