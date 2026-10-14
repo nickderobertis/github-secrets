@@ -14,6 +14,9 @@
 set shell := ["bash", "-uc"]
 set windows-shell := ["bash", "-uc"]
 
+# The cargo-prune-superseded release `bootstrap` installs and `pool-maintenance` runs.
+prune_superseded_version := "0.1.1"
+
 # List available recipes.
 default:
     @just --list
@@ -21,14 +24,26 @@ default:
 # Set up from a clean clone: the pinned Rust toolchain (rustup >= 1.28 reads
 # rust-toolchain.toml), cargo-nextest and cargo-llvm-cov (CI provides both
 # prebuilt), the pinned bun + the locked Nx install, the
-# llmlint tier (best effort; CI's llmlint job installs it itself), and a crate pre-fetch.
-bootstrap: toolchain
+# llmlint tier (best effort; CI's llmlint job installs it itself), the pinned
+# cargo-prune-superseded `pool-maintenance` runs, and a crate pre-fetch.
+bootstrap: toolchain install-prune-superseded
     sh scripts/install-nextest.sh
     @cargo llvm-cov --version >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
     bash scripts/bun.sh ensure
     bash scripts/nx --version >/dev/null
     @[ -n "${CI:-}" ] || bash scripts/setup-llmlint.sh
     cargo fetch --locked
+
+# Install the pinned cargo-prune-superseded, unless that release is already the one on PATH.
+install-prune-superseded:
+    @[ "$(cargo-prune-superseded --version 2>/dev/null)" = "cargo-prune-superseded {{ prune_superseded_version }}" ] || cargo install --locked cargo-prune-superseded --version {{ prune_superseded_version }}
+
+# Warm-pool maintenance onevcs runs in this clone's idle slots (onevcs.toml): drop
+# each unit's superseded builds older than 2 days from every cargo target dir
+# (.cargo/config.toml's `target`; llvm-cov-target lives inside it), keeping each
+# unit's newest build. Its pass time is budgeted in pool-maintenance/budgets.yaml.
+pool-maintenance:
+    cargo-prune-superseded --keep-within 2d target
 
 # Install the Rust toolchain rust-toolchain.toml pins (channel, components, release targets).
 toolchain:
