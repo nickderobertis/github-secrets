@@ -1,7 +1,8 @@
 // The gate recipes' tier and base selection, driven through the real justfile
 // and scripts/nx-base.sh in a scratch repository with an origin. Only the
 // orchestrator underneath (`scripts/nx`) is replaced by a recorder, so each case
-// shows exactly what would have been handed to Nx — or that nothing was.
+// shows exactly what would have been handed to Nx, one line per invocation in
+// order — or that nothing was.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,7 +25,7 @@ beforeAll(() => {
   copyFileSync(join(REPO, "justfile"), join(repo, "justfile"));
   copyFileSync(join(REPO, "scripts/nx-base.sh"), join(repo, "scripts/nx-base.sh"));
   record = join(s.dir, "nx-args");
-  writeFileSync(join(repo, "scripts/nx"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" > "${record}"\n`);
+  writeFileSync(join(repo, "scripts/nx"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${record}"\n`);
   chmodSync(join(repo, "scripts/nx"), 0o755);
   git("remote", "add", "origin", origin);
   forkPoint = commit("base");
@@ -45,16 +46,19 @@ function just(args, nxBase) {
 }
 
 const GATE = "-t format-check lint build test coverage";
+// `check` runs the onebudgetspec budget targets at its tier first (`budgets`).
+const BUDGETS = "-t budgets budgets-host";
 
 test.skipIf(isWindows)("check without NX_BASE runs the affected tier from the merge base with origin/master", () => {
   const r = just(["check"]);
   expect(r.code).toBe(0);
-  expect(r.nx).toBe(`affected --base=${forkPoint} ${GATE}`);
+  expect(r.nx).toBe(`affected --base=${forkPoint} ${BUDGETS}\naffected --base=${forkPoint} ${GATE}`);
   expect(r.stderr).toContain("merge-base with origin/master");
 });
 
 test.skipIf(isWindows)("a valid NX_BASE (ref name or SHA) is the base", () => {
-  expect(just(["check"], forkPoint).nx).toBe(`affected --base=${forkPoint} ${GATE}`);
+  expect(just(["check"], forkPoint).nx).toBe(`affected --base=${forkPoint} ${BUDGETS}\naffected --base=${forkPoint} ${GATE}`);
+  expect(just(["budgets"], "origin/master").nx).toBe(`affected --base=origin/master ${BUDGETS}`);
   expect(just(["test"], "origin/master").nx).toBe("affected --base=origin/master -t test");
 });
 
@@ -69,7 +73,8 @@ test.skipIf(isWindows)("an invalid NX_BASE is refused before anything runs, nami
 });
 
 test.skipIf(isWindows)("`all` is one run-many sweep over every project", () => {
-  expect(just(["check", "all"]).nx).toBe(`run-many --all ${GATE}`);
+  expect(just(["check", "all"]).nx).toBe(`run-many --all ${BUDGETS}\nrun-many --all ${GATE}`);
+  expect(just(["budgets", "all"]).nx).toBe(`run-many --all ${BUDGETS}`);
   expect(just(["lint", "all"]).nx).toBe("run-many --all -t lint");
   expect(just(["format-check", "all"]).nx).toBe("run-many --all -t format-check");
 });

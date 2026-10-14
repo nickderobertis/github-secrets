@@ -51,8 +51,9 @@ toolchain:
 
 # Full quality gate: format check, clippy (-D warnings), build, every project's
 # tests (unit, offline e2e, the compiled no-op live suites) under coverage, and
-# the 95% line-coverage floor over their union. `just check all` sweeps everything.
-check tier="affected":
+# the 95% line-coverage floor over their union, after the onebudgetspec budgets at
+# the same tier. `just check all` sweeps everything.
+check tier="affected": (budgets tier)
     #!/usr/bin/env bash
     set -euo pipefail
     case {{ quote(tier) }} in
@@ -60,6 +61,18 @@ check tier="affected":
         all) exec bash scripts/nx run-many --all -t format-check lint build test coverage ;;
         *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
     esac
+
+# The onebudgetspec budgets `check` runs at its tier: every project's `budgets` and
+# `budgets-host` targets, then the root budgets.yaml when there is one.
+budgets tier="affected":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case {{ quote(tier) }} in
+        affected) base="$(bash scripts/nx-base.sh)"; bash scripts/nx affected --base="$base" -t budgets budgets-host ;;
+        all) bash scripts/nx run-many --all -t budgets budgets-host ;;
+        *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
+    esac
+    [ ! -f budgets.yaml ] || "$(bash scripts/bun.sh path)" x onebudgetspec check budgets.yaml
 
 # The test targets alone (each writes its coverage profiles; no floor).
 test tier="affected":
