@@ -503,8 +503,8 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 - `scripts/install.sh` is the cross-platform installer (Linux x86_64 + arm64,
   macOS arm64, Windows x86_64 under a POSIX shell): it detects the host target,
   downloads the matching release archive, verifies its SHA-256, and installs
-  the binary. Hosts with no published asset (Intel macOS, non-x86_64 Windows)
-  abort with a `cargo install` suggestion rather than 404 on a missing archive,
+  the binary. Hosts with no published asset abort with a `cargo install`
+  suggestion (Intel macOS is no longer supported and says so) rather than 404 on a missing archive,
   so the installer's target set must track the `release.yml` matrix. It must stay in lock-step with the release asset naming in
   `release.yml` — the archive is `gh-secrets-<tag>-<target>.<ext>` and the
   checksum asset is that name with `.sha256` *appended* (it keeps the
