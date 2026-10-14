@@ -34,15 +34,12 @@
     "test": {
       "executor": "nx:run-commands",
       "dependsOn": [
-        "gh-secrets:build",
-        "coverage-aggregate:coverage-clear"
+        "gh-secrets:build"
       ],
+      "//options": "Uninstrumented, against target/debug/gh-secrets: the no-op run counts toward no coverage, and building outside target/llvm-cov-target keeps it from racing the coverage report that reads every object there.",
       "options": {
-        "command": "bash scripts/coverage/coverage.sh test gh-secrets-live-github"
+        "command": "cargo nextest run -p gh-secrets-live-github --locked"
       },
-      "outputs": [
-        "{workspaceRoot}/target/llvm-cov-target/*.profraw"
-      ],
       "//ignore-end": "llmlint: ignore-end[external_service_suite_stays_out_of_the_affected_tier]"
     },
     "live": {

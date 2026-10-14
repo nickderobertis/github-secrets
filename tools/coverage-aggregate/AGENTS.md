@@ -6,8 +6,8 @@ merges their profiles and holds the gh-secrets crate's `src/` to the floor in
 `coverage:profiles` tag; that tag is how both the dependency edge and the
 `coverage` prerequisites find it, so there is no list here to update.
 
-The report also waits on the `type:live` crates' `test`: they run instrumented
-into the same directory (as runtime no-ops), and `llvm-cov report` reads every
-object there, so reporting while one links fails on a half-written binary. That
-edge only orders tasks; it adds no implicit dependency, so a live-crate change
-alone still does not select the coverage gate.
+The report reads every object in `target/llvm-cov-target`, so only the counted
+crates may build there. The `type:live` crates' gate `test` runs uninstrumented
+into `target/debug` (it is a runtime no-op whose lines are not counted), which
+keeps a live binary from being linked under a running report without an edge
+from this gate to the live projects.
