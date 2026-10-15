@@ -4,7 +4,7 @@
 // real mtimes, and `install-prune-superseded` installs the pinned release only
 // when that release is not already the one on PATH (cargo is a recorder there).
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { REPO, ok, run, scratch } from "../../scripts/tests/helpers.mjs";
 
@@ -61,21 +61,29 @@ test.skipIf(isWindows || run("cargo-prune-superseded", ["--version"]).code !== 0
   },
 );
 
-// PATH with stub `cargo` (recording its arguments) and `cargo-prune-superseded` first.
-function stubs(installed) {
+// A PATH whose stub `cargo` records its arguments and, on `cargo install`, puts a
+// `cargo-prune-superseded` of the requested version on that PATH; `installed`
+// seeds the pruner already there (null: none, shadowing any real one on PATH).
+// Every other tool a recipe calls is a no-op stub.
+function stubPath(installed) {
   const bin = join(s.dir, "bin");
   rmSync(bin, { recursive: true, force: true });
   mkdirSync(bin);
   const record = join(s.dir, "cargo-args");
   rmSync(record, { force: true });
-  writeFileSync(join(bin, "cargo"), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${record}"\n`);
+  const pruner = (v) => `#!/usr/bin/env bash\necho "cargo-prune-superseded ${v}"\n`;
   writeFileSync(
-    join(bin, "cargo-prune-superseded"),
-    installed === null ? "#!/usr/bin/env bash\nexit 127\n" : `#!/usr/bin/env bash\necho "cargo-prune-superseded ${installed}"\n`,
+    join(bin, "cargo"),
+    `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${record}"\n` +
+      `if [ "$1" = install ]; then printf '#!/usr/bin/env bash\\necho "cargo-prune-superseded %s"\\n' "\${@: -1}" > "${join(bin, "cargo-prune-superseded")}"; chmod +x "${join(bin, "cargo-prune-superseded")}"; fi\n`,
   );
-  for (const f of ["cargo", "cargo-prune-superseded"]) chmodSync(join(bin, f), 0o755);
-  const r = run("just", ["install-prune-superseded"], { cwd: work, env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` } });
-  return { ...r, cargo: existsSync(record) ? readFileSync(record, "utf8").trim() : null };
+  writeFileSync(join(bin, "cargo-prune-superseded"), installed === null ? "#!/usr/bin/env bash\nexit 127\n" : pruner(installed));
+  for (const f of ["rustup", "npm"]) writeFileSync(join(bin, f), "#!/usr/bin/env bash\n");
+  for (const f of readdirSync(bin)) chmodSync(join(bin, f), 0o755);
+  const env = { ...process.env, CI: "1", PATH: `${bin}${delimiter}${process.env.PATH}` };
+  const installs = () =>
+    (existsSync(record) ? readFileSync(record, "utf8") : "").split("\n").filter((l) => l.startsWith("install --locked cargo-prune-superseded"));
+  return { env, installs };
 }
 
 test.skipIf(isWindows)("install-prune-superseded installs the pinned release unless it is the one on PATH", () => {
@@ -83,19 +91,43 @@ test.skipIf(isWindows)("install-prune-superseded installs the pinned release unl
   expect(version).toMatch(/^\d+\.\d+\.\d+$/);
   const install = `install --locked cargo-prune-superseded --version ${version}`;
 
-  const missing = stubs(null);
-  expect(missing.code).toBe(0);
-  expect(missing.cargo).toBe(install);
+  const missing = stubPath(null);
+  expect(run("just", ["install-prune-superseded"], { cwd: work, env: missing.env }).code).toBe(0);
+  expect(missing.installs()).toEqual([install]);
 
-  expect(stubs("0.0.1").cargo).toBe(install);
+  const stale = stubPath("0.0.1");
+  expect(run("just", ["install-prune-superseded"], { cwd: work, env: stale.env }).code).toBe(0);
+  expect(stale.installs()).toEqual([install]);
 
-  const current = stubs(version);
-  expect(current.code).toBe(0);
-  expect(current.cargo).toBeNull();
+  const current = stubPath(version);
+  expect(run("just", ["install-prune-superseded"], { cwd: work, env: current.env }).code).toBe(0);
+  expect(current.installs()).toEqual([]);
+});
+
+test.skipIf(isWindows)("bootstrap installs the pinned pruner on a fresh host, and a second bootstrap does not reinstall it", () => {
+  const version = pinned();
+  // The scripts bootstrap runs, as no-ops: this journey is about the pruner it installs.
+  mkdirSync(join(work, "scripts"), { recursive: true });
+  for (const f of ["install-nextest.sh", "bun.sh", "nx"]) writeFileSync(join(work, "scripts", f), "");
+  const host = stubPath(null);
+
+  const first = run("just", ["bootstrap"], { cwd: work, env: host.env });
+  expect(first.code, first.stderr).toBe(0);
+  expect(host.installs()).toEqual([`install --locked cargo-prune-superseded --version ${version}`]);
+  expect(ok("cargo-prune-superseded", ["--version"], { env: host.env })).toBe(`cargo-prune-superseded ${version}`);
+
+  const second = run("just", ["bootstrap"], { cwd: work, env: host.env });
+  expect(second.code, second.stderr).toBe(0);
+  expect(host.installs()).toHaveLength(1);
 });
 
 // The nx arguments a recipe's `all` sweep passes, read from the justfile.
-const sweepArgs = (recipe) => ok("just", ["--show", recipe], { cwd: REPO }).match(/all\) bash scripts\/nx (.+?) ;;/)[1];
+function sweepArgs(recipe) {
+  const shown = ok("just", ["--show", recipe], { cwd: REPO });
+  const sweep = shown.match(/all\) bash scripts\/nx (.+?) ;;/);
+  if (!sweep) throw new Error(`just --show ${recipe} has no \`all) bash scripts/nx ... ;;\` arm; update sweepArgs to the recipe's shape:\n${shown}`);
+  return sweep[1];
+}
 
 // The tasks of the graph real Nx builds for `args`.
 function tasks(args) {
