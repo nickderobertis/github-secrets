@@ -27,8 +27,13 @@ bootstrap: toolchain
     @cargo llvm-cov --version >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
     bash scripts/bun.sh ensure
     bash scripts/nx --version >/dev/null
+    just setup-workflows
     @[ -n "${CI:-}" ] || bash scripts/setup-llmlint.sh
     cargo fetch --locked
+
+# Locked, private workflow-tooling dependencies (no product dependency).
+setup-workflows:
+    @npm ci --prefix .github --ignore-scripts --no-audit --no-fund --loglevel=error || { echo "Workflow tooling install failed above; restore .github/package-lock.json and re-run just setup-workflows." >&2; exit 1; }
 
 # Install the Rust toolchain rust-toolchain.toml pins (channel, components, release targets).
 toolchain:
@@ -41,8 +46,8 @@ check tier="affected":
     #!/usr/bin/env bash
     set -euo pipefail
     case {{ quote(tier) }} in
-        affected) base="$(bash scripts/nx-base.sh)"; exec bash scripts/nx affected --base="$base" -t format-check lint build test coverage ;;
-        all) exec bash scripts/nx run-many --all -t format-check lint build test coverage ;;
+        affected) base="$(bash scripts/nx-base.sh)"; exec bash scripts/nx affected --base="$base" -t format-check lint build test coverage budgets ;;
+        all) exec bash scripts/nx run-many --all -t format-check lint build test coverage budgets ;;
         *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
     esac
 

@@ -52,11 +52,11 @@ const pr = (headRef, headRepo = "nickderobertis/github-secrets") => ({
   },
 });
 
-test("the release-please release PR runs the full sweep", () => {
+test("a release-please branch whose diff the classifier cannot admit as version-only keeps the affected tier", () => {
   const r = route("pull_request", pr("release-please--branches--master--components--gh-secrets"));
   expect(r.code).toBe(0);
-  expect(r.tier).toBe("all");
-  expect(r.base).toBe("");
+  expect(r.tier).toBe("affected");
+  expect(r.base).toBe(forkPoint);
   expect(r.stdout).toBe("");
   expect(r.stderr.trim().split("\n")).toHaveLength(1);
 });
@@ -87,9 +87,19 @@ test("a push without a usable before falls back to HEAD~1", () => {
   expect(r.base).not.toBe(featureTip);
 });
 
-test("a manual dispatch runs the full sweep", () => {
-  const r = route("workflow_dispatch", {});
-  expect(r.tier).toBe("all");
+test("a manual dispatch runs the affected tier from the default branch's merge base", () => {
+  const r = route("workflow_dispatch", { repository: { default_branch: "master" } });
+  expect(r.code).toBe(0);
+  expect(r.tier).toBe("affected");
+  expect(r.base).toBe(forkPoint);
+});
+
+test("a manual dispatch without a usable default branch is refused, not swept", () => {
+  for (const payload of [{}, { repository: { default_branch: "master; curl evil" } }]) {
+    const r = route("workflow_dispatch", payload);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("no usable repository.default_branch");
+  }
 });
 
 test("a pull request whose base ref is not a plain ref name is refused", () => {
@@ -132,7 +142,7 @@ test("an unwritable GITHUB_OUTPUT fails with the next action", () => {
   writeFileSync(event, "{}");
   const r = run("bun", [SCRIPT], {
     cwd: repo,
-    env: { ...process.env, GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_EVENT_PATH: event, GITHUB_OUTPUT: join(s.dir, "no-such-dir", "out") },
+    env: { ...process.env, GITHUB_EVENT_NAME: "schedule", GITHUB_EVENT_PATH: event, GITHUB_OUTPUT: join(s.dir, "no-such-dir", "out") },
   });
   expect(r.code).toBe(1);
   expect(r.stderr).toContain("could not append to GITHUB_OUTPUT");
@@ -141,10 +151,28 @@ test("an unwritable GITHUB_OUTPUT fails with the next action", () => {
 test("outside Actions (no GITHUB_OUTPUT) the decision goes to stdout", () => {
   const event = join(s.dir, "dispatch2.json");
   writeFileSync(event, "{}");
-  const env = { ...process.env, GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_EVENT_PATH: event };
+  const env = { ...process.env, GITHUB_EVENT_NAME: "schedule", GITHUB_EVENT_PATH: event };
   delete env.GITHUB_OUTPUT;
   const r = run("bun", [SCRIPT], { cwd: repo, env });
   expect(r.code).toBe(0);
   expect(r.stdout).toBe("tier=all\nbase=\n");
   expect(r.stderr).toBe("");
+});
+
+
+test("semantic release-only PR gets the full sweep through the production classifier", () => {
+  const local = scratch();
+  try {
+    const { git, commit } = gitRepo(local.dir);
+    writeFileSync(join(local.dir, "Cargo.toml"), '[package]\nname="gh-secrets"\nversion="1.0.0"\nedition="2021"\n');
+    commit("initial");
+    git("update-ref", "refs/remotes/origin/master", "HEAD");
+    writeFileSync(join(local.dir, "Cargo.toml"), '[package]\nname="gh-secrets"\nversion="1.1.0"\nedition="2021"\n');
+    commit("version");
+    const event = join(local.dir, ".git/event.json");
+    writeFileSync(event, JSON.stringify(pr("release-please--branches--master--components--gh-secrets")));
+    const r = run("bun", [SCRIPT], { cwd: local.dir, env: { ...process.env, GITHUB_EVENT_NAME: "pull_request", GITHUB_EVENT_PATH: event, GITHUB_OUTPUT: "" } });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe("tier=all\nbase=\n");
+  } finally { local.cleanup(); }
 });

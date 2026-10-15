@@ -29,12 +29,74 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  policy:
+    runs-on: ubuntu-latest
+    outputs:
+      macosRequired: ${{ steps.policy.outputs.macosRequired }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+      - name: Read tool pins (.tool-versions)
+        id: pins
+        run: echo "just=$(awk '$1 == "just" { print $2 }' .tool-versions)" >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just@${{ steps.pins.outputs.just }}
+      - run: just setup-workflows
+      - id: policy
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node .github/macos-policy.mjs classify --event "$GITHUB_EVENT_PATH" --base "$BASE" --head "$HEAD" > policy.json
+          node .github/macos-route.mjs policy.json
+
+  # The one Mac lane (check, release build, package, install, run), in
+  # macos.yml so the manual diagnostic reuses it; the classifier decides.
+  macos:
+    needs: policy
+    if: needs.policy.outputs.macosRequired == 'true'
+    uses: ./.github/workflows/macos.yml
+
+  check-macos:
+    name: check (macos-latest)
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs: [policy, macos]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report Mac proof or authorized omission
+        env:
+          POLICY_RESULT: ${{ needs.policy.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+          MACOS_REQUIRED: ${{ needs.policy.outputs.macosRequired }}
+        run: node .github/macos-result.mjs
+
+  build-macos:
+    name: build (macos-latest)
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs: [policy, macos, check]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report Mac proof or authorized omission
+        env:
+          POLICY_RESULT: ${{ needs.policy.result }}
+          MACOS_RESULT: ${{ needs.macos.result }}
+          CHECK_RESULT: ${{ needs.check.result }}
+          MACOS_REQUIRED: ${{ needs.policy.outputs.macosRequired }}
+        run: node .github/macos-result.mjs
+
   check:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     defaults:
       run:
         shell: bash
@@ -88,12 +150,12 @@ jobs:
           fi
 
   build:
-    needs: check
+    needs: [check, check-macos]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     defaults:
       run:
         shell: bash
@@ -134,9 +196,6 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive: tar.gz
-          - os: macos-latest
-            target: aarch64-apple-darwin
             archive: tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -338,7 +397,8 @@ jobs:
   # Standing deviation from the skill's live-tier rule (AGENTS.md): this stays
   # in the PR workflow and finishes green without its secret.
   live-e2e:
-    needs: check
+    # llmlint: ignore[live_tier_compiles_and_requires_credential, external_service_suite_stays_out_of_the_affected_tier] standing AGENTS.md deviation (live tiers stay in the PR workflow); this edge adds only the Mac carrier.
+    needs: [check, check-macos]
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     steps:
@@ -398,7 +458,8 @@ jobs:
   # `secrets` context is not allowed in a job/step `if:`), so it is skipped — not
   # failed — when they're absent, keeping forks and unconfigured repos green.
   live-e2e-bitwarden:
-    needs: check
+    # llmlint: ignore[live_tier_compiles_and_requires_credential, external_service_suite_stays_out_of_the_affected_tier] standing AGENTS.md deviation (live tiers stay in the PR workflow); this edge adds only the Mac carrier.
+    needs: [check, check-macos]
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     steps:

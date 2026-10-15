@@ -171,11 +171,14 @@ nested `AGENTS.md` for its own rules.
 | `coverage` | `scripts/coverage` | `type:tooling` | the coverage driver and its end-to-end test |
 | `workspace` | `tools` | `type:workspace` | supply chain, reconciling checks over root and cross-project facts |
 | `coverage-aggregate` | `tools/coverage-aggregate` | `type:workspace` | the coverage gate: merges every crate's profiles, enforces the floor |
+| `github-workflows` | `.github` | `type:tooling` | macOS routing (release-only classifier, carriers), workflow-graph proofs, Mac scheduling budgets |
 
-- The root project owns every file no other project claims (`.github/`, the
-  justfile, docs), so a change there selects everything; its own inputs are
-  narrowed to `src/` and the manifests, so lint/format replay from cache.
-  `scripts/` is its own project, so script changes reach only what uses them.
+- The root project owns every file no other project claims (the justfile,
+  docs), so a change there selects everything; its own inputs are narrowed to
+  `src/` and the manifests, so lint/format replay from cache. `scripts/` and
+  `.github/` (`github-workflows`) are their own projects, so a script or
+  workflow change reaches only what uses it — plus `workspace`, whose
+  workflow-contract check depends on every project.
 - Boundaries: `tools/project-boundaries.json`, enforced in `workspace:lint` over
   Cargo *and* Nx edges. `type:app` may depend only on `type:app`, so the
   published crate can never be made to depend on a test, live, bench or
@@ -380,14 +383,20 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 - **Placement** (`ci.md` "Gate a given commit once"): the release PR can
   accumulate several merges, so this repo *batches* releases and the
   **broader tier — the full `just check all` sweep — runs on the release PR**
-  (release-prep), over the exact tree that ships. **Ordinary pull requests and
-  pushes to `master` run the affected tier** against an explicit base (the
-  merge base with `origin/master`; the previous `master` tip for a push).
+  (release-prep), over the exact tree that ships. **Ordinary pull requests,
+  pushes to `master` and the manual macOS diagnostic run the affected tier**
+  against an explicit base (the merge base with `origin/master`; the previous
+  `master` tip for a push).
   `scripts/ci-gate-tier.mjs` makes that choice in every `check` leg (a release
   PR is a same-repo PR whose head branch starts with
   `release-please--branches--master`), and `tools/tests/ci-gate-tier.test.mjs`
   pins it. `release.yml` builds and publishes the tagged commit and re-gates
   nothing.
+- **macOS is scarce and shared across repositories**, so Mac jobs per
+  workflow run and Mac-spending runs per change are budgeted
+  (`.github/budgets.yaml`): the only automatic Mac work is the ordinary PR's
+  one consolidated lane and the release build's Darwin leg.
+  Release-only PRs, master pushes and downstream events spend none.
 - **Fixed status-check contexts** (what branch protection names; keep the job
   ids and matrix values): `check (ubuntu-latest|macos-latest|windows-latest)`,
   `build (…)`, `live-e2e`, `live-e2e-bitwarden`, `llmlint`, `lint PR title`.
@@ -494,8 +503,8 @@ Allowed types: `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 - `scripts/install.sh` is the cross-platform installer (Linux x86_64 + arm64,
   macOS arm64, Windows x86_64 under a POSIX shell): it detects the host target,
   downloads the matching release archive, verifies its SHA-256, and installs
-  the binary. Hosts with no published asset (Intel macOS, non-x86_64 Windows)
-  abort with a `cargo install` suggestion rather than 404 on a missing archive,
+  the binary. Hosts with no published asset abort with a `cargo install`
+  suggestion (Intel macOS is no longer supported and says so) rather than 404 on a missing archive,
   so the installer's target set must track the `release.yml` matrix. It must stay in lock-step with the release asset naming in
   `release.yml` — the archive is `gh-secrets-<tag>-<target>.<ext>` and the
   checksum asset is that name with `.sha256` *appended* (it keeps the

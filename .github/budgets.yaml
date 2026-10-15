@@ -1,0 +1,25 @@
+schema_version: 1
+budgets:
+  - id: github-secrets-macos-jobs-per-run
+    description: >-
+      Maximum Mac job instances per resolved workflow run. inner_measure_reason:
+      one run can occupy several shared Mac slots even when the lifecycle run
+      count stays within its bound. The brief explicitly requests separate
+      jobs/run and Mac-spending runs/change constraints; the manager approved
+      two budgets for these scheduling constraints.
+    measure: reported
+    direction: max
+    threshold: 1
+    unit: jobs
+    command: [node, macos-budget.mjs, --metric, jobs-per-run, --telemetry, .telemetry/macos-policy.json]
+  - id: github-secrets-macos-runs-per-change
+    description: >-
+      Maximum Mac-spending workflow runs in the complete automatic single-push
+      lifecycle. The brief explicitly requests separate jobs/run and
+      Mac-spending runs/change constraints; the manager approved two budgets
+      for these scheduling constraints.
+    measure: reported
+    direction: max
+    threshold: 2
+    unit: runs
+    command: [node, macos-budget.mjs, --metric, runs-per-change, --telemetry, .telemetry/macos-policy.json]

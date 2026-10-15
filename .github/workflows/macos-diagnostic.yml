@@ -1,0 +1,21 @@
+# Explicit manual macOS diagnostic, outside the change lifecycle: default off,
+# at most the one Mac job macos.yml declares, and never set by automation
+# (only a workflow_dispatch carries its input).
+
+name: macos-diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      macos_diagnostic:
+        type: boolean
+        default: false
+        description: Run the consolidated Mac lane on this ref
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    if: github.event_name == 'workflow_dispatch' && inputs.macos_diagnostic
+    uses: ./.github/workflows/macos.yml

@@ -47,6 +47,7 @@ export const FIXED_CONTEXTS = [
 // (The live jobs' condition predates this contract: a skipped job still reports.)
 const PR_SAFE_CONDITIONS = new Set([
   undefined,
+  "${{ always() }}",
   "github.event_name == 'pull_request'",
   "${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}",
 ]);
@@ -156,7 +157,20 @@ export function checkContract(root) {
       for (const need of [job.needs ?? []].flat()) {
         const needed = wf.jobs[need];
         const neededFixed = needed && contextsOf(need, needed).some((c) => FIXED_CONTEXTS.includes(c));
-        if (!neededFixed) errors.push(`${file}:${id} reports a fixed context but needs '${need}', which reports none.`);
+        // Mac carriers: Linux jobs whose real outcome command fails on any failed,
+        // cancelled or missing prerequisite. build also waits on check.
+        const usesCheck = id === "build-macos";
+        const last = Array.isArray(job.steps) ? job.steps.at(-1) : undefined;
+        const env = last && typeof last.env === "object" && last.env !== null ? last.env : undefined;
+        const carrier = ["check-macos", "build-macos"].includes(id) &&
+          job.if === "${{ always() }}" &&
+          JSON.stringify(job.needs) === JSON.stringify(usesCheck ? ["policy", "macos", "check"] : ["policy", "macos"]) &&
+          env !== undefined && last.run === "node .github/macos-result.mjs" &&
+          env?.POLICY_RESULT === "${{ needs.policy.result }}" &&
+          env?.MACOS_RESULT === "${{ needs.macos.result }}" &&
+          (usesCheck ? env?.CHECK_RESULT === "${{ needs.check.result }}" : !("CHECK_RESULT" in env)) &&
+          env?.MACOS_REQUIRED === "${{ needs.policy.outputs.macosRequired }}";
+        if (!neededFixed && !carrier) errors.push(`${file}:${id} reports a fixed context but needs '${need}', which reports none.`);
       }
     }
   }
@@ -184,20 +198,47 @@ export function checkContract(root) {
   if (ci?.permissions?.contents !== "read" || Object.keys(ci.permissions).length !== 1) {
     errors.push("ci.yml must set top-level `permissions: contents: read` (and nothing wider).");
   }
-  for (const [id, job] of Object.entries(ci?.jobs ?? {})) {
+  const pinsJust = (where, job) => {
     const steps = job.steps ?? [];
     const pins = steps.find((s) => s.id === "pins");
     const reads = pins && String(pins.run).includes(".tool-versions") && String(pins.run).includes('"just"');
     const installs = steps.some((s) => s.with?.tool === PIN_STEP);
-    if (!reads || !installs) errors.push(`ci.yml:${id} must install just at the .tool-versions pin (a 'pins' step + tool: ${PIN_STEP}).`);
+    if (!reads || !installs) errors.push(`${where} must install just at the .tool-versions pin (a 'pins' step + tool: ${PIN_STEP}).`);
+  };
+  for (const [id, job] of Object.entries(ci?.jobs ?? {})) {
+    // The Mac carriers run only the repository's Node result command; no just.
+    if (["check-macos", "build-macos"].includes(id)) {
+      if (!(job.steps ?? []).some((s) => s.run === "node .github/macos-result.mjs")) errors.push(`ci.yml:${id} must invoke the production Mac result command.`);
+      continue;
+    }
+    // A called workflow's jobs carry the pin themselves.
+    if (job.uses) {
+      const callee = workflows[String(job.uses).replace(/^\.\/\.github\/workflows\//, "")];
+      if (!callee) errors.push(`ci.yml:${id} calls ${job.uses}, which is not a workflow in this repository.`);
+      for (const [calleeId, calleeJob] of Object.entries(callee?.jobs ?? {})) pinsJust(`${job.uses}:${calleeId}`, calleeJob);
+      continue;
+    }
+    pinsJust(`ci.yml:${id}`, job);
+  }
+
+  // The Mac lane's install path is ci.yml:install's, step for step: the install
+  // job executes these commands on Linux and Windows every PR, and Linux cannot
+  // run the Darwin binary, so identity is what proves the Mac copy.
+  for (const name of ["Version this commit would ship as", "Build", "Install through scripts/install.sh", "Run the installed binary"]) {
+    const a = (ci?.jobs?.install?.steps ?? []).find((s) => s.name === name);
+    const b = (workflows["macos.yml"]?.jobs?.macos?.steps ?? []).find((s) => s.name === name);
+    if (!a || !b || JSON.stringify(a) !== JSON.stringify(b)) errors.push(`'${name}' differs between ci.yml:install and macos.yml:macos; keep them identical.`);
   }
 
   // Packaging lockstep between the install-path job and the release build.
   const releaseBuild = workflows["release.yml"]?.jobs?.build?.steps ?? [];
   const installJob = ci?.jobs?.install?.steps ?? [];
+  const macInstall = workflows["macos.yml"]?.jobs?.macos?.steps ?? [];
   for (const name of ["Package (unix)", "Package (windows)"]) {
     const a = releaseBuild.find((s) => s.name === name);
     const b = installJob.find((s) => s.name === name);
+    const mac = macInstall.find(s => s.name === name);
+    if (!mac || (a && (a.run !== mac.run || a.shell !== mac.shell || a.if !== mac.if))) errors.push(`'${name}' differs between release.yml:build and macos.yml:macos; keep them identical.`);
     if (!a || !b) errors.push(`'${name}' must exist in both release.yml:build and ci.yml:install.`);
     else if (a.run !== b.run || a.shell !== b.shell || a.if !== b.if) {
       errors.push(`'${name}' differs between release.yml:build and ci.yml:install; keep them identical.`);

@@ -78,10 +78,9 @@ detect_target() {
         err "no prebuilt Windows binary for $arch; install with 'cargo install $BIN --locked'"
     fi
 
-    # The release matrix publishes macOS for aarch64 only: Apple Silicon runs
-    # it natively, and there is no prebuilt Intel binary (see release.yml).
+    # Releases target Apple Silicon macOS only (see release.yml).
     if [ "$os_part" = "apple-darwin" ] && [ "$arch_part" != "aarch64" ]; then
-        err "no prebuilt macOS binary for $arch; install with 'cargo install $BIN --locked'"
+        err "Intel macOS is no longer supported: releases ship for Apple Silicon (arm64) only; build from source with 'cargo install $BIN --locked'"
     fi
 
     TARGET="${arch_part}-${os_part}"

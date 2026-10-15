@@ -1,0 +1,38 @@
+{
+  "name": "github-workflows",
+  "projectType": "library",
+  "tags": [
+    "type:tooling"
+  ],
+  "implicitDependencies": [
+    "scripts"
+  ],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "just setup-workflows && node --test .github/tests/*.test.mjs && bun test --timeout 600000 scripts/tests/ci-gate-tier.test.mjs"
+      },
+      "//": "Also runs scripts' tier-router journeys (that file only, not the packaging suite): ci-gate-tier.mjs imports macos-policy.mjs, and a scripts -> github-workflows edge would be a cycle, so classifier changes reach those tests here."
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node .github/syntax.mjs"
+      },
+      "//ignore-budgets": "llmlint: ignore-block[new_projects_keep_the_graph_uniform] `budgets` is a gate target name here: the justfile's check recipe runs `-t format-check lint build test coverage budgets` on both tiers, so affected and run-many include it; it stays separate from `test` because the budget brief requires onebudgetspec, not the test, to compare the recorded figures against their limits."
+    },
+    "budgets": {
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "test"
+      ],
+      "cache": false,
+      "options": {
+        "command": "node .github/node_modules/@onebudgetspec/cli/bin/onebudgetspec.js check .github/budgets.yaml"
+      },
+      "//ignore-end": "llmlint: ignore-end[new_projects_keep_the_graph_uniform]"
+    }
+  }
+}

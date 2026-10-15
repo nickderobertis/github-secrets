@@ -7,6 +7,9 @@ import { checkContract } from "../check-workflow-contract.mjs";
 import { REPO, scratch } from "../../scripts/tests/helpers.mjs";
 
 const SANDBOX_RUST = "tests/live-github/tests/live_common/mod.rs";
+// The checker reads workflows and tooling sources only; copying the workflow
+// tooling's installed packages and telemetry per case blew Windows' 5s timeout.
+const COPY_GITHUB = { recursive: true, filter: (src) => !/[\\/]\.github[\\/](node_modules|\.telemetry)([\\/]|$)/.test(src) };
 
 let cleanups = [];
 afterEach(() => {
@@ -17,7 +20,7 @@ afterEach(() => {
 function mutated(file, from, to) {
   const s = scratch();
   cleanups.push(s.cleanup);
-  cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
+  cpSync(join(REPO, ".github"), join(s.dir, ".github"), COPY_GITHUB);
   cpSync(join(REPO, "rust-toolchain.toml"), join(s.dir, "rust-toolchain.toml"));
   cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
   cpSync(join(REPO, SANDBOX_RUST), join(s.dir, SANDBOX_RUST));
@@ -38,12 +41,12 @@ test("a path filter on ci.yml's pull_request trigger is caught", () => {
 });
 
 test("a fixed-context job gaining a needs edge on a non-fixed job is caught", () => {
-  const errors = mutated("ci.yml", "  build:\n    needs: check\n", "  build:\n    needs: [check, install]\n");
+  const errors = mutated("ci.yml", "  build:\n    needs: [check, check-macos]\n", "  build:\n    needs: [check, check-macos, install]\n");
   expect(errors.join("\n")).toContain("needs 'install', which reports none");
 });
 
 test("a new condition on a fixed-context job is caught", () => {
-  const errors = mutated("ci.yml", "  build:\n    needs: check\n", "  build:\n    needs: check\n    if: github.event_name == 'push'\n");
+  const errors = mutated("ci.yml", "  build:\n    needs: [check, check-macos]\n", "  build:\n    needs: [check, check-macos]\n    if: github.event_name == 'push'\n");
   expect(errors.join("\n")).toContain("unrecognised condition");
 });
 
@@ -65,7 +68,7 @@ test("a ci.yml job without the pinned just is caught", () => {
 test("a release target missing from rust-toolchain.toml is caught", () => {
   const s = scratch();
   cleanups.push(s.cleanup);
-  cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
+  cpSync(join(REPO, ".github"), join(s.dir, ".github"), COPY_GITHUB);
   const toolchain = readFileSync(join(REPO, "rust-toolchain.toml"), "utf8");
   expect(toolchain).toContain('    "aarch64-apple-darwin",\n');
   writeFileSync(join(s.dir, "rust-toolchain.toml"), toolchain.replace('    "aarch64-apple-darwin",\n', ""));
@@ -80,7 +83,7 @@ test("a workflow whose jobs are not a mapping is refused rather than skipped", (
 });
 
 test("a matrix of an unexpected shape is reported, not crashed on", () => {
-  const errors = mutated("ci.yml", "        os: [ubuntu-latest, macos-latest, windows-latest]\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history", "        os: ubuntu-latest\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history");
+  const errors = mutated("ci.yml", "        os: [ubuntu-latest, windows-latest]\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history", "        os: ubuntu-latest\n    defaults:\n      run:\n        shell: bash\n    steps:\n      # Full history");
   expect(errors.join("\n")).toContain("ci.yml:check has a name, needs, strategy or strategy.matrix (os / include) of an unexpected shape");
 });
 
@@ -95,7 +98,7 @@ test("the llmlint job installing a harness other than oneharness.toml's primary 
 });
 
 test("an include list where only some entries name an os is reported", () => {
-  const errors = mutated("ci.yml", "          - os: macos-latest\n            target: aarch64-apple-darwin", "          - target: aarch64-apple-darwin");
+  const errors = mutated("ci.yml", "          - os: windows-latest\n            target: x86_64-pc-windows-msvc", "          - target: x86_64-pc-windows-msvc");
   expect(errors.join("\n")).toContain("ci.yml:install has a name, needs, strategy or strategy.matrix (os / include) of an unexpected shape");
 });
 
@@ -122,7 +125,7 @@ test("a sandbox repo assigned in the live step's script is caught", () => {
 });
 
 test("a sandbox repo set as a literal in job env is caught", () => {
-  const errors = mutated("ci.yml", "  live-e2e:\n    needs: check\n", "  live-e2e:\n    needs: check\n    env:\n      GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n");
+  const errors = mutated("ci.yml", "  live-e2e:\n    # llmlint:", "  live-e2e:\n    env:\n      GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n    # llmlint:");
   expect(errors.join("\n")).toContain("live-e2e sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
 });
 
@@ -132,7 +135,7 @@ test("a literal value for any env on the live GitHub step is caught", () => {
 });
 
 test("a job env that is not a mapping is reported, not crashed on", () => {
-  const errors = mutated("ci.yml", "  live-e2e:\n    needs: check\n", "  live-e2e:\n    needs: check\n    env: [GH_SECRETS_E2E_SANDBOX_REPO]\n");
+  const errors = mutated("ci.yml", "  live-e2e:\n    # llmlint:", "  live-e2e:\n    env: [GH_SECRETS_E2E_SANDBOX_REPO]\n    # llmlint:");
   expect(errors.join("\n")).toContain("live-e2e has an `env` that is not a mapping");
 });
 
@@ -149,7 +152,7 @@ test("the live suite's sandbox key declaration changing shape is caught", () => 
 test("a missing live suite sandbox-key source is reported as unreadable", () => {
   const s = scratch();
   cleanups.push(s.cleanup);
-  cpSync(join(REPO, ".github"), join(s.dir, ".github"), { recursive: true });
+  cpSync(join(REPO, ".github"), join(s.dir, ".github"), COPY_GITHUB);
   cpSync(join(REPO, "rust-toolchain.toml"), join(s.dir, "rust-toolchain.toml"));
   cpSync(join(REPO, "oneharness.toml"), join(s.dir, "oneharness.toml"));
   cpSync(join(REPO, SANDBOX_RUST), join(s.dir, SANDBOX_RUST));
@@ -175,4 +178,25 @@ test("a sandbox repo set as a literal in workflow-level env is caught", () => {
 test("a sandbox repo set as a literal on a step outside the live job is caught", () => {
   const errors = mutated("notignored.yml", "      - uses: actions/checkout@v4\n        with:\n", "      - uses: actions/checkout@v4\n        env:\n          GH_SECRETS_E2E_SANDBOX_REPO: hiddenco/quietharbor\n        with:\n");
   expect(errors.join("\n")).toContain("notignored.yml:suppressions sets GH_SECRETS_E2E_SANDBOX_REPO to something other than");
+});
+
+test("the Mac lane's packaging drifting from the release build is caught", () => {
+  const errors = mutated("macos.yml", 'tar czf "${dist}.tar.gz" "$dist"', 'tar cjf "${dist}.tar.gz" "$dist"');
+  expect(errors.join("\n")).toContain("'Package (unix)' differs between release.yml:build and macos.yml:macos");
+});
+
+test("a called Mac lane without the pinned just is caught", () => {
+  const errors = mutated("macos.yml", "        id: pins\n", "        id: not-pins\n");
+  expect(errors.join("\n")).toContain("./.github/workflows/macos.yml:macos must install just at the .tool-versions pin");
+});
+
+test("the Mac lane's install-and-run commands drifting from the install job are caught", () => {
+  const errors = mutated("macos.yml", '[ "$out" = "gh-secrets ${VERSION#v}" ]', 'true');
+  expect(errors.join("\n")).toContain("'Run the installed binary' differs between ci.yml:install and macos.yml:macos");
+});
+
+test("a Mac carrier without steps is reported, not crashed on", () => {
+  const errors = mutated("ci.yml", "    needs: [policy, macos]\n    steps:\n", "    needs: [policy, macos]\n    steps: []\n    old-steps:\n");
+  expect(errors.join("\n")).toContain("ci.yml:check-macos reports a fixed context but needs 'policy', which reports none.");
+  expect(errors.join("\n")).toContain("ci.yml:check-macos must invoke the production Mac result command.");
 });

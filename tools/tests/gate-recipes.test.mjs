@@ -44,7 +44,7 @@ function just(args, nxBase) {
   return { ...r, nx: existsSync(record) ? readFileSync(record, "utf8").trim() : null };
 }
 
-const GATE = "-t format-check lint build test coverage";
+const GATE = "-t format-check lint build test coverage budgets";
 
 test.skipIf(isWindows)("check without NX_BASE runs the affected tier from the merge base with origin/master", () => {
   const r = just(["check"]);

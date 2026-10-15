@@ -95,10 +95,8 @@ jobs:
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             archive: tar.gz
-          # x86_64-apple-darwin is omitted: macos-13 runner allocation has been
-          # unreliable since GitHub announced its deprecation, and Apple Silicon
-          # Macs can run the aarch64 binary natively. Add this target back once
-          # we have a stable Intel build path (or cross from arm64 via Zig/cc).
+          # macOS releases target Apple Silicon only; Intel macOS is no longer
+          # supported, and scripts/install.sh refuses it with that message.
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
@@ -154,6 +152,36 @@ jobs:
         env:
           VERSION: ${{ needs.release-please.outputs.tag_name }}
 
+      - name: Install staged native archive
+        shell: bash
+        env:
+          VERSION: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          sh scripts/install.sh --version "$VERSION" --from-dir "$PWD" --to "$RUNNER_TEMP/bin"
+          out="$("$RUNNER_TEMP/bin/gh-secrets" --version)"
+          [ "$out" = "gh-secrets ${VERSION#v}" ]
+          "$RUNNER_TEMP/bin/gh-secrets" --help >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            gh-secrets-*.tar.gz*
+            gh-secrets-*.zip*
+          if-no-files-found: error
+
+  upload:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    needs: [release-please, build]
+    if: needs.release-please.outputs.release_created == 'true'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
       - name: Attach assets to the release
         shell: bash
         env:
@@ -173,7 +201,7 @@ jobs:
   # never blocks a release.
   crates-io:
     name: publish to crates.io
-    needs: release-please
+    needs: [release-please, build]
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:

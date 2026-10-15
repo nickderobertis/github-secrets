@@ -1,6 +1,6 @@
 // Decide which gate tier a CI run owes, and the explicit base it keys off — the
 // placement AGENTS.md "Commits, releases, and merging" records: the release
-// PR gets the full sweep, everything else the affected tier.
+// PR gets the full sweep; PRs, pushes and manual dispatches the affected tier.
 //
 // Reads GITHUB_EVENT_NAME and the payload at GITHUB_EVENT_PATH and writes
 // `tier=<affected|all>` and `base=<sha>` (empty for `all`) to GITHUB_OUTPUT,
@@ -12,30 +12,8 @@
 // names the cause and the next action).
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { classify } from "../.github/macos-policy.mjs";
 
-// release-please names its release-PR branch `release-please--branches--<branch
-// it releases from>` (plus a component suffix), so the prefix is derived from the
-// branch release.yml runs on rather than restated here.
-function releaseBranchPrefix() {
-  let release;
-  try {
-    release = Bun.YAML.parse(readFileSync(join(import.meta.dir, "../.github/workflows/release.yml"), "utf8"));
-  } catch (err) {
-    throw new RoutingError(
-      `cannot read .github/workflows/release.yml: ${err.message}`,
-      "check out the full repository (the release-PR branch name is derived from release.yml).",
-    );
-  }
-  const branches = release?.on?.push?.branches;
-  if (!Array.isArray(branches) || branches.length !== 1 || typeof branches[0] !== "string") {
-    throw new RoutingError(
-      "release.yml must run on exactly one push branch to derive the release-PR branch from",
-      "restore `on: push: branches: [<default branch>]` in .github/workflows/release.yml.",
-    );
-  }
-  return `release-please--branches--${branches[0]}`;
-}
 const ZERO_SHA = /^0+$/;
 
 /** A routing failure carrying the concrete next action for the CI log. */
@@ -70,10 +48,6 @@ function resolves(rev, cwd) {
 export function decide(eventName, payload, cwd = process.cwd()) {
   if (eventName === "pull_request") {
     const pr = payload.pull_request ?? {};
-    const sameRepo = pr.head?.repo?.full_name && pr.head.repo.full_name === pr.base?.repo?.full_name;
-    if (sameRepo && typeof pr.head?.ref === "string" && pr.head.ref.startsWith(releaseBranchPrefix())) {
-      return { tier: "all", base: "", why: `release PR (${pr.head.ref}): full sweep at release-prep` };
-    }
     const baseRef = pr.base?.ref;
     if (typeof baseRef !== "string" || !/^[A-Za-z0-9._/-]+$/.test(baseRef) || baseRef.includes("..")) {
       throw new RoutingError(
@@ -82,7 +56,21 @@ export function decide(eventName, payload, cwd = process.cwd()) {
       );
     }
     const base = git(["merge-base", `origin/${baseRef}`, "HEAD"], cwd);
+    const classification = classify(eventName, payload, base, pr.head?.sha ?? "HEAD", cwd);
+    if (classification.isReleaseOnly) return { tier: "all", base: "", why: classification.reason };
     return { tier: "affected", base, why: `pull request: merge base with origin/${baseRef}` };
+  }
+  // A manual dispatch (the macOS diagnostic) owes what the ref changes against
+  // the default branch, never a second broader sweep of an already-gated commit.
+  if (eventName === "workflow_dispatch") {
+    const branch = payload.repository?.default_branch;
+    if (typeof branch !== "string" || !/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes("..")) {
+      throw new RoutingError(
+        `workflow_dispatch payload has no usable repository.default_branch (${JSON.stringify(branch)})`,
+        "dispatch from GitHub Actions (its payload names the default branch); nothing was run.",
+      );
+    }
+    return { tier: "affected", base: git(["merge-base", `origin/${branch}`, "HEAD"], cwd), why: `manual dispatch: merge base with origin/${branch}` };
   }
   if (eventName === "push") {
     const before = payload.before;
