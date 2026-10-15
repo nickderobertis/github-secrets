@@ -6,6 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { REPO, gitRepo, ok, run } from "../../scripts/tests/helpers.mjs";
 
+// A commit plus a real `git push` takes ~3s on a Windows runner and past bun's
+// 5s default while the gate's cargo builds run beside it. The budget is for
+// those subprocesses, not a slack assertion.
+const PUSH_TIMEOUT = 30_000;
+
 for (const legacy of [false, true]) {
   describe(`ordinary pushes have no duplicate checks (${legacy ? "existing" : "fresh"} clone)`, () => {
     let dir, remote, git, commit, baseline, gallery, trace;
@@ -38,15 +43,15 @@ for (const legacy of [false, true]) {
     };
     test("first push", () => {
       push();
-    });
+    }, PUSH_TIMEOUT);
     test("changed guarded path", () => {
       writeFileSync(join(dir, "llmlint.yml"), "changed guarded path\n");
       commit("change validator config");
       push();
-    });
+    }, PUSH_TIMEOUT);
     test("up-to-date push", () => {
       push();
-    });
+    }, PUSH_TIMEOUT);
     // Bootstrap no longer installs any hooks. Inspect its real command expansion
     // without provisioning unrelated Rust and network dependencies in the fixture.
     for (let rerun = 0; rerun < 2; rerun++) {
@@ -55,7 +60,7 @@ for (const legacy of [false, true]) {
         expect(expansion.code).toBe(0);
         expect(expansion.stdout + expansion.stderr).not.toMatch(/git config|hooksPath|pre-push/);
         push();
-      });
+      }, PUSH_TIMEOUT);
     }
     test("pushes preserve hook settings and artifacts without running checks", () => {
       expect(run("git", ["config", "--get", "core.hooksPath"], { cwd: dir }).stdout.trim()).toBe(legacy ? ".githooks" : "");
@@ -67,7 +72,7 @@ for (const legacy of [false, true]) {
       git("remote", "set-url", "origin", join(dir, "missing.git"));
       expect(run("git", ["push", "origin", "master"], { cwd: dir }).code).not.toBe(0);
       expect(ok("git", ["--git-dir", remote, "rev-parse", "master"])).toBe(git("rev-parse", "HEAD"));
-    });
+    }, PUSH_TIMEOUT);
   });
 }
 
