@@ -4,7 +4,8 @@
 // cases show that the untimed pass clears an older backlog, that the timed pass
 // removes exactly the alternative build's entries and keeps every ordinary one,
 // that the figure is the pruner's own report of that pass with the backlog pass
-// only in its detail, and that nothing is built when there is nowhere to report.
+// only in its detail, that nothing is built when there is nowhere to report, and
+// that a fresh checkout with no target dir at all measures the same way.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
@@ -118,4 +119,16 @@ test.skipIf(!linux)("the timed pass removes exactly one run's superseded builds 
   expect(removed).toBeGreaterThan(0);
   expect(report.detail).toMatch(/entries walked: \d+; profile directories: \d+; builds removed: \d+; bytes freed: \d+; seconds walking: [\d.]+; seconds removing: [\d.]+; untimed backlog pass \(not in the figure\): [\d.]+ s$/);
   expect(r.stdout).toContain(`cargo-prune-superseded: target: removed ${removed} superseded build(s)`);
+});
+
+test.skipIf(!linux)("a fresh checkout with no target dir builds, prunes and reports", () => {
+  rmSync(join(ws, "target"), { recursive: true, force: true });
+  const result = join(dir, "fresh.json");
+  const r = measure({ ONEBUDGETSPEC_RESULT: result });
+  expect(r.stderr).not.toContain("No such file or directory");
+  expect(r.stderr).toMatch(/measure: alternative build created (\d+) entries; the timed pass removed \1 of them; ordinary entries before\/after: (\d+)\/\2 /);
+  expect(r.code).toBe(0);
+  expect(lines("removed.txt")).toEqual(lines("alternative.txt"));
+  expect(lines("before-alternative.txt")).toEqual([]); // nothing to clear: the untimed pass walked an empty target
+  expect(JSON.parse(readFileSync(result, "utf8")).detail).toMatch(/builds removed: [1-9]\d*;.*untimed backlog pass \(not in the figure\): [\d.]+ s$/);
 });

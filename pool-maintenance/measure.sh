@@ -37,8 +37,11 @@ fail() {
 readonly RESULT="$ONEBUDGETSPEC_RESULT"
 unset ONEBUDGETSPEC_RESULT
 
+# A fresh checkout has no target dir yet: creating it here, before anything reads
+# it, gives the backlog pass and entries() an empty one to walk rather than a raw
+# "No such file or directory" from the pruner or find.
 readonly OUT="target/pool-maintenance-measure"
-mkdir -p "$OUT"
+mkdir -p "$OUT" || fail "could not create $OUT; check that target/ is writable, then re-run 'just pool-maintenance-budget'."
 
 # A dev-profile setting nothing in this repository uses: it changes every unit's
 # metadata hash (so the alternative builds sit beside the ordinary ones in the same
@@ -47,6 +50,7 @@ readonly ALTERNATIVE=(env CARGO_PROFILE_DEV_OVERFLOW_CHECKS=false)
 
 # Every build entry, one `<profile>/<dir>/<name>` per line, sorted.
 entries() {
+  [ -d target ] || fail "target/ vanished mid-measurement; re-run 'just pool-maintenance-budget' with nothing else cleaning this checkout."
   find target -name .fingerprint -type d -prune -print | while read -r fp; do
     profile="$(dirname "$fp")"
     for dir in deps .fingerprint build incremental; do
