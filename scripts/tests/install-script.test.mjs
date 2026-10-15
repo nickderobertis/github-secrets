@@ -131,3 +131,18 @@ test.skipIf(isWindows)("--from-dir with no following argument, or a tag with odd
   expect(odd.code).not.toBe(0);
   expect(odd.stderr).toContain("expected a release tag like v1.2.3");
 });
+
+test.skipIf(isWindows)("Intel macOS is refused as no longer supported and installs nothing", () => {
+  const r = release();
+  const stubs = join(r.dir, "stubs");
+  mkdirSync(stubs);
+  const uname = join(stubs, "uname");
+  writeFileSync(uname, `#!/bin/sh\ncase "$1" in -s) echo Darwin ;; -m) echo x86_64 ;; esac\n`);
+  chmodSync(uname, 0o755);
+  const res = run("sh", [join(REPO, "scripts/install.sh"), "--version", TAG, "--from-dir", r.dir, "--to", r.to], {
+    env: { ...process.env, PATH: `${stubs}:${process.env.PATH}` },
+  });
+  expect(res.code).not.toBe(0);
+  expect(res.stderr).toContain("Intel macOS is no longer supported");
+  expect(existsSync(join(r.to, "gh-secrets"))).toBe(false);
+});

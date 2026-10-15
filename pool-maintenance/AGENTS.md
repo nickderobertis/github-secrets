@@ -6,9 +6,9 @@ the pool maintenance this repository declares for onevcs (`onevcs.toml` runs
 `budgets.yaml`, `measure.sh`, which exists only for that budget, and
 `measure.test.mjs`, its end-to-end test on a scratch workspace.
 
-- The budget builds the workspace twice, so although it sits in the standard
-  `budgets-host` target, `just budgets` (which `just check` runs) excludes this
-  project from its fan-out (`--exclude=pool-maintenance`). Only the release
+- The budget builds the workspace twice, so it sits only in the standard
+  `budgets-host` target, which neither `just check` nor `just budgets` selects
+  (both run the gate-wide `budgets` target alone). Only the release
   PR's `pool-maintenance-budget` CI job runs it (`just pool-maintenance-budget`),
   after the gate. `lint` and `test` are cheap and run with every change that
   reaches this project.

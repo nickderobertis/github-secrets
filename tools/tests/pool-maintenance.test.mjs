@@ -94,8 +94,8 @@ test.skipIf(isWindows)("install-prune-superseded installs the pinned release unl
   expect(current.cargo).toBeNull();
 });
 
-// The nx arguments the `budgets` recipe's `all` sweep passes, read from the justfile.
-const budgetsArgs = () => ok("just", ["--show", "budgets"], { cwd: REPO }).match(/all\) bash scripts\/nx (.+?) ;;/)[1];
+// The nx arguments a recipe's `all` sweep passes, read from the justfile.
+const sweepArgs = (recipe) => ok("just", ["--show", recipe], { cwd: REPO }).match(/all\) bash scripts\/nx (.+?) ;;/)[1];
 
 // The tasks of the graph real Nx builds for `args`.
 function tasks(args) {
@@ -104,10 +104,13 @@ function tasks(args) {
   return Object.keys(JSON.parse(readFileSync(graph, "utf8")).tasks.tasks);
 }
 
-test.skipIf(isWindows)("check's budgets never select the pool-maintenance budget, which the release-PR recipe runs", () => {
-  const args = budgetsArgs();
-  expect(tasks(args).filter((t) => t.startsWith("pool-maintenance:"))).toEqual([]);
-  // The project carries the standard budgets-host target: the exclusion is what drops it.
-  expect(tasks(args.replace(" --exclude=pool-maintenance", ""))).toContain("pool-maintenance:budgets-host");
+test.skipIf(isWindows)("check and budgets never select the pool-maintenance budget, which the release-PR recipe runs", () => {
+  const check = tasks(sweepArgs("check"));
+  // The project's cheap targets ride the gate; its budget never does.
+  expect(check).toEqual(expect.arrayContaining(["pool-maintenance:lint", "pool-maintenance:test"]));
+  expect(check.filter((t) => t.startsWith("pool-maintenance:budgets"))).toEqual([]);
+  expect(tasks(sweepArgs("budgets")).filter((t) => t.startsWith("pool-maintenance:"))).toEqual([]);
+  // The project carries the standard budgets-host target: only naming it selects the budget.
+  expect(tasks(`${sweepArgs("budgets")} budgets-host`)).toContain("pool-maintenance:budgets-host");
   expect(ok("just", ["--show", "pool-maintenance-budget"], { cwd: REPO })).toContain("scripts/nx run pool-maintenance:budgets-host");
 }, 60_000);

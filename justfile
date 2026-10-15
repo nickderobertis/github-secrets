@@ -31,6 +31,7 @@ bootstrap: toolchain install-prune-superseded
     @cargo llvm-cov --version >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
     bash scripts/bun.sh ensure
     bash scripts/nx --version >/dev/null
+    just setup-workflows
     @[ -n "${CI:-}" ] || bash scripts/setup-llmlint.sh
     cargo fetch --locked
 
@@ -51,33 +52,39 @@ pool-maintenance:
 pool-maintenance-budget:
     bash scripts/nx run pool-maintenance:budgets-host
 
+# Locked, private workflow-tooling dependencies (no product dependency).
+setup-workflows:
+    @npm ci --prefix .github --ignore-scripts --no-audit --no-fund --loglevel=error || { echo "Workflow tooling install failed above; restore .github/package-lock.json and re-run just setup-workflows." >&2; exit 1; }
+
 # Install the Rust toolchain rust-toolchain.toml pins (channel, components, release targets).
 toolchain:
     rustup toolchain install
 
 # Full quality gate: format check, clippy (-D warnings), build, every project's
-# tests (unit, offline e2e, the compiled no-op live suites) under coverage, and
-# the 95% line-coverage floor over their union, after the onebudgetspec budgets at
-# the same tier. `just check all` sweeps everything.
-check tier="affected": (budgets tier)
+# tests (unit, offline e2e, the compiled no-op live suites) under coverage, the
+# 95% line-coverage floor over their union, and every project's onebudgetspec
+# `budgets` target, then the root budgets.yaml when there is one. Host-labelled
+# budgets (`budgets-host`) are never part of it. `just check all` sweeps everything.
+check tier="affected":
     #!/usr/bin/env bash
     set -euo pipefail
     case {{ quote(tier) }} in
-        affected) base="$(bash scripts/nx-base.sh)"; exec bash scripts/nx affected --base="$base" -t format-check lint build test coverage ;;
-        all) exec bash scripts/nx run-many --all -t format-check lint build test coverage ;;
+        affected) base="$(bash scripts/nx-base.sh)"; bash scripts/nx affected --base="$base" -t format-check lint build test coverage budgets ;;
+        all) bash scripts/nx run-many --all -t format-check lint build test coverage budgets ;;
         *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
     esac
+    [ ! -f budgets.yaml ] || "$(bash scripts/bun.sh path)" x onebudgetspec check budgets.yaml
 
-# The onebudgetspec budgets `check` runs at its tier: every project's `budgets` and
-# `budgets-host` targets, then the root budgets.yaml when there is one. The
-# pool-maintenance project's budget builds the workspace twice, so it is excluded
-# here and runs only on the release PR (`pool-maintenance-budget`).
+# The onebudgetspec budgets `check` runs, alone at its tier: every project's
+# `budgets` target, then the root budgets.yaml when there is one. Host-labelled
+# budgets are not among them: the only one, the pool-maintenance pass, builds the
+# workspace twice and runs on the release PR only (`pool-maintenance-budget`).
 budgets tier="affected":
     #!/usr/bin/env bash
     set -euo pipefail
     case {{ quote(tier) }} in
-        affected) base="$(bash scripts/nx-base.sh)"; bash scripts/nx affected --base="$base" -t budgets budgets-host --exclude=pool-maintenance ;;
-        all) bash scripts/nx run-many --all -t budgets budgets-host --exclude=pool-maintenance ;;
+        affected) base="$(bash scripts/nx-base.sh)"; bash scripts/nx affected --base="$base" -t budgets ;;
+        all) bash scripts/nx run-many --all -t budgets ;;
         *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
     esac
     [ ! -f budgets.yaml ] || "$(bash scripts/bun.sh path)" x onebudgetspec check budgets.yaml

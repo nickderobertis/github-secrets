@@ -45,20 +45,20 @@ function just(args, nxBase) {
   return { ...r, nx: existsSync(record) ? readFileSync(record, "utf8").trim() : null };
 }
 
-const GATE = "-t format-check lint build test coverage";
-// `check` runs the onebudgetspec budget targets at its tier first (`budgets`),
-// never the release-PR-only pool-maintenance budget.
-const BUDGETS = "-t budgets budgets-host --exclude=pool-maintenance";
+// `check` runs every project's onebudgetspec `budgets` target in its one Nx pass,
+// never a host-labelled budget (the release-PR-only pool-maintenance pass).
+const GATE = "-t format-check lint build test coverage budgets";
+const BUDGETS = "-t budgets";
 
 test.skipIf(isWindows)("check without NX_BASE runs the affected tier from the merge base with origin/master", () => {
   const r = just(["check"]);
   expect(r.code).toBe(0);
-  expect(r.nx).toBe(`affected --base=${forkPoint} ${BUDGETS}\naffected --base=${forkPoint} ${GATE}`);
+  expect(r.nx).toBe(`affected --base=${forkPoint} ${GATE}`);
   expect(r.stderr).toContain("merge-base with origin/master");
 });
 
 test.skipIf(isWindows)("a valid NX_BASE (ref name or SHA) is the base", () => {
-  expect(just(["check"], forkPoint).nx).toBe(`affected --base=${forkPoint} ${BUDGETS}\naffected --base=${forkPoint} ${GATE}`);
+  expect(just(["check"], forkPoint).nx).toBe(`affected --base=${forkPoint} ${GATE}`);
   expect(just(["budgets"], "origin/master").nx).toBe(`affected --base=origin/master ${BUDGETS}`);
   expect(just(["test"], "origin/master").nx).toBe("affected --base=origin/master -t test");
 });
@@ -74,7 +74,7 @@ test.skipIf(isWindows)("an invalid NX_BASE is refused before anything runs, nami
 });
 
 test.skipIf(isWindows)("`all` is one run-many sweep over every project", () => {
-  expect(just(["check", "all"]).nx).toBe(`run-many --all ${BUDGETS}\nrun-many --all ${GATE}`);
+  expect(just(["check", "all"]).nx).toBe(`run-many --all ${GATE}`);
   expect(just(["budgets", "all"]).nx).toBe(`run-many --all ${BUDGETS}`);
   expect(just(["lint", "all"]).nx).toBe("run-many --all -t lint");
   expect(just(["format-check", "all"]).nx).toBe("run-many --all -t format-check");
