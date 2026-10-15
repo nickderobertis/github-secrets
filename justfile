@@ -14,6 +14,9 @@
 set shell := ["bash", "-uc"]
 set windows-shell := ["bash", "-uc"]
 
+# The cargo-prune-superseded release `bootstrap` installs and `pool-maintenance` runs.
+prune_superseded_version := "0.1.1"
+
 # List available recipes.
 default:
     @just --list
@@ -21,8 +24,9 @@ default:
 # Set up from a clean clone: the pinned Rust toolchain (rustup >= 1.28 reads
 # rust-toolchain.toml), cargo-nextest and cargo-llvm-cov (CI provides both
 # prebuilt), the pinned bun + the locked Nx install, the
-# llmlint tier (best effort; CI's llmlint job installs it itself), and a crate pre-fetch.
-bootstrap: toolchain
+# llmlint tier (best effort; CI's llmlint job installs it itself), the pinned
+# cargo-prune-superseded `pool-maintenance` runs, and a crate pre-fetch.
+bootstrap: toolchain install-prune-superseded
     sh scripts/install-nextest.sh
     @cargo llvm-cov --version >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked
     bash scripts/bun.sh ensure
@@ -30,6 +34,23 @@ bootstrap: toolchain
     just setup-workflows
     @[ -n "${CI:-}" ] || bash scripts/setup-llmlint.sh
     cargo fetch --locked
+
+# Install the pinned cargo-prune-superseded, unless that release is already the one on PATH.
+install-prune-superseded:
+    @[ "$(cargo-prune-superseded --version 2>/dev/null)" = "cargo-prune-superseded {{ prune_superseded_version }}" ] || cargo install --locked cargo-prune-superseded --version {{ prune_superseded_version }}
+
+# Warm-pool maintenance onevcs runs in this clone's idle slots (onevcs.toml): drop
+# each unit's superseded builds older than 2 days from every cargo target dir
+# (.cargo/config.toml's `target`; llvm-cov-target lives inside it), keeping each
+# unit's newest build. Its pass time is budgeted in pool-maintenance/budgets.yaml.
+pool-maintenance:
+    cargo-prune-superseded --keep-within 2d target
+
+# Check the pool-maintenance pass-time budget (pool-maintenance/budgets.yaml). It
+# builds the workspace twice, so `check` never runs it: CI runs it on the release
+# PR only, after the gate.
+pool-maintenance-budget:
+    bash scripts/nx run pool-maintenance:budgets-host
 
 # Locked, private workflow-tooling dependencies (no product dependency).
 setup-workflows:
@@ -40,16 +61,33 @@ toolchain:
     rustup toolchain install
 
 # Full quality gate: format check, clippy (-D warnings), build, every project's
-# tests (unit, offline e2e, the compiled no-op live suites) under coverage, and
-# the 95% line-coverage floor over their union. `just check all` sweeps everything.
+# tests (unit, offline e2e, the compiled no-op live suites) under coverage, the
+# 95% line-coverage floor over their union, and every project's onebudgetspec
+# `budgets` target, then the root budgets.yaml when there is one. Host-labelled
+# budgets (`budgets-host`) are never part of it. `just check all` sweeps everything.
 check tier="affected":
     #!/usr/bin/env bash
     set -euo pipefail
     case {{ quote(tier) }} in
-        affected) base="$(bash scripts/nx-base.sh)"; exec bash scripts/nx affected --base="$base" -t format-check lint build test coverage budgets ;;
-        all) exec bash scripts/nx run-many --all -t format-check lint build test coverage budgets ;;
+        affected) base="$(bash scripts/nx-base.sh)"; bash scripts/nx affected --base="$base" -t format-check lint build test coverage budgets ;;
+        all) bash scripts/nx run-many --all -t format-check lint build test coverage budgets ;;
         *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
     esac
+    [ ! -f budgets.yaml ] || "$(bash scripts/bun.sh path)" x onebudgetspec check budgets.yaml
+
+# The onebudgetspec budgets `check` runs, alone at its tier: every project's
+# `budgets` target, then the root budgets.yaml when there is one. Host-labelled
+# budgets are not among them: the only one, the pool-maintenance pass, builds the
+# workspace twice and runs on the release PR only (`pool-maintenance-budget`).
+budgets tier="affected":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case {{ quote(tier) }} in
+        affected) base="$(bash scripts/nx-base.sh)"; bash scripts/nx affected --base="$base" -t budgets ;;
+        all) bash scripts/nx run-many --all -t budgets ;;
+        *) printf "unknown tier '%s' — use 'affected' (the default) or 'all'\n" {{ quote(tier) }} >&2; exit 1 ;;
+    esac
+    [ ! -f budgets.yaml ] || "$(bash scripts/bun.sh path)" x onebudgetspec check budgets.yaml
 
 # The test targets alone (each writes its coverage profiles; no floor).
 test tier="affected":

@@ -16,6 +16,9 @@
       "{workspaceRoot}/nx.json",
       "{workspaceRoot}/package.json",
       "{workspaceRoot}/bun.lock"
+    ],
+    "production": [
+      "default"
     ]
   },
   "targetDefaults": {
@@ -42,6 +45,24 @@
       "cache": false
     },
     "coverage": {
+      "cache": false
+    },
+    "budgets": {
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/**/*",
+        "^production",
+        {
+          "dependentTasksOutputFiles": "**/telemetry/*.json"
+        },
+        {
+          "externalDependencies": [
+            "@onebudgetspec/cli"
+          ]
+        }
+      ]
+    },
+    "budgets-host": {
       "cache": false
     }
   }

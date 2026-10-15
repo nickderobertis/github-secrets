@@ -23,6 +23,12 @@
 //      env value from a secret, and no workflow anywhere sets that key to a
 //      literal (env or a `KEY=` assignment in a script). That key name equals
 //      the live suite's own SANDBOX_REPO_ENV, so the two cannot drift apart.
+//   7. The pool-maintenance budget (it builds the workspace twice) runs only on
+//      the release PR, after the gate: ci.yml:pool-maintenance-budget needs
+//      `check`, chooses the tier with scripts/ci-gate-tier.mjs (which picks `all`
+//      for the release PR alone, pinned by its own test), guards every later step
+//      on that tier being `all`, and runs `just pool-maintenance-budget`; no other
+//      step in any workflow runs that recipe or the `budgets-host` target.
 //
 // Usage: bun tools/check-workflow-contract.mjs [--root <dir>]
 // Exit status: 0 (quiet) when the contract holds; 1 with each breach printed; 2
@@ -62,6 +68,10 @@ const SANDBOX_REPO_SECRET = `\${{ secrets.${SANDBOX_REPO_KEY} }}`;
 const SECRET_EXPR = /^\$\{\{\s*secrets\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}$/;
 // `just test-live` itself, not `just test-live-bitwarden`.
 const RUNS_LIVE_GITHUB = /\bjust\s+test-live(?![\w-])/;
+// The release-PR-only pool-maintenance budget, by recipe or by Nx target.
+const RUNS_POOL_BUDGET = /\bjust\s+pool-maintenance-budget\b|\bbudgets-host\b/;
+const TIER_RUN = "bun scripts/ci-gate-tier.mjs";
+const RELEASE_TIER = "steps.tier.outputs.tier == 'all'";
 
 /** The contexts a job reports: `name` or job id, expanded over an `os` matrix. */
 function contextsOf(id, job) {
@@ -312,6 +322,32 @@ export function checkContract(root) {
       }
     }
   }
+  // The pool-maintenance budget: release PR only, after the gate.
+  const budgetJob = ci?.jobs?.["pool-maintenance-budget"];
+  if (!budgetJob) errors.push("ci.yml has no pool-maintenance-budget job.");
+  else {
+    const steps = budgetJob.steps ?? [];
+    const tierAt = steps.findIndex((st) => st.id === "tier" && st.run === TIER_RUN);
+    if (![budgetJob.needs ?? []].flat().includes("check")) errors.push("ci.yml:pool-maintenance-budget must need `check`, so the budget runs after the gate.");
+    if (tierAt < 0) errors.push(`ci.yml:pool-maintenance-budget must choose the tier with a step \`id: tier\`, \`run: ${TIER_RUN}\`.`);
+    else {
+      for (const st of steps.slice(tierAt + 1)) {
+        if (st.if !== RELEASE_TIER) errors.push(`ci.yml:pool-maintenance-budget step '${st.name ?? st.uses ?? st.run}' must be guarded by \`if: ${RELEASE_TIER}\`.`);
+      }
+      if (!steps.slice(tierAt + 1).some((st) => RUNS_POOL_BUDGET.test(String(st.run ?? "")))) {
+        errors.push("ci.yml:pool-maintenance-budget must run `just pool-maintenance-budget` after choosing the tier.");
+      }
+    }
+  }
+  for (const [file, wf] of Object.entries(workflows)) {
+    for (const [id, job] of Object.entries(wf.jobs ?? {})) {
+      if (file === "ci.yml" && id === "pool-maintenance-budget") continue;
+      if ((job.steps ?? []).some((st) => RUNS_POOL_BUDGET.test(String(st.run ?? "")))) {
+        errors.push(`${file}:${id} runs the pool-maintenance budget; only ci.yml:pool-maintenance-budget may, on the release PR.`);
+      }
+    }
+  }
+
   // The llmlint job installs oneharness.toml's primary harness.
   const HARNESS_PACKAGES = { codex: "@openai/codex", "claude-code": "@anthropic-ai/claude-code" };
   let primary;

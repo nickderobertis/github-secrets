@@ -146,6 +146,10 @@ delegate to Nx (`scripts/nx` runs it on the pinned toolchain) and take a tier:
   target at the same tier. The affected tier keys off `NX_BASE` (a plain ref
   name or SHA that resolves — anything else is refused before a target runs) or
   else `git merge-base origin/master HEAD`.
+- Pool maintenance: `onevcs.toml` has onevcs run `just pool-maintenance`
+  (the `cargo-prune-superseded` release `bootstrap` pins, 2-day window over
+  `target`) in this clone's idle warm-pool slots. Its pass-time budget builds
+  twice, so only the release PR runs it, after the gate.
 - Outside the gate: `just test-live*` (real services; never needed for the
   gate), `just supply-chain` and `just msrv` (own CI jobs; the MSRV is 1.86, the
   floor the locked graph needs), `just lint-llm*` (the judged tier), and
@@ -169,6 +173,7 @@ nested `AGENTS.md` for its own rules.
 | `gh-secrets-bench` | `benches` | `type:bench` | informational benchmarks |
 | `scripts` | `scripts` | `type:tooling` | the repo's scripts (toolchain, gate, installers) and their tests |
 | `coverage` | `scripts/coverage` | `type:tooling` | the coverage driver and its end-to-end test |
+| `pool-maintenance` | `pool-maintenance` | `type:tooling` | the pool-maintenance pass-time budget (release PR only) and its measurement |
 | `workspace` | `tools` | `type:workspace` | supply chain, reconciling checks over root and cross-project facts |
 | `coverage-aggregate` | `tools/coverage-aggregate` | `type:workspace` | the coverage gate: merges every crate's profiles, enforces the floor |
 | `github-workflows` | `.github` | `type:tooling` | macOS routing (release-only classifier, carriers), workflow-graph proofs, Mac scheduling budgets |

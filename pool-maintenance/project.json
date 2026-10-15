@@ -1,0 +1,39 @@
+{
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "name": "pool-maintenance",
+  "//": "The budget on how long one pass of the declared pool maintenance (onevcs.toml -> `just pool-maintenance`) takes: budgets.yaml and measure.sh, which exists only for it, with measure.sh's end-to-end test. lint and test are cheap and run with every change that reaches the project; the budget builds the workspace twice, so it sits only in the standard `budgets-host` target, which neither `just check` nor `just budgets` selects: CI runs it only on the release PR, after the gate.",
+  "projectType": "library",
+  "tags": [
+    "type:tooling"
+  ],
+  "targets": {
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bash -n pool-maintenance/measure.sh"
+      },
+      "inputs": [
+        "default"
+      ]
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bun test --timeout 600000 ./pool-maintenance"
+      },
+      "cache": false,
+      "//": "Uncached: it runs the justfile's pool-maintenance and install-prune-superseded recipes, which live outside this project's inputs."
+    },
+    "budgets-host": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "bunx onebudgetspec check pool-maintenance/budgets.yaml --label host"
+      }
+    }
+  },
+  "namedInputs": {
+    "default": [
+      "{projectRoot}/**/*"
+    ]
+  }
+}
