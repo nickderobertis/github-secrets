@@ -149,7 +149,7 @@ delegate to Nx (`scripts/nx` runs it on the pinned toolchain) and take a tier:
 - Pool maintenance: `onevcs.toml` has onevcs run `just pool-maintenance`
   (the `cargo-prune-superseded` release `bootstrap` pins, 2-day window over
   `target`) in this clone's idle warm-pool slots. Its pass-time budget builds
-  twice, so only the release PR runs it (`pool-maintenance/AGENTS.md`).
+  twice, so only the release PR runs it, after the gate.
 - Outside the gate: `just test-live*` (real services; never needed for the
   gate), `just supply-chain` and `just msrv` (own CI jobs; the MSRV is 1.86, the
   floor the locked graph needs), `just lint-llm*` (the judged tier), and

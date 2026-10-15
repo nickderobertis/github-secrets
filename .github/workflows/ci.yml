@@ -311,12 +311,6 @@ jobs:
         if: steps.tier.outputs.tier == 'all'
         run: just toolchain
 
-      - name: Install cargo-nextest + cargo-llvm-cov
-        if: steps.tier.outputs.tier == 'all'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest,cargo-llvm-cov
-
       - name: Bootstrap
         if: steps.tier.outputs.tier == 'all'
         run: just bootstrap

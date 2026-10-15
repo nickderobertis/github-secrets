@@ -200,3 +200,23 @@ test("a Mac carrier without steps is reported, not crashed on", () => {
   expect(errors.join("\n")).toContain("ci.yml:check-macos reports a fixed context but needs 'policy', which reports none.");
   expect(errors.join("\n")).toContain("ci.yml:check-macos must invoke the production Mac result command.");
 });
+
+test("the pool-maintenance budget job losing its gate dependency is caught", () => {
+  const errors = mutated("ci.yml", "  pool-maintenance-budget:\n    needs: check\n", "  pool-maintenance-budget:\n    needs: policy\n");
+  expect(errors.join("\n")).toContain("ci.yml:pool-maintenance-budget must need `check`");
+});
+
+test("the pool-maintenance budget running outside the release-PR tier is caught", () => {
+  const errors = mutated("ci.yml", "      - name: Pool maintenance budget\n        if: steps.tier.outputs.tier == 'all'\n", "      - name: Pool maintenance budget\n");
+  expect(errors.join("\n")).toContain("step 'Pool maintenance budget' must be guarded by `if: steps.tier.outputs.tier == 'all'`");
+});
+
+test("the pool-maintenance budget job no longer running the budget is caught", () => {
+  const errors = mutated("ci.yml", "        run: just pool-maintenance-budget\n", "        run: echo skipped\n");
+  expect(errors.join("\n")).toContain("must run `just pool-maintenance-budget` after choosing the tier");
+});
+
+test("another job running the pool-maintenance budget is caught", () => {
+  const errors = mutated("ci.yml", "          just test-live\n", "          just test-live\n          just pool-maintenance-budget\n");
+  expect(errors.join("\n")).toContain("ci.yml:live-e2e runs the pool-maintenance budget");
+});

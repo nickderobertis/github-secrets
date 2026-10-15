@@ -113,9 +113,9 @@ removed=$(wc -l <"$OUT/removed.txt")
 ordinary=$(wc -l <"$OUT/ordinary.txt")
 ordinary_kept=$(LC_ALL=C comm -12 "$OUT/ordinary.txt" "$OUT/after-pass.txt" | wc -l)
 echo "measure: alternative build created $(wc -l <"$OUT/alternative.txt") entries; the timed pass removed $removed of them; ordinary entries before/after: $ordinary/$ordinary_kept (lists in $OUT)" >&2
-[ "$removed" -gt 0 ] || fail "the timed pass removed nothing; the workload did not supersede any build."
-[ -s "$OUT/removed-not-alternative.txt" ] && fail "the timed pass removed entries the alternative build did not create (see $OUT/removed-not-alternative.txt)."
-[ "$ordinary_kept" -eq "$ordinary" ] || fail "the timed pass did not keep every ordinary entry (see $OUT/ordinary.txt)."
+[ "$removed" -gt 0 ] || fail "the timed pass removed nothing, so the backdated alternative build was not superseded; check that ALTERNATIVE in $0 still changes metadata hashes and that $OUT/alternative.txt's entries are older than 2 days, then re-run 'just pool-maintenance-budget'."
+[ -s "$OUT/removed-not-alternative.txt" ] && fail "the timed pass removed entries the alternative build did not create (listed in $OUT/removed-not-alternative.txt); if they predate step (b), the backdating made them superseded, so fix the stamp in $0; otherwise report the list against the cargo-prune-superseded release the justfile pins. Then re-run 'just pool-maintenance-budget'."
+[ "$ordinary_kept" -eq "$ordinary" ] || fail "the timed pass removed ordinary-build entries (compare $OUT/ordinary.txt with $OUT/after-pass.txt); a newest build was pruned, so report those entries against the cargo-prune-superseded release the justfile pins, then re-run 'just pool-maintenance-budget'."
 
 bun -e '
   const fs = require("fs");
