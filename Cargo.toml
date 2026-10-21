@@ -67,7 +67,7 @@ anyhow = "1.0"
 argon2 = "0.5"
 assert_cmd = "2.0"
 base64 = "0.22"
-chacha20poly1305 = "0.10"
+chacha20poly1305 = "0.11"
 clap = { version = "4.5", features = ["derive", "env"] }
 # Engine micro-benchmarks (`benches/benches/engine.rs`). default-features off
 # keeps the plotters/gnuplot/rayon stack out of the build; `cargo_bench_support`
