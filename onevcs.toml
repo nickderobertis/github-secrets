@@ -12,9 +12,11 @@ schema_version = 2
 command = ["just", "pool-maintenance"]
 timeout = "30m"
 
+# llmlint: ignore-block[changed_behavior_has_e2e] this declaration adds no behavior to this repository: onevcs reads and validates [policy] from the publication checkout's base, so it is proven by onevcs's own tests and `onevcs rules check`, and no code here reads it to test.
 [policy]
 publication = "change-auto"
 approvals = "none"
 
 [policy.checks]
 wait_seconds = 6600  # recorded max 5100 s (run 38763641857) + 25% margin
+# llmlint: ignore-end[changed_behavior_has_e2e]
