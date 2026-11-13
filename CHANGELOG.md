@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.6](https://github.com/nickderobertis/github-secrets/compare/v1.0.5...v1.0.6) (2026-11-13)
+
+
+### Bug Fixes
+
+* **test:** locate the gh-secrets binary under the current cargo layout ([#78](https://github.com/nickderobertis/github-secrets/issues/78)) ([4c31d28](https://github.com/nickderobertis/github-secrets/commit/4c31d2862165a0f42be50a8a4466a5f71811a02d))
+
 ## [1.0.5](https://github.com/nickderobertis/github-secrets/compare/v1.0.4...v1.0.5) (2026-10-13)
 
 
