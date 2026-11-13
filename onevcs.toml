@@ -6,8 +6,15 @@
 # modified more than 2 days ago, and keeps each unit's newest build plus every build
 # modified within those 2 days, so a slot's rebuilds stay warm. How long one pass takes
 # is budgeted in pool-maintenance/budgets.yaml.
-schema_version = 1
+schema_version = 2
 
 [pool.maintain]
 command = ["just", "pool-maintenance"]
 timeout = "30m"
+
+[policy]
+publication = "change-auto"
+approvals = "none"
+
+[policy.checks]
+wait_seconds = 6600  # recorded max 5100 s (run 38763641857) + 25% margin
