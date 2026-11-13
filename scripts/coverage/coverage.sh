@@ -115,10 +115,10 @@ case "$STEP" in
       exec cargo nextest run -p "$CRATE" --locked
     fi
     require llvm-cov
-    # The suites that spawn the binary find it beside their own test executables,
-    # i.e. in target/llvm-cov-target; build the instrumented copy there first. A
-    # no-op when it is already fresh, so concurrent crates never relink it under
-    # each other. Its one `--version` run adds a profile covering only the
+    # The suites that spawn the binary look for it in the target dir their own
+    # test executables were built in, i.e. target/llvm-cov-target; build the
+    # instrumented copy there first. A no-op when it is already fresh, so
+    # concurrent crates never relink it under each other. Its one `--version` run adds a profile covering only the
     # argument parsing that every journey executes anyway.
     if [ "$CRATE" != "gh-secrets" ]; then
       if ! out="$(cargo llvm-cov --no-report run -p gh-secrets --bin gh-secrets --locked -- --version 2>&1)"; then

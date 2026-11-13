@@ -32,6 +32,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use std::path::Path;
+
 use assert_cmd::Command;
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -191,7 +193,7 @@ impl BwLiveSession {
     /// Passing a *fresh* (unauthenticated) dir makes gh-secrets perform the
     /// full cold path itself: `bw login --apikey` → unlock → sync → fetch.
     pub fn cmd_in_appdata(&self, appdata: &std::path::Path) -> Command {
-        let mut c = Command::cargo_bin("gh-secrets").expect("locate gh-secrets bin");
+        let mut c = gh_secrets_cmd();
         c.current_dir(self.dir.path())
             .env("GH_SECRETS_HOME", self.home.path())
             .env("BITWARDENCLI_APPDATA_DIR", appdata)
@@ -329,4 +331,38 @@ fn bw_checked(appdata: &TempDir, args: &[&str], env: &[(&str, &str)]) -> String 
         String::from_utf8_lossy(&out.stderr).trim()
     );
     String::from_utf8(out.stdout).expect("bw stdout is UTF-8")
+}
+
+/// A `Command` for the `gh-secrets` binary this run built.
+///
+/// This crate has no Cargo edge to `gh-secrets` (it spawns the binary and never
+/// links the library), so cargo sets no `CARGO_BIN_EXE_gh-secrets` for it. Since
+/// Rust 1.100 the test executable no longer sits beside the binary either (it is
+/// built under `<target>/<profile>/build/<pkg>/<hash>/out/`), so `assert_cmd`'s
+/// `Command::cargo_bin` fallback cannot find it. Instead, take the nearest
+/// ancestor of this test executable, inside the run's target dir, that holds the
+/// binary: `<target>/<profile>/` under both layouts, and under `cargo llvm-cov`
+/// the instrumented copy in `target/llvm-cov-target`. The test target's
+/// `dependsOn gh-secrets:build` (and `scripts/coverage/coverage.sh`) builds it.
+pub fn gh_secrets_cmd() -> Command {
+    let target = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .parent()
+        .expect("CARGO_TARGET_TMPDIR has a parent (the target dir)");
+    let exe = std::env::current_exe().expect("locate the test executable");
+    let name = format!("gh-secrets{}", std::env::consts::EXE_SUFFIX);
+    let bin = exe
+        .ancestors()
+        .skip(1)
+        .take_while(|dir| dir.starts_with(target))
+        .map(|dir| dir.join(&name))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| {
+            panic!(
+                "no {name} binary under {} on the way up from {}; build it first: \
+                 'cargo build -p gh-secrets' (or run the suite through 'just test')",
+                target.display(),
+                exe.display()
+            )
+        });
+    Command::new(bin)
 }

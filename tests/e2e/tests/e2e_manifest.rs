@@ -69,7 +69,7 @@ impl ManifestHarness {
     }
 
     fn cmd(&self) -> Command {
-        let mut c = Command::cargo_bin("gh-secrets").expect("locate gh-secrets bin");
+        let mut c = common::gh_secrets_cmd();
         c.current_dir(self.dir.path())
             .env(
                 "GH_SECRETS_HOME",

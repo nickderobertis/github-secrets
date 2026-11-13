@@ -4,6 +4,8 @@
 // every item — silence `dead_code` so partial use doesn't produce warnings.
 #![allow(dead_code)]
 
+use std::path::Path;
+
 use assert_cmd::Command;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
@@ -28,7 +30,7 @@ impl E2eHarness {
     /// A fresh `Command` for the binary with state and API base wired up to
     /// this harness. Spawn one per CLI invocation so env tweaks don't leak.
     pub fn cmd(&self) -> Command {
-        let mut c = Command::cargo_bin("gh-secrets").expect("locate gh-secrets bin");
+        let mut c = gh_secrets_cmd();
         c.env("GH_SECRETS_HOME", self.home.path())
             .env("GH_SECRETS_API_BASE", self.server.uri());
         c
@@ -97,4 +99,38 @@ pub fn declared_credential_envs(source: &str) -> Vec<String> {
 /// PUT and asserts on the request shape, not the ciphertext.
 pub fn fake_pubkey_b64() -> String {
     B64.encode([42u8; 32])
+}
+
+/// A `Command` for the `gh-secrets` binary this run built.
+///
+/// This crate has no Cargo edge to `gh-secrets` (it spawns the binary and never
+/// links the library), so cargo sets no `CARGO_BIN_EXE_gh-secrets` for it. Since
+/// Rust 1.100 the test executable no longer sits beside the binary either (it is
+/// built under `<target>/<profile>/build/<pkg>/<hash>/out/`), so `assert_cmd`'s
+/// `Command::cargo_bin` fallback cannot find it. Instead, take the nearest
+/// ancestor of this test executable, inside the run's target dir, that holds the
+/// binary: `<target>/<profile>/` under both layouts, and under `cargo llvm-cov`
+/// the instrumented copy in `target/llvm-cov-target`. The test target's
+/// `dependsOn gh-secrets:build` (and `scripts/coverage/coverage.sh`) builds it.
+pub fn gh_secrets_cmd() -> Command {
+    let target = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .parent()
+        .expect("CARGO_TARGET_TMPDIR has a parent (the target dir)");
+    let exe = std::env::current_exe().expect("locate the test executable");
+    let name = format!("gh-secrets{}", std::env::consts::EXE_SUFFIX);
+    let bin = exe
+        .ancestors()
+        .skip(1)
+        .take_while(|dir| dir.starts_with(target))
+        .map(|dir| dir.join(&name))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| {
+            panic!(
+                "no {name} binary under {} on the way up from {}; build it first: \
+                 'cargo build -p gh-secrets' (or run the suite through 'just test')",
+                target.display(),
+                exe.display()
+            )
+        });
+    Command::new(bin)
 }
