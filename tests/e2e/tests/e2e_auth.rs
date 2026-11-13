@@ -52,7 +52,7 @@ impl AuthHarness {
     /// explicitly. `current_dir` is the working dir so dotenv auto-load sees
     /// the files we write there.
     fn cmd(&self) -> Command {
-        let mut c = Command::cargo_bin("gh-secrets").expect("locate gh-secrets bin");
+        let mut c = common::gh_secrets_cmd();
         c.current_dir(self.dir.path())
             .env("GH_SECRETS_HOME", self.dir.path().join("home"))
             .env("GH_SECRETS_API_BASE", self.server.uri())
@@ -346,6 +346,55 @@ async fn e2e_vault_requires_the_right_passphrase() {
         .assert()
         .failure()
         .stderr(contains("could not decrypt"));
+}
+
+/// A vault this build cannot read — written by a newer format version, sealed
+/// under a KDF it does not know, or with a damaged data section — fails with an
+/// error naming the problem and the file, never a panic and never the value.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2e_unreadable_vault_names_the_problem() {
+    let h = AuthHarness::new().await;
+    h.cmd()
+        .args(["store", "set", "FOO", "vault-e2e-secret-value"])
+        .assert()
+        .success();
+    let vault = h.vault_file();
+    let pristine: serde_json::Value =
+        serde_json::from_slice(&fs::read(&vault).unwrap()).expect("vault.json is JSON");
+
+    let mut newer_version = pristine.clone();
+    newer_version["version"] = json!(2);
+    let mut unknown_kdf = pristine.clone();
+    unknown_kdf["kdf"]["algorithm"] = json!("scrypt");
+    // The data section sealed under the wrong key: the passphrase still unwraps
+    // the data key, but the data itself no longer decrypts.
+    let mut damaged_data = pristine.clone();
+    damaged_data["data"] = pristine["wrapped_key"].clone();
+
+    for (tampered, expected) in [
+        (newer_version, "has unsupported vault version 2"),
+        (unknown_kdf, "unsupported vault KDF 'scrypt'"),
+        (
+            damaged_data,
+            "is corrupt: the data section does not decrypt",
+        ),
+    ] {
+        // llmlint: ignore[tests_mirror_real_usage] no CLI command writes an unreadable vault, so editing vault.json is the only way to reach the states a user meets after a newer gh-secrets or disk damage touches it; every assertion is on the CLI's observable output.
+        fs::write(&vault, serde_json::to_vec(&tampered).unwrap()).unwrap();
+        h.cmd()
+            .args(["store", "list"])
+            .assert()
+            .failure()
+            .stderr(contains(expected).and(contains("vault-e2e-secret-value").not()));
+    }
+
+    // The untouched vault still reads, so each failure above was the edit's.
+    fs::write(&vault, serde_json::to_vec(&pristine).unwrap()).unwrap();
+    h.cmd()
+        .args(["store", "list"])
+        .assert()
+        .success()
+        .stdout(contains("FOO"));
 }
 
 /// When no vault exists at all, credential-consuming commands need no

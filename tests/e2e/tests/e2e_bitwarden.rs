@@ -123,7 +123,7 @@ impl Harness {
     /// The binary with an isolated config root, the fake `bw` first on PATH,
     /// and no inherited Bitwarden credentials.
     fn cmd(&self) -> Command {
-        let mut c = Command::cargo_bin("gh-secrets").expect("locate gh-secrets bin");
+        let mut c = common::gh_secrets_cmd();
         c.current_dir(self.dir.path())
             .env("GH_SECRETS_HOME", self.dir.path().join("home"))
             .env("GH_SECRETS_PASSPHRASE", PASSPHRASE)

@@ -50,7 +50,10 @@ beforeAll(() => {
   write("tests/e2e/Cargo.toml", `[package]\nname = "app-e2e"\nversion = "0.1.0"\nedition = "2021"\n`);
   // Never called: proves sources under tests/ stay out of the report.
   write("tests/e2e/src/lib.rs", `pub fn unused_helper(x: u32) -> u32 {\n    let y = x + 1;\n    y * 2\n}\n`);
-  write("tests/e2e/tests/run.rs", `#[test]\nfn binary_prints_banner() {\n    let exe = std::env::current_exe().unwrap();\n    let bin = exe.parent().unwrap().parent().unwrap().join("gh-secrets");\n    let out = std::process::Command::new(bin).output().unwrap();\n    assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), "banner:hi");\n}\n`);
+  // Finds the binary the way the real suites' harnesses do: the nearest ancestor of
+  // the test executable that holds it (since Rust 1.100 the test executable is
+  // built under <profile>/build/<pkg>/<hash>/out, not <profile>/deps).
+  write("tests/e2e/tests/run.rs", `#[test]\nfn binary_prints_banner() {\n    let exe = std::env::current_exe().unwrap();\n    let bin = exe.ancestors().skip(1).map(|d| d.join("gh-secrets")).find(|c| c.is_file()).unwrap();\n    let out = std::process::Command::new(bin).output().unwrap();\n    assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), "banner:hi");\n}\n`);
   mkdirSync(join(ws, "scripts/coverage"), { recursive: true });
   copyFileSync(join(REPO, "scripts/coverage/coverage.sh"), join(ws, "scripts/coverage/coverage.sh"));
   ok("cargo", ["generate-lockfile", "--offline"], { cwd: ws });
