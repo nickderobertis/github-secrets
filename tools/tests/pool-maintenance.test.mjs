@@ -26,7 +26,7 @@ const pinned = () => readFileSync(join(REPO, "justfile"), "utf8").match(/^prune_
 
 test.skipIf(isWindows)("onevcs.toml's command runs a recipe the justfile declares", () => {
   const declared = Bun.TOML.parse(readFileSync(join(REPO, "onevcs.toml"), "utf8"));
-  expect(declared.schema_version).toBe(1);
+  expect(declared.schema_version).toBe(2);
   const [tool, recipe, ...rest] = declared.pool.maintain.command;
   expect([tool, rest]).toEqual(["just", []]);
   expect(ok("just", ["--show", recipe], { cwd: work })).toContain("cargo-prune-superseded --keep-within 2d target");
