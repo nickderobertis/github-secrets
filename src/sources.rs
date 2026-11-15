@@ -995,15 +995,22 @@ mod tests {
     #[test]
     fn candidate_lists_are_capped() {
         let vault: Vec<Value> = (0..25)
-            .map(|i| login(&format!("id-{i}"), &format!("MY_TOKEN {i}"), "v"))
+            .map(|i| {
+                login(
+                    &format!("id-{i}"),
+                    &format!("MY_TOKEN {i}"),
+                    &format!("capped-value-{i}"),
+                )
+            })
             .collect();
-        let src = session_source(vault);
+        let src = session_source(vault.clone());
         let err = chain(
             &src.fetch(&[secret("MY_TOKEN", None)], &HashMap::new())
                 .unwrap_err(),
         );
         assert_eq!(err.matches("  (id-").count(), 20, "{err}");
         assert!(err.contains("and 5 more"), "{err}");
+        assert_no_value(&err, &vault);
     }
 
     #[test]
