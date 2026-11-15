@@ -224,7 +224,32 @@ impl BwLiveSession {
         notes: &str,
         custom_field: (&str, &str),
     ) -> String {
-        let name = self.item_name(leaf);
+        self.seed_named_login(
+            &self.item_name(leaf),
+            username,
+            password,
+            notes,
+            custom_field,
+        )
+        .0
+    }
+
+    /// Like [`seed_login`](Self::seed_login) but under an exact `name` (which
+    /// must still start with `prefix` to stay isolated), returning the name
+    /// and the id Bitwarden assigned.
+    pub fn seed_named_login(
+        &self,
+        name: &str,
+        username: &str,
+        password: &str,
+        notes: &str,
+        custom_field: (&str, &str),
+    ) -> (String, String) {
+        assert!(
+            name.starts_with(&self.prefix),
+            "seeded names must carry the session prefix"
+        );
+        let name = name.to_string();
         let item = json!({
             "organizationId": null,
             "collectionIds": null,
@@ -251,8 +276,8 @@ impl BwLiveSession {
             .as_str()
             .expect("created item has an id")
             .to_string();
-        self.created_ids.lock().unwrap().push(id);
-        name
+        self.created_ids.lock().unwrap().push(id.clone());
+        (name, id)
     }
 }
 

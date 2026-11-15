@@ -14,7 +14,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::manifest::{BitwardenSourceConfig, ManifestSecret};
+use crate::manifest::{BitwardenSourceConfig, ManifestSecret, SourceKind, SourceRef};
 use crate::vault;
 
 /// A plaintext value retrieved from a source. Callers MUST treat this as
@@ -24,6 +24,9 @@ use crate::vault;
 pub struct FetchedSecret {
     pub name: String,
     pub value: String,
+    /// What this fetch resolved the secret's identifier to, for the engine to
+    /// save in the sync state; `None` for a source that keeps no ref.
+    pub source_ref: Option<SourceRef>,
 }
 
 /// Identity metadata for one item available in a source. Carries no secret
@@ -38,7 +41,15 @@ pub struct SourceItem {
 /// Anything that can hand the orchestrator the current values for a list of
 /// manifest secrets.
 pub trait SecretSource {
-    fn fetch(&self, secrets: &[ManifestSecret]) -> Result<Vec<FetchedSecret>>;
+    /// Fetch every secret's current value. `saved` holds the refs earlier
+    /// fetches returned, keyed by secret `name`; a source that keeps refs may
+    /// use one to skip re-resolving an identifier, and must itself decide
+    /// whether it is still valid.
+    fn fetch(
+        &self,
+        secrets: &[ManifestSecret],
+        saved: &HashMap<String, SourceRef>,
+    ) -> Result<Vec<FetchedSecret>>;
 
     /// Enumerate the items available in the source (e.g. every entry in the
     /// Bitwarden vault, optionally scoped by the source config). Returns
@@ -71,7 +82,11 @@ impl StaticSource {
 }
 
 impl SecretSource for StaticSource {
-    fn fetch(&self, secrets: &[ManifestSecret]) -> Result<Vec<FetchedSecret>> {
+    fn fetch(
+        &self,
+        secrets: &[ManifestSecret],
+        _saved: &HashMap<String, SourceRef>,
+    ) -> Result<Vec<FetchedSecret>> {
         fetch_from_map(&self.values, secrets, "static source")
     }
 
@@ -104,6 +119,7 @@ fn fetch_from_map(
         out.push(FetchedSecret {
             name: s.name.clone(),
             value: value.clone(),
+            source_ref: None,
         });
     }
     Ok(out)
@@ -137,7 +153,11 @@ impl EnvFileSource {
 }
 
 impl SecretSource for EnvFileSource {
-    fn fetch(&self, secrets: &[ManifestSecret]) -> Result<Vec<FetchedSecret>> {
+    fn fetch(
+        &self,
+        secrets: &[ManifestSecret],
+        _saved: &HashMap<String, SourceRef>,
+    ) -> Result<Vec<FetchedSecret>> {
         let values = self.read_values()?;
         fetch_from_map(
             &values,
@@ -171,7 +191,11 @@ impl LocalStoreSource {
 }
 
 impl SecretSource for LocalStoreSource {
-    fn fetch(&self, secrets: &[ManifestSecret]) -> Result<Vec<FetchedSecret>> {
+    fn fetch(
+        &self,
+        secrets: &[ManifestSecret],
+        _saved: &HashMap<String, SourceRef>,
+    ) -> Result<Vec<FetchedSecret>> {
         let values = self.read_values()?;
         fetch_from_map(&values, secrets, "local store")
     }
@@ -479,28 +503,133 @@ impl<C: BwCli> BitwardenSource<C> {
     fn default_field(&self) -> &str {
         self.config.default_field.as_deref().unwrap_or("password")
     }
+
+    /// Resolve `identifier` to one item and fetch it by id, returning the item
+    /// and that id. A saved ref for this identifier is tried first; when it no
+    /// longer fetches the same item, the vault listing (shared across one
+    /// `fetch` through `listing`) is searched for an exact id or name match.
+    /// `bw get item` is only ever handed an id, never a name: given a name it
+    /// does a case-insensitive substring search, which could return the wrong
+    /// item or fail once a similarly named item exists.
+    fn resolve(
+        &self,
+        session: &str,
+        identifier: &str,
+        saved: Option<&SourceRef>,
+        listing: &mut Option<Vec<SourceItem>>,
+    ) -> Result<(Value, String)> {
+        if let Some(r) =
+            saved.filter(|r| r.source() == SourceKind::Bitwarden && r.item() == identifier)
+        {
+            // Any failure means the ref is stale; the error text is never read.
+            if let Ok(item) = self.cli.get_item(session, r.id()) {
+                if saved_ref_still_matches(&item, r) {
+                    return Ok((item, r.id().to_string()));
+                }
+            }
+        }
+        let items = match listing {
+            Some(items) => items,
+            None => listing.insert(
+                self.cli
+                    .list_items(session, None, None)
+                    .context("listing Bitwarden items to find an exact match")?,
+            ),
+        };
+        let id = resolve_exact(items, identifier)?;
+        let item = self.cli.get_item(session, &id)?;
+        Ok((item, id))
+    }
+}
+
+/// Longest candidate list a resolution error prints before "and N more".
+const MAX_LISTED_CANDIDATES: usize = 20;
+
+/// Whether a saved ref still names the item it was resolved to. A ref whose id
+/// equals its identifier was resolved by id, so the id alone must match; any
+/// other was resolved by name, so the item must also still carry that exact
+/// name (a rename, or a hand-edited id pointing elsewhere, makes it stale).
+fn saved_ref_still_matches(item: &Value, saved: &SourceRef) -> bool {
+    let field = |k: &str| item.get(k).and_then(Value::as_str);
+    if field("id") != Some(saved.id()) {
+        return false;
+    }
+    saved.id() == saved.item() || field("name") == Some(saved.item())
+}
+
+/// Pick the one listed item `identifier` names exactly: an item whose id equals
+/// it wins outright, otherwise exactly one item must carry it as its exact
+/// (case-sensitive) name. Errors list candidates by name and id only.
+fn resolve_exact(items: &[SourceItem], identifier: &str) -> Result<String> {
+    if items.iter().any(|i| i.id == identifier) {
+        return Ok(identifier.to_string());
+    }
+    let exact: Vec<&SourceItem> = items.iter().filter(|i| i.name == identifier).collect();
+    match exact.as_slice() {
+        [only] => return Ok(only.id.clone()),
+        [] => {}
+        several => bail!(
+            "{} items match '{identifier}' exactly:{}\nset `item` to the intended item's ID",
+            several.len(),
+            candidate_lines(several)
+        ),
+    }
+    let needle = identifier.to_lowercase();
+    let near: Vec<&SourceItem> = items
+        .iter()
+        .filter(|i| i.name.to_lowercase().contains(&needle))
+        .collect();
+    if near.is_empty() {
+        bail!(
+            "no item is named exactly '{identifier}', and no item matched it; run `gh-secrets source list` to see the available item names and IDs"
+        );
+    }
+    bail!(
+        "no item is named exactly '{identifier}'; candidates:{}\nset `item` to the exact name or the ID of the intended item",
+        candidate_lines(&near)
+    )
+}
+
+fn candidate_lines(items: &[&SourceItem]) -> String {
+    let mut out: String = items
+        .iter()
+        .take(MAX_LISTED_CANDIDATES)
+        .map(|i| format!("\n  {}  ({})", i.name, i.id))
+        .collect();
+    if items.len() > MAX_LISTED_CANDIDATES {
+        out.push_str(&format!(
+            "\n  and {} more",
+            items.len() - MAX_LISTED_CANDIDATES
+        ));
+    }
+    out
 }
 
 impl<C: BwCli> SecretSource for BitwardenSource<C> {
-    fn fetch(&self, secrets: &[ManifestSecret]) -> Result<Vec<FetchedSecret>> {
+    fn fetch(
+        &self,
+        secrets: &[ManifestSecret],
+        saved: &HashMap<String, SourceRef>,
+    ) -> Result<Vec<FetchedSecret>> {
         if secrets.is_empty() {
             return Ok(Vec::new());
         }
         let session = self.ensure_session()?;
+        let mut listing = None;
         let mut out = Vec::with_capacity(secrets.len());
         for s in secrets {
-            let item_id = s.source_item();
-            let item = self
-                .cli
-                .get_item(&session, item_id)
+            let identifier = s.source_item();
+            let (item, id) = self
+                .resolve(&session, identifier, saved.get(&s.name), &mut listing)
                 .with_context(|| format!("fetching '{}' from Bitwarden", s.name))?;
             let field = s.field.as_deref().unwrap_or_else(|| self.default_field());
             let value = extract_field(&item, field).with_context(|| {
-                format!("extracting field '{field}' from Bitwarden item '{item_id}'")
+                format!("extracting field '{field}' from Bitwarden item '{identifier}'")
             })?;
             out.push(FetchedSecret {
                 name: s.name.clone(),
                 value,
+                source_ref: SourceRef::new(SourceKind::Bitwarden, identifier, &id),
             });
         }
         Ok(out)
@@ -611,13 +740,23 @@ mod tests {
         );
     }
 
-    /// Mock CLI that tracks calls so we can assert the source did login/unlock
-    /// in the right order and used the session token for subsequent calls.
+    /// Mock CLI over an in-memory vault. Like the real `bw get item <id>`, it
+    /// answers `get_item` by exact id only, so a test fails if the source ever
+    /// hands it a name. Records every call so tests can assert the sequence.
     struct MockBw {
         status: BwStatus,
-        items: HashMap<String, Value>,
-        listed: Vec<SourceItem>,
+        vault: Vec<Value>,
         calls: RefCell<Vec<String>>,
+    }
+
+    impl MockBw {
+        fn new(status: BwStatus, vault: Vec<Value>) -> Self {
+            Self {
+                status,
+                vault,
+                calls: RefCell::new(Vec::new()),
+            }
+        }
     }
 
     impl BwCli for MockBw {
@@ -641,10 +780,11 @@ mod tests {
             self.calls
                 .borrow_mut()
                 .push(format!("get_item:{identifier}"));
-            self.items
-                .get(identifier)
+            self.vault
+                .iter()
+                .find(|i| i["id"].as_str() == Some(identifier))
                 .cloned()
-                .ok_or_else(|| anyhow!("no mock item '{identifier}'"))
+                .ok_or_else(|| anyhow!("Not found."))
         }
         fn list_items(
             &self,
@@ -657,40 +797,328 @@ mod tests {
                 collection_id.unwrap_or("-"),
                 organization_id.unwrap_or("-")
             ));
-            Ok(self.listed.clone())
+            Ok(self
+                .vault
+                .iter()
+                .map(|i| SourceItem {
+                    name: i["name"].as_str().unwrap_or_default().into(),
+                    id: i["id"].as_str().unwrap_or_default().into(),
+                })
+                .collect())
         }
+    }
+
+    /// A vault login item whose password is `password`.
+    fn login(id: &str, name: &str, password: &str) -> Value {
+        json!({"id": id, "name": name, "login": {"password": password}})
+    }
+
+    fn secret(name: &str, item: Option<&str>) -> ManifestSecret {
+        ManifestSecret {
+            name: name.into(),
+            item: item.map(String::from),
+            field: None,
+            destination_names: Vec::new(),
+        }
+    }
+
+    fn session_source(vault: Vec<Value>) -> BitwardenSource<MockBw> {
+        BitwardenSource::with_cli(
+            BitwardenSourceConfig::default(),
+            MockBw::new(BwStatus::Unlocked, vault),
+            BitwardenCredentials {
+                session: Some("S".into()),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn bw_ref(item: &str, id: &str) -> SourceRef {
+        SourceRef::new(SourceKind::Bitwarden, item, id).unwrap()
+    }
+
+    fn saved_refs(entries: &[(&str, SourceRef)]) -> HashMap<String, SourceRef> {
+        entries
+            .iter()
+            .map(|(n, r)| (n.to_string(), r.clone()))
+            .collect()
+    }
+
+    /// Drains the recorded calls, so a test can assert one fetch at a time.
+    fn take_calls(src: &BitwardenSource<MockBw>) -> Vec<String> {
+        src.cli.calls.take()
+    }
+
+    /// The full error chain, as the CLI prints it.
+    fn chain(err: &anyhow::Error) -> String {
+        format!("{err:#}")
+    }
+
+    fn assert_no_value(err: &str, vault: &[Value]) {
+        for item in vault {
+            let value = item["login"]["password"].as_str().unwrap();
+            assert!(!err.contains(value), "error leaked {value:?}: {err}");
+        }
+    }
+
+    /// The vault from issue #80: the exact item beside two that contain it.
+    fn issue_80_vault() -> Vec<Value> {
+        vec![
+            login("id-alt", "MY_TOKEN (alt)", "alt-value"),
+            login("id-exact", "MY_TOKEN", "exact-value"),
+            login("id-other", "MY_TOKEN (other account)", "other-value"),
+        ]
     }
 
     #[test]
     fn bitwarden_source_logs_in_then_fetches() {
-        let mut items = HashMap::new();
-        items.insert("stripe".to_string(), json!({"login": {"password": "sk"}}));
-        let mock = MockBw {
-            status: BwStatus::Unauthenticated,
-            items,
-            listed: Vec::new(),
-            calls: RefCell::new(Vec::new()),
-        };
+        let mock = MockBw::new(
+            BwStatus::Unauthenticated,
+            vec![login("id-stripe", "stripe", "sk")],
+        );
         std::env::set_var(BW_CLIENTID_ENV, "id");
         std::env::set_var(BW_CLIENTSECRET_ENV, "sec");
         std::env::set_var(BW_PASSWORD_ENV, "pw");
         std::env::remove_var(BW_SESSION_ENV);
         let creds = BitwardenCredentials::from_env();
         let src = BitwardenSource::with_cli(BitwardenSourceConfig::default(), mock, creds);
-        let secrets = vec![ManifestSecret {
-            name: "STRIPE".into(),
-            item: Some("stripe".into()),
-            field: None,
-            destination_names: Vec::new(),
-        }];
-        let got = src.fetch(&secrets).unwrap();
+        let got = src
+            .fetch(&[secret("STRIPE", Some("stripe"))], &HashMap::new())
+            .unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "STRIPE");
         assert_eq!(got[0].value, "sk");
-        let calls = src.cli.calls.borrow().clone();
         assert_eq!(
-            calls,
-            vec!["status", "login", "unlock", "sync", "get_item:stripe"]
+            take_calls(&src),
+            vec![
+                "status",
+                "login",
+                "unlock",
+                "sync",
+                "list_items:-:-",
+                "get_item:id-stripe"
+            ]
+        );
+    }
+
+    #[test]
+    fn exact_name_resolves_beside_names_that_contain_it() {
+        let src = session_source(issue_80_vault());
+        let got = src
+            .fetch(&[secret("MY_TOKEN", None)], &HashMap::new())
+            .unwrap();
+        assert_eq!(got[0].value, "exact-value");
+        assert_eq!(got[0].source_ref, Some(bw_ref("MY_TOKEN", "id-exact")));
+        assert_eq!(
+            take_calls(&src),
+            vec!["list_items:-:-", "get_item:id-exact"]
+        );
+    }
+
+    #[test]
+    fn duplicate_exact_names_fail_naming_both() {
+        let vault = vec![
+            login("id-a", "MY_TOKEN", "value-a"),
+            login("id-b", "MY_TOKEN", "value-b"),
+            login("id-c", "MY_TOKEN (alt)", "value-c"),
+        ];
+        let src = session_source(vault.clone());
+        let err = chain(
+            &src.fetch(&[secret("MY_TOKEN", None)], &HashMap::new())
+                .unwrap_err(),
+        );
+        assert!(err.contains("fetching 'MY_TOKEN' from Bitwarden"), "{err}");
+        assert!(err.contains("2 items match 'MY_TOKEN' exactly"), "{err}");
+        assert!(err.contains("MY_TOKEN  (id-a)"), "{err}");
+        assert!(err.contains("MY_TOKEN  (id-b)"), "{err}");
+        assert!(
+            !err.contains("id-c"),
+            "only exact matches are candidates: {err}"
+        );
+        assert!(
+            err.contains("set `item` to the intended item's ID"),
+            "{err}"
+        );
+        assert_no_value(&err, &vault);
+        // Never fetched a value it could not pin to one item.
+        assert_eq!(take_calls(&src), vec!["list_items:-:-"]);
+    }
+
+    #[test]
+    fn partial_and_case_only_matches_fail_listing_candidates() {
+        let vault = vec![
+            login("id-lower", "my_token", "lower-value"),
+            login("id-alt", "MY_TOKEN (alt)", "alt-value"),
+            login("id-unrelated", "OTHER", "unrelated-value"),
+        ];
+        let src = session_source(vault.clone());
+        let err = chain(
+            &src.fetch(&[secret("TOKEN", Some("MY_TOKEN"))], &HashMap::new())
+                .unwrap_err(),
+        );
+        assert!(err.contains("fetching 'TOKEN' from Bitwarden"), "{err}");
+        assert!(err.contains("no item is named exactly 'MY_TOKEN'"), "{err}");
+        assert!(err.contains("my_token  (id-lower)"), "{err}");
+        assert!(err.contains("MY_TOKEN (alt)  (id-alt)"), "{err}");
+        assert!(!err.contains("id-unrelated"), "{err}");
+        assert!(
+            err.contains("set `item` to the exact name or the ID"),
+            "{err}"
+        );
+        assert_no_value(&err, &vault);
+        assert_eq!(take_calls(&src), vec!["list_items:-:-"]);
+    }
+
+    #[test]
+    fn no_match_at_all_points_at_source_list() {
+        let vault = vec![login("id-1", "OTHER", "other-value")];
+        let src = session_source(vault.clone());
+        let err = chain(
+            &src.fetch(&[secret("MY_TOKEN", None)], &HashMap::new())
+                .unwrap_err(),
+        );
+        assert!(err.contains("no item matched it"), "{err}");
+        assert!(err.contains("gh-secrets source list"), "{err}");
+        assert_no_value(&err, &vault);
+    }
+
+    #[test]
+    fn candidate_lists_are_capped() {
+        let vault: Vec<Value> = (0..25)
+            .map(|i| {
+                login(
+                    &format!("id-{i}"),
+                    &format!("MY_TOKEN {i}"),
+                    &format!("capped-value-{i}"),
+                )
+            })
+            .collect();
+        let src = session_source(vault.clone());
+        let err = chain(
+            &src.fetch(&[secret("MY_TOKEN", None)], &HashMap::new())
+                .unwrap_err(),
+        );
+        assert_eq!(err.matches("  (id-").count(), 20, "{err}");
+        assert!(err.contains("and 5 more"), "{err}");
+        assert_no_value(&err, &vault);
+    }
+
+    #[test]
+    fn id_identifier_wins_over_an_item_named_that_id() {
+        let vault = vec![
+            login("id-target", "Real item", "target-value"),
+            login("id-decoy", "id-target", "decoy-value"),
+        ];
+        let src = session_source(vault);
+        let got = src
+            .fetch(&[secret("TOKEN", Some("id-target"))], &HashMap::new())
+            .unwrap();
+        assert_eq!(got[0].value, "target-value");
+        let saved_ref = got[0].source_ref.clone().unwrap();
+        assert_eq!(saved_ref, bw_ref("id-target", "id-target"));
+        assert_eq!(
+            take_calls(&src),
+            vec!["list_items:-:-", "get_item:id-target"]
+        );
+
+        // Every repeated fetch with the saved ref goes straight to the id.
+        let saved = saved_refs(&[("TOKEN", saved_ref)]);
+        for _ in 0..2 {
+            let got = src
+                .fetch(&[secret("TOKEN", Some("id-target"))], &saved)
+                .unwrap();
+            assert_eq!(got[0].value, "target-value");
+            assert_eq!(got[0].source_ref, Some(bw_ref("id-target", "id-target")));
+            assert_eq!(take_calls(&src), vec!["get_item:id-target"]);
+        }
+    }
+
+    #[test]
+    fn valid_saved_ref_fetches_by_id_without_listing() {
+        let src = session_source(issue_80_vault());
+        let saved = saved_refs(&[("MY_TOKEN", bw_ref("MY_TOKEN", "id-exact"))]);
+        let got = src.fetch(&[secret("MY_TOKEN", None)], &saved).unwrap();
+        assert_eq!(got[0].value, "exact-value");
+        assert_eq!(got[0].source_ref, Some(bw_ref("MY_TOKEN", "id-exact")));
+        assert_eq!(take_calls(&src), vec!["get_item:id-exact"]);
+    }
+
+    #[test]
+    fn stale_saved_refs_fall_back_to_one_listing_and_rewrite_the_ref() {
+        // (case, saved ref): an id that no longer fetches; an id whose item is
+        // now named differently (a hand-edited id pointing elsewhere); a ref
+        // for an identifier the manifest no longer uses. (A ref another source
+        // wrote never reaches a source: it loads as no ref, see `manifest`.)
+        let cases = [
+            (
+                "deleted",
+                bw_ref("MY_TOKEN", "id-gone"),
+                vec!["get_item:id-gone"],
+            ),
+            (
+                "elsewhere",
+                bw_ref("MY_TOKEN", "id-alt"),
+                vec!["get_item:id-alt"],
+            ),
+            ("old identifier", bw_ref("OLD_NAME", "id-alt"), vec![]),
+        ];
+        for (case, stale, first_calls) in cases {
+            let src = session_source(issue_80_vault());
+            let saved = saved_refs(&[("MY_TOKEN", stale)]);
+            let got = src.fetch(&[secret("MY_TOKEN", None)], &saved).unwrap();
+            assert_eq!(got[0].value, "exact-value", "{case}");
+            assert_eq!(
+                got[0].source_ref,
+                Some(bw_ref("MY_TOKEN", "id-exact")),
+                "{case}"
+            );
+            let mut expected: Vec<&str> = first_calls;
+            expected.extend(["list_items:-:-", "get_item:id-exact"]);
+            assert_eq!(take_calls(&src), expected, "{case}");
+        }
+    }
+
+    #[test]
+    fn renamed_item_with_no_exact_match_fails_with_candidates() {
+        // The saved item was renamed; nothing else is named MY_TOKEN exactly.
+        let vault = vec![login("id-exact", "MY_TOKEN (renamed)", "renamed-value")];
+        let src = session_source(vault.clone());
+        let saved = saved_refs(&[("MY_TOKEN", bw_ref("MY_TOKEN", "id-exact"))]);
+        let err = chain(&src.fetch(&[secret("MY_TOKEN", None)], &saved).unwrap_err());
+        assert!(err.contains("no item is named exactly 'MY_TOKEN'"), "{err}");
+        assert!(err.contains("MY_TOKEN (renamed)  (id-exact)"), "{err}");
+        assert_no_value(&err, &vault);
+        assert_eq!(
+            take_calls(&src),
+            vec!["get_item:id-exact", "list_items:-:-"]
+        );
+    }
+
+    #[test]
+    fn several_secrets_share_one_listing() {
+        let mut vault = issue_80_vault();
+        vault.push(login("id-db", "DB_URL", "db-value"));
+        let src = session_source(vault);
+        let got = src
+            .fetch(
+                &[
+                    secret("MY_TOKEN", None),
+                    secret("DATABASE_URL", Some("DB_URL")),
+                    secret("ALT", Some("MY_TOKEN (alt)")),
+                ],
+                &HashMap::new(),
+            )
+            .unwrap();
+        let values: Vec<&str> = got.iter().map(|f| f.value.as_str()).collect();
+        assert_eq!(values, vec!["exact-value", "db-value", "alt-value"]);
+        assert_eq!(
+            take_calls(&src),
+            vec![
+                "list_items:-:-",
+                "get_item:id-exact",
+                "get_item:id-db",
+                "get_item:id-alt"
+            ]
         );
     }
 
@@ -735,14 +1163,7 @@ mod tests {
 
     #[test]
     fn bitwarden_source_accepts_bitwarden_prefixed_aliases() {
-        let mut items = HashMap::new();
-        items.insert("foo".to_string(), json!({"login": {"password": "v"}}));
-        let mock = MockBw {
-            status: BwStatus::Unauthenticated,
-            items,
-            listed: Vec::new(),
-            calls: RefCell::new(Vec::new()),
-        };
+        let mock = MockBw::new(BwStatus::Unauthenticated, vec![login("id-foo", "foo", "v")]);
         // Only the BITWARDEN_* aliases are set; the native BW_* names are unset.
         std::env::remove_var(BW_CLIENTID_ENV);
         std::env::remove_var(BW_CLIENTSECRET_ENV);
@@ -753,18 +1174,20 @@ mod tests {
         std::env::set_var("BITWARDEN_MASTER_PASSWORD", "pw");
         let creds = BitwardenCredentials::from_env();
         let src = BitwardenSource::with_cli(BitwardenSourceConfig::default(), mock, creds);
-        let secrets = vec![ManifestSecret {
-            name: "FOO".into(),
-            item: Some("foo".into()),
-            field: None,
-            destination_names: Vec::new(),
-        }];
-        let got = src.fetch(&secrets).unwrap();
+        let got = src
+            .fetch(&[secret("FOO", Some("foo"))], &HashMap::new())
+            .unwrap();
         assert_eq!(got[0].value, "v");
-        let calls = src.cli.calls.borrow().clone();
         assert_eq!(
-            calls,
-            vec!["status", "login", "unlock", "sync", "get_item:foo"]
+            take_calls(&src),
+            vec![
+                "status",
+                "login",
+                "unlock",
+                "sync",
+                "list_items:-:-",
+                "get_item:id-foo"
+            ]
         );
         std::env::remove_var("BITWARDEN_CLIENT_ID");
         std::env::remove_var("BITWARDEN_CLIENT_SECRET");
@@ -773,52 +1196,24 @@ mod tests {
 
     #[test]
     fn bitwarden_source_skips_login_when_session_override() {
-        let mut items = HashMap::new();
-        items.insert("foo".to_string(), json!({"login": {"password": "v"}}));
-        let mock = MockBw {
-            status: BwStatus::Unlocked,
-            items,
-            listed: Vec::new(),
-            calls: RefCell::new(Vec::new()),
-        };
-        let src = BitwardenSource::with_cli(
-            BitwardenSourceConfig::default(),
-            mock,
-            BitwardenCredentials {
-                session: Some("ABCDEF".into()),
-                ..Default::default()
-            },
-        );
-        let secrets = vec![ManifestSecret {
-            name: "FOO".into(),
-            item: Some("foo".into()),
-            field: None,
-            destination_names: Vec::new(),
-        }];
-        let got = src.fetch(&secrets).unwrap();
+        let src = session_source(vec![login("id-foo", "foo", "v")]);
+        let got = src
+            .fetch(&[secret("FOO", Some("foo"))], &HashMap::new())
+            .unwrap();
         assert_eq!(got[0].value, "v");
-        let calls = src.cli.calls.borrow().clone();
-        // No status/login/unlock/sync — straight to get_item.
-        assert_eq!(calls, vec!["get_item:foo"]);
+        // No status/login/unlock/sync — straight to the lookups.
+        assert_eq!(take_calls(&src), vec!["list_items:-:-", "get_item:id-foo"]);
     }
 
     #[test]
     fn bitwarden_source_lists_available_items_with_scope() {
-        let mock = MockBw {
-            status: BwStatus::Unlocked,
-            items: HashMap::new(),
-            listed: vec![
-                SourceItem {
-                    name: "Stripe API".into(),
-                    id: "id-1".into(),
-                },
-                SourceItem {
-                    name: "GitHub PAT".into(),
-                    id: "id-2".into(),
-                },
+        let mock = MockBw::new(
+            BwStatus::Unlocked,
+            vec![
+                login("id-1", "Stripe API", "v1"),
+                login("id-2", "GitHub PAT", "v2"),
             ],
-            calls: RefCell::new(Vec::new()),
-        };
+        );
         let config = BitwardenSourceConfig {
             collection_id: Some("coll-1".into()),
             organization_id: Some("org-1".into()),
@@ -837,8 +1232,7 @@ mod tests {
         assert_eq!(got[0].name, "Stripe API");
         assert_eq!(got[0].id, "id-1");
         // Session short-circuits auth; the collection/org scope is forwarded.
-        let calls = src.cli.calls.borrow().clone();
-        assert_eq!(calls, vec!["list_items:coll-1:org-1"]);
+        assert_eq!(take_calls(&src), vec!["list_items:coll-1:org-1"]);
     }
 
     #[test]
@@ -849,22 +1243,19 @@ mod tests {
         let src = EnvFileSource { path };
         // `item` maps the secret name onto a different key in the file.
         let got = src
-            .fetch(&[ManifestSecret {
-                name: "DATABASE_URL".into(),
-                item: Some("DB_URL".into()),
-                field: None,
-                destination_names: Vec::new(),
-            }])
+            .fetch(&[secret("DATABASE_URL", Some("DB_URL"))], &HashMap::new())
             .unwrap();
         assert_eq!(got[0].value, "postgres://x");
+        assert_eq!(got[0].source_ref, None);
         // A Bitwarden-style field selector is a config error here.
         let err = src
-            .fetch(&[ManifestSecret {
-                name: "FOO".into(),
-                item: None,
-                field: Some("password".into()),
-                destination_names: Vec::new(),
-            }])
+            .fetch(
+                &[ManifestSecret {
+                    field: Some("password".into()),
+                    ..secret("FOO", None)
+                }],
+                &HashMap::new(),
+            )
             .unwrap_err()
             .to_string();
         assert!(err.contains("has no fields"), "got: {err}");
@@ -884,15 +1275,9 @@ mod tests {
         data.secrets.insert("FOO".into(), "from-vault".into());
         vault::save(&path, &data).unwrap();
         let src = LocalStoreSource::new(&path);
-        let got = src
-            .fetch(&[ManifestSecret {
-                name: "FOO".into(),
-                item: None,
-                field: None,
-                destination_names: Vec::new(),
-            }])
-            .unwrap();
+        let got = src.fetch(&[secret("FOO", None)], &HashMap::new()).unwrap();
         assert_eq!(got[0].value, "from-vault");
+        assert_eq!(got[0].source_ref, None);
         let items = src.list_available().unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].name, "FOO");

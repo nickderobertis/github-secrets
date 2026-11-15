@@ -25,9 +25,11 @@ through the real `bw` CLI.
   `#username`, `#notes`, `#fields.<NAME>`) to an env-file destination, asserts
   a no-op resync, proves `--default-field` changes what an unselected secret
   extracts (with a per-secret `#field` still overriding it), runs the full
-  cold path through gh-secrets itself (login → unlock → sync → fetch), and
-  confirms a wrong master password yields a precise unlock error with nothing
-  written. Each test seeds uniquely-prefixed items
+  cold path through gh-secrets itself (login → unlock → sync → fetch),
+  resolves an exact item name beside two items whose names contain it (which
+  real `bw get item <name>` refuses) and checks the state file saved that
+  item's id, and confirms a wrong master password yields a precise
+  unlock error with nothing written. Each test seeds uniquely-prefixed items
   via `bw` directly (the product CLI is write-only-blocked for Bitwarden) and
   deletes them in `Drop`. The hard-won isolation detail: every test points
   `BITWARDENCLI_APPDATA_DIR` at its own tempdir, and gh-secrets' spawned `bw`

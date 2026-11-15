@@ -97,17 +97,37 @@ fn main() -> ExitCode {
             println!("Syncing complete.");
             ExitCode::SUCCESS
         }
-        ["get", "item", id] if session_ok() => {
+        ["get", "item", identifier] if session_ok() => {
+            // As the real CLI: an exact id returns that item; anything else is
+            // a case-insensitive substring search over names, which refuses to
+            // pick when it finds more than one.
             let items = state["items"].as_array().cloned().unwrap_or_default();
-            match items
+            if let Some(item) = items.iter().find(|i| i["id"].as_str() == Some(identifier)) {
+                println!("{item}");
+                return ExitCode::SUCCESS;
+            }
+            let needle = identifier.to_lowercase();
+            let found: Vec<&Value> = items
                 .iter()
-                .find(|i| i["id"].as_str() == Some(id) || i["name"].as_str() == Some(id))
-            {
-                Some(item) => {
+                .filter(|i| {
+                    i["name"]
+                        .as_str()
+                        .is_some_and(|n| n.to_lowercase().contains(&needle))
+                })
+                .collect();
+            match found.as_slice() {
+                [] => fail("Not found."),
+                [item] => {
                     println!("{item}");
                     ExitCode::SUCCESS
                 }
-                None => fail("Not found."),
+                several => {
+                    let ids: Vec<&str> = several.iter().filter_map(|i| i["id"].as_str()).collect();
+                    fail(&format!(
+                        "More than one result was found. Try getting a specific object by `id` instead. The following objects were found:\n{}",
+                        ids.join("\n")
+                    ))
+                }
             }
         }
         ["list", "items", rest @ ..] if session_ok() => {

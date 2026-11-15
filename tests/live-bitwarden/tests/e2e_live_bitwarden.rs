@@ -225,6 +225,61 @@ fn live_bw_cold_login_full_path_fetches_value() {
     );
 }
 
+/// Issue #80 against the real vault: an exact item name resolves even beside
+/// items whose names contain it (which real `bw get item <name>` refuses as
+/// "More than one result"), and the resolved item's ID lands in the state file.
+#[test]
+fn live_bw_exact_name_beside_containing_names_resolves_and_saves_its_id() {
+    skip_if_no_bw_live!();
+    let s = BwLiveSession::new("exact");
+    let exact = s.item_name("TOKEN");
+    let pw = "exact-item-password-6";
+    let (_, exact_id) = s.seed_named_login(&exact, "u", pw, "n", ("C", "v"));
+    s.seed_named_login(
+        &format!("{exact} (alt)"),
+        "u",
+        "alt-password-6",
+        "n",
+        ("C", "v"),
+    );
+    s.seed_named_login(
+        &format!("{exact} (other account)"),
+        "u",
+        "other-password-6",
+        "n",
+        ("C", "v"),
+    );
+
+    let assert = s
+        .cmd()
+        .args([
+            "sync",
+            "--from",
+            "bitwarden",
+            "--to",
+            "env:out.env",
+            "--secret",
+            &format!("EXACT_PW={exact}"),
+        ])
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(!stdout.contains(pw), "the secret value leaked to stdout");
+    assert!(
+        dest_body(&s).contains(&format!("EXACT_PW=\"{pw}\"")),
+        "expected the exact item's password in the env destination"
+    );
+
+    let raw = std::fs::read_to_string(s.dir.path().join(".gh-secrets-state.json"))
+        .expect("read the state file");
+    let state: serde_json::Value = serde_json::from_str(&raw).expect("parse the state file");
+    assert_eq!(
+        state["secrets"]["EXACT_PW"]["source_ref"],
+        serde_json::json!({ "source": "bitwarden", "item": exact, "id": exact_id })
+    );
+    assert!(!raw.contains(pw), "the state file must hold no value");
+}
+
 /// A wrong master password surfaces a precise unlock error (never a hang), with
 /// no value written. Exercises the real Bitwarden unlock-failure path.
 #[test]

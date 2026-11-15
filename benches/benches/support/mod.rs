@@ -142,7 +142,7 @@ pub fn synthetic_state(n: usize) -> SyncState {
     for i in 0..n {
         let name = format!("SECRET_{i}");
         let hash = value_hash(&name, &format!("value-{i}"));
-        state.record_source(&name, &hash);
+        state.record_source(&name, &hash, None);
         state.record_push(&name, "github:owner/repo", &hash);
         state.record_push(&name, "env_file:out.env", &hash);
     }

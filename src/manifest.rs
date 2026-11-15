@@ -6,7 +6,8 @@
 //!   manage, list of destinations to push to.
 //! - `.gh-secrets-state.json` — gitignored, stores per-secret, per-destination
 //!   SHA-256 hashes so we can do "push only when something changed" without
-//!   ever persisting the plaintext value.
+//!   ever persisting the plaintext value, plus each secret's resolved
+//!   [`SourceRef`] (identity metadata, never a value).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -263,6 +264,105 @@ pub struct SecretSyncState {
     /// Per-destination hash of the last value we successfully pushed.
     #[serde(default)]
     pub destinations: BTreeMap<String, String>,
+    /// What the source last resolved this secret's identifier to, so the next
+    /// fetch can go straight to that item. Absent in state files written
+    /// before it existed, and omitted when the source keeps no ref.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_saved_ref"
+    )]
+    pub source_ref: Option<SourceRef>,
+}
+
+/// A saved ref this binary can't use — an unknown `source`, an empty `item` or
+/// `id`, a wrong type — loads as no saved ref: the source then falls back to
+/// resolving the identifier afresh, and the next `sync` rewrites it. A ref is
+/// only a shortcut, so it must never be the reason a state file fails to load.
+fn deserialize_saved_ref<'de, D>(d: D) -> std::result::Result<Option<SourceRef>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(raw.and_then(|v| SourceRef::deserialize(v).ok()))
+}
+
+/// A source's record of which item a manifest identifier resolved to. Identity
+/// metadata only — never a value. Each source owns what its ref means and
+/// whether a saved one is still valid; the engine only persists it.
+///
+/// This type is the one definition of the stored `source_ref` shape
+/// (`{"source", "item", "id"}`); docs point here rather than restating it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SourceRef {
+    /// The source type that wrote it.
+    source: SourceKind,
+    /// The manifest identifier (`ManifestSecret::source_item()`) that was
+    /// resolved; a ref whose `item` no longer matches the manifest is stale.
+    item: RefText,
+    /// The source's stable id for the item it resolved to.
+    id: RefText,
+}
+
+impl SourceRef {
+    /// A ref from `source` for identifier `item` resolved to `id`, or `None`
+    /// when either is empty (nothing a later fetch could look up).
+    pub fn new(source: SourceKind, item: &str, id: &str) -> Option<Self> {
+        Some(Self {
+            source,
+            item: RefText::new(item)?,
+            id: RefText::new(id)?,
+        })
+    }
+
+    pub fn source(&self) -> SourceKind {
+        self.source
+    }
+
+    pub fn item(&self) -> &str {
+        &self.item.0
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id.0
+    }
+}
+
+/// The source types that keep a [`SourceRef`]. A saved ref naming any other
+/// source loads as no ref (see `deserialize_saved_ref`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    Bitwarden,
+}
+
+/// A non-empty string field of a [`SourceRef`]; serialized as the bare string.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(try_from = "String", into = "String")]
+struct RefText(String);
+
+impl RefText {
+    fn new(s: &str) -> Option<Self> {
+        (!s.is_empty()).then(|| Self(s.to_string()))
+    }
+}
+
+impl TryFrom<String> for RefText {
+    type Error = &'static str;
+
+    fn try_from(s: String) -> std::result::Result<Self, Self::Error> {
+        if s.is_empty() {
+            Err("a source ref field must not be empty")
+        } else {
+            Ok(Self(s))
+        }
+    }
+}
+
+impl From<RefText> for String {
+    fn from(t: RefText) -> Self {
+        t.0
+    }
 }
 
 impl SyncState {
@@ -296,9 +396,21 @@ impl SyncState {
             .insert(destination_key.to_string(), hash.to_string());
     }
 
-    pub fn record_source(&mut self, name: &str, hash: &str) {
+    /// Record what the source returned for `name`: its value hash and the ref
+    /// it resolved to, replacing (or, for `None`, clearing) any earlier ref.
+    pub fn record_source(&mut self, name: &str, hash: &str, source_ref: Option<SourceRef>) {
         let entry = self.secrets.entry(name.to_string()).or_default();
         entry.source_hash = Some(hash.to_string());
+        entry.source_ref = source_ref;
+    }
+
+    /// Every saved source ref, keyed by secret name — what a source's `fetch`
+    /// receives to skip re-resolving an identifier.
+    pub fn source_refs(&self) -> HashMap<String, SourceRef> {
+        self.secrets
+            .iter()
+            .filter_map(|(name, s)| s.source_ref.clone().map(|r| (name.clone(), r)))
+            .collect()
     }
 }
 
@@ -491,12 +603,83 @@ mod tests {
     #[test]
     fn sync_state_round_trip() {
         let mut s = SyncState::default();
-        s.record_source("FOO", "deadbeef");
+        s.record_source("FOO", "deadbeef", None);
         s.record_push("FOO", "github:o/r", "cafebabe");
         let bytes = serde_json::to_vec(&s).unwrap();
         let back: SyncState = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(s, back);
         assert_eq!(back.last_pushed_hash("FOO", "github:o/r"), Some("cafebabe"));
         assert_eq!(back.last_pushed_hash("FOO", "env_file:.env"), None);
+    }
+
+    #[test]
+    fn sync_state_without_source_ref_loads_and_serializes_without_it() {
+        // The shape every 1.0.x binary wrote.
+        let old = r#"{"secrets":{"FOO":{"source_hash":"aa","destinations":{"github:o/r":"bb"}}}}"#;
+        let state: SyncState = serde_json::from_str(old).unwrap();
+        assert_eq!(state.secrets["FOO"].source_ref, None);
+        assert_eq!(state.last_pushed_hash("FOO", "github:o/r"), Some("bb"));
+        assert!(state.source_refs().is_empty());
+        let back = serde_json::to_value(&state).unwrap();
+        assert_eq!(
+            back,
+            serde_json::from_str::<serde_json::Value>(old).unwrap()
+        );
+    }
+
+    #[test]
+    fn sync_state_source_ref_round_trips_with_exactly_its_keys() {
+        let mut s = SyncState::default();
+        let r = SourceRef::new(SourceKind::Bitwarden, "MY_TOKEN", "item-id-1").unwrap();
+        s.record_source("MY_TOKEN", "aa", Some(r.clone()));
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(
+            json["secrets"]["MY_TOKEN"]["source_ref"],
+            serde_json::json!({"source": "bitwarden", "item": "MY_TOKEN", "id": "item-id-1"})
+        );
+        let back: SyncState = serde_json::from_value(json).unwrap();
+        assert_eq!(back, s);
+        assert_eq!(back.source_refs().get("MY_TOKEN"), Some(&r));
+        // A source that returns no ref clears the saved one.
+        let mut cleared = back.clone();
+        cleared.record_source("MY_TOKEN", "aa", None);
+        assert_eq!(cleared.secrets["MY_TOKEN"].source_ref, None);
+    }
+
+    #[test]
+    fn sync_state_unusable_source_ref_loads_as_no_ref() {
+        // A ref this binary can't use is dropped, never a load failure: the
+        // source re-resolves and the next sync rewrites it.
+        for bad in [
+            r#"{"source":"vault9000","item":"FOO","id":"x"}"#,
+            r#"{"source":"bitwarden","item":"","id":"x"}"#,
+            r#"{"source":"bitwarden","item":"FOO","id":""}"#,
+            r#"{"source":"bitwarden","item":"FOO"}"#,
+            r#""not an object""#,
+            "null",
+        ] {
+            let raw = format!(
+                r#"{{"secrets":{{"FOO":{{"source_hash":"aa","destinations":{{}},"source_ref":{bad}}}}}}}"#
+            );
+            let state: SyncState =
+                serde_json::from_str(&raw).unwrap_or_else(|e| panic!("{bad}: {e}"));
+            assert_eq!(state.secrets["FOO"].source_ref, None, "{bad}");
+            assert_eq!(
+                state.secrets["FOO"].source_hash.as_deref(),
+                Some("aa"),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn source_ref_new_rejects_empty_fields() {
+        assert!(SourceRef::new(SourceKind::Bitwarden, "", "id").is_none());
+        assert!(SourceRef::new(SourceKind::Bitwarden, "FOO", "").is_none());
+        let r = SourceRef::new(SourceKind::Bitwarden, "FOO", "id").unwrap();
+        assert_eq!(
+            (r.source(), r.item(), r.id()),
+            (SourceKind::Bitwarden, "FOO", "id")
+        );
     }
 }
