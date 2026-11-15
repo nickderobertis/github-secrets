@@ -427,12 +427,17 @@ fn fetch_entries(
     state: &mut SyncState,
 ) -> Result<Vec<ResolvedEntry>> {
     let fetched = source
-        .fetch(&pipeline.secrets)
+        .fetch(&pipeline.secrets, &state.source_refs())
         .context("fetching from source")?;
-    // The source hash is recorded once under the secret's (source-side)
-    // `name`; the fanned-out entries hash against their own destination name.
+    // The source hash and ref are recorded once under the secret's
+    // (source-side) `name`; the fanned-out entries hash against their own
+    // destination name. They reach disk only with the sync's one state save.
     for f in &fetched {
-        state.record_source(&f.name, &value_hash(&f.name, &f.value));
+        state.record_source(
+            &f.name,
+            &value_hash(&f.name, &f.value),
+            f.source_ref.clone(),
+        );
     }
     fan_out(&pipeline.secrets, &fetched)
 }
@@ -497,9 +502,16 @@ impl CheckReport {
 pub fn check(paths: &Paths, pipeline: &Pipeline) -> Result<CheckReport> {
     let creds = LazyCredentials::new(paths);
     let source = build_source(&pipeline.source, &creds, &pipeline.base_dir, paths)?;
+    check_with_source(pipeline, source.as_ref())
+}
+
+/// Same as [`check`] but with a caller-supplied source — used by unit tests.
+/// Saved source refs are handed to the source, but whatever it resolves to is
+/// discarded with the rest of the state: `check` writes nothing.
+pub fn check_with_source(pipeline: &Pipeline, source: &dyn SecretSource) -> Result<CheckReport> {
     let state = SyncState::load_or_default(&pipeline.state_path)?;
     let fetched = source
-        .fetch(&pipeline.secrets)
+        .fetch(&pipeline.secrets, &state.source_refs())
         .context("fetching from source")?;
     // Judge the same fanned-out (destination-name, destination) pairs a sync
     // would push, so fan-out mappings are checked under their real names.
@@ -540,7 +552,9 @@ pub fn list_source_items(paths: &Paths, pipeline: &Pipeline) -> Result<Vec<Sourc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{BitwardenSourceConfig, EnvFileDestinationConfig, EnvFileSourceConfig};
+    use crate::manifest::{
+        BitwardenSourceConfig, EnvFileDestinationConfig, EnvFileSourceConfig, SourceRef,
+    };
     use tempfile::TempDir;
 
     fn paths_in(dir: &Path) -> Paths {
@@ -608,6 +622,108 @@ mod tests {
         let report = check(&paths, &pipeline).unwrap();
         assert!(report.is_clean());
         assert_eq!(report.destinations[0].up_to_date, vec!["FOO"]);
+    }
+
+    /// A source that answers every secret with a fixed value and the ref in
+    /// `next_ref`, and records the saved refs each fetch was handed — the
+    /// engine's half of the contract, without a real Bitwarden.
+    struct RefSource {
+        next_ref: Option<SourceRef>,
+        seen: std::cell::RefCell<Vec<HashMap<String, SourceRef>>>,
+    }
+
+    impl SecretSource for RefSource {
+        fn fetch(
+            &self,
+            secrets: &[ManifestSecret],
+            saved: &HashMap<String, SourceRef>,
+        ) -> Result<Vec<crate::sources::FetchedSecret>> {
+            self.seen.borrow_mut().push(saved.clone());
+            Ok(secrets
+                .iter()
+                .map(|s| crate::sources::FetchedSecret {
+                    name: s.name.clone(),
+                    value: "bar".into(),
+                    source_ref: self.next_ref.clone(),
+                })
+                .collect())
+        }
+
+        fn list_available(&self) -> Result<Vec<SourceItem>> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn ref_to(id: &str) -> SourceRef {
+        SourceRef {
+            source: "bitwarden".into(),
+            item: "FOO".into(),
+            id: id.into(),
+        }
+    }
+
+    fn ref_source(next_ref: Option<SourceRef>) -> RefSource {
+        RefSource {
+            next_ref,
+            seen: Default::default(),
+        }
+    }
+
+    #[test]
+    fn sync_persists_source_refs_and_hands_them_back() {
+        let dir = TempDir::new().unwrap();
+        let paths = paths_in(dir.path());
+        let pipeline = pipeline_env_to_env(dir.path());
+        let creds = LazyCredentials::new(&paths);
+
+        let first = ref_source(Some(ref_to("id-1")));
+        sync_with_source(&paths, &pipeline, &first, &creds).unwrap();
+        assert!(first.seen.borrow()[0].is_empty());
+        let raw = fs::read_to_string(&pipeline.state_path).unwrap();
+        let on_disk: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            on_disk["secrets"]["FOO"]["source_ref"],
+            serde_json::json!({"source": "bitwarden", "item": "FOO", "id": "id-1"})
+        );
+        assert!(
+            !raw.contains("bar"),
+            "the state file must hold no value: {raw}"
+        );
+
+        // The next sync is handed the saved ref, and a newly resolved one
+        // replaces it.
+        let second = ref_source(Some(ref_to("id-2")));
+        sync_with_source(&paths, &pipeline, &second, &creds).unwrap();
+        assert_eq!(second.seen.borrow()[0].get("FOO"), Some(&ref_to("id-1")));
+        let state = SyncState::load_or_default(&pipeline.state_path).unwrap();
+        assert_eq!(state.secrets["FOO"].source_ref, Some(ref_to("id-2")));
+
+        // A source that keeps no ref clears it.
+        sync_with_source(&paths, &pipeline, &ref_source(None), &creds).unwrap();
+        let state = SyncState::load_or_default(&pipeline.state_path).unwrap();
+        assert_eq!(state.secrets["FOO"].source_ref, None);
+    }
+
+    #[test]
+    fn check_hands_saved_refs_to_the_source_and_writes_nothing() {
+        let dir = TempDir::new().unwrap();
+        let paths = paths_in(dir.path());
+        let pipeline = pipeline_env_to_env(dir.path());
+        let creds = LazyCredentials::new(&paths);
+
+        // No state yet: check fetches, reports, and creates no file.
+        let report = check_with_source(&pipeline, &ref_source(Some(ref_to("id-1")))).unwrap();
+        assert_eq!(report.destinations[0].stale, vec!["FOO"]);
+        assert!(!pipeline.state_path.exists());
+
+        sync_with_source(&paths, &pipeline, &ref_source(Some(ref_to("id-1"))), &creds).unwrap();
+        let before = fs::read(&pipeline.state_path).unwrap();
+        let source = ref_source(Some(ref_to("id-2")));
+        let report = check_with_source(&pipeline, &source).unwrap();
+        assert!(report.is_clean());
+        assert_eq!(source.seen.borrow()[0].get("FOO"), Some(&ref_to("id-1")));
+        // The newly resolved ref is not persisted: the file is byte-identical.
+        assert_eq!(fs::read(&pipeline.state_path).unwrap(), before);
     }
 
     #[test]
