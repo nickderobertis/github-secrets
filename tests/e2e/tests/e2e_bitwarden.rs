@@ -17,6 +17,11 @@
 //!   environment has none.
 //! - `source list` over a Bitwarden source, unscoped and scoped by the
 //!   config's collection / organization.
+//! - Exact-only item resolution (issue #80): an exact name beside names that
+//!   contain it, an item ID beside an item *named* that ID, the resolved ID
+//!   saved as the state file's `source_ref` and fetched directly by the next
+//!   sync, a deleted-and-recreated item re-resolved, and duplicate / partial /
+//!   case-only vaults failing with the candidates' names and IDs.
 //! - Failure edges: wrong master password, missing client id, item not found,
 //!   no `bw` on PATH, malformed `bw status` output, and an empty unlock token —
 //!   each a precise error that names `bw`, never a secret value, with nothing
@@ -260,7 +265,9 @@ fn e2e_bitwarden_default_field_and_preset_session_skip_unlock() {
         "{env}"
     );
     assert!(
-        h.calls().iter().all(|c| c.starts_with("get item")),
+        h.calls()
+            .iter()
+            .all(|c| c.starts_with("get item") || c == "list items"),
         "a preset session must go straight to lookups: {:?}",
         h.calls()
     );
@@ -421,7 +428,11 @@ fn e2e_bitwarden_missing_item_and_field_name_the_secret() {
         .args(sync_args(&["--secret", "GONE=no-such-item"]))
         .assert()
         .failure()
-        .stderr(contains("fetching 'GONE' from Bitwarden").and(contains("Not found.")));
+        .stderr(
+            contains("fetching 'GONE' from Bitwarden")
+                .and(contains("no item matched it"))
+                .and(contains("gh-secrets source list")),
+        );
 
     h.cmd_with_creds()
         .args(sync_args(&["--secret", "NOTES=other-item#notes"]))
@@ -457,4 +468,185 @@ fn e2e_bitwarden_cli_absent_or_misbehaving_is_a_precise_error() {
         .failure()
         .stderr(contains("`bw unlock` returned an empty session token"));
     assert!(!h.out().exists());
+}
+
+/// The vault from issue #80: the exact item between two whose names contain it.
+fn issue_80_items() -> Value {
+    json!([
+        { "id": "id-alt", "name": "MY_TOKEN (alt)", "login": { "password": "alt-token-value" } },
+        { "id": "id-exact", "name": "MY_TOKEN", "login": { "password": "exact-token-value" } },
+        { "id": "id-other", "name": "MY_TOKEN (other account)",
+          "login": { "password": "other-token-value" } }
+    ])
+}
+
+impl Harness {
+    fn bw_state_file(&self) -> PathBuf {
+        self.dir.path().join(".gh-secrets-state.json")
+    }
+
+    /// The `source_ref` gh-secrets saved for `secret`, or `Null`.
+    fn saved_ref(&self, secret: &str) -> Value {
+        let Ok(raw) = fs::read_to_string(self.bw_state_file()) else {
+            return Value::Null;
+        };
+        let state: Value = serde_json::from_str(&raw).unwrap();
+        state["secrets"][secret]["source_ref"].clone()
+    }
+
+    /// Run `sync` with a preset session, so the `bw` log holds only lookups.
+    fn sync_session(&self, extra: &[&str]) -> assert_cmd::assert::Assert {
+        fs::remove_file(self.log_path()).ok();
+        self.cmd()
+            .env("BW_SESSION", SESSION)
+            .args(sync_args(extra))
+            .assert()
+    }
+}
+
+/// No seeded value may appear in the CLI's output or in the state file.
+fn assert_values_absent(h: &Harness, output: &std::process::Output, items: &Value) {
+    let all = format!(
+        "{}{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        fs::read_to_string(h.bw_state_file()).unwrap_or_default()
+    );
+    for item in items.as_array().unwrap() {
+        let value = item["login"]["password"].as_str().unwrap();
+        assert!(!all.contains(value), "leaked {value:?}: {all}");
+    }
+}
+
+#[test]
+fn e2e_bitwarden_exact_name_resolves_saves_its_id_and_resyncs_by_id() {
+    let h = Harness::new("unlocked");
+    h.patch_state("items", issue_80_items());
+    let output = h
+        .sync_session(&["--secret", "MY_TOKEN"])
+        .success()
+        .stdout(contains("1 created"))
+        .get_output()
+        .clone();
+    assert!(read(&h.out()).contains("MY_TOKEN=\"exact-token-value\""));
+    assert_eq!(h.calls(), ["list items", "get item id-exact"]);
+    assert_eq!(
+        h.saved_ref("MY_TOKEN"),
+        json!({ "source": "bitwarden", "item": "MY_TOKEN", "id": "id-exact" })
+    );
+    // The state file holds the ID, never a value.
+    assert_values_absent(&h, &output, &issue_80_items());
+
+    h.sync_session(&["--secret", "MY_TOKEN"])
+        .success()
+        .stdout(contains("sync: nothing to do"));
+    assert_eq!(
+        h.calls(),
+        ["get item id-exact"],
+        "the saved ID skips the listing"
+    );
+}
+
+#[test]
+fn e2e_bitwarden_id_item_beats_an_item_named_that_id_and_resyncs_by_id() {
+    let h = Harness::new("unlocked");
+    let items = json!([
+        { "id": "id-target", "name": "Deploy key", "login": { "password": "target-value" } },
+        { "id": "id-decoy", "name": "id-target", "login": { "password": "decoy-value" } }
+    ]);
+    h.patch_state("items", items.clone());
+    let output = h
+        .sync_session(&["--secret", "DEPLOY=id-target"])
+        .success()
+        .get_output()
+        .clone();
+    assert!(read(&h.out()).contains("DEPLOY=\"target-value\""));
+    assert_eq!(
+        h.saved_ref("DEPLOY"),
+        json!({ "source": "bitwarden", "item": "id-target", "id": "id-target" })
+    );
+    assert_values_absent(&h, &output, &items);
+    for _ in 0..2 {
+        h.sync_session(&["--secret", "DEPLOY=id-target"]).success();
+        assert_eq!(h.calls(), ["get item id-target"]);
+    }
+}
+
+#[test]
+fn e2e_bitwarden_recreated_item_is_re_resolved_and_its_ref_rewritten() {
+    let h = Harness::new("unlocked");
+    h.patch_state("items", issue_80_items());
+    h.sync_session(&["--secret", "MY_TOKEN"]).success();
+    assert_eq!(h.saved_ref("MY_TOKEN")["id"], "id-exact");
+
+    // Delete the saved item and recreate MY_TOKEN under a new ID.
+    let mut items = issue_80_items();
+    let list = items.as_array_mut().unwrap();
+    list.retain(|i| i["id"] != "id-exact");
+    list.push(
+        json!({ "id": "id-new", "name": "MY_TOKEN", "login": { "password": "new-token-value" } }),
+    );
+    h.patch_state("items", items);
+
+    h.sync_session(&["--secret", "MY_TOKEN"])
+        .success()
+        .stdout(contains("1 updated"));
+    assert!(read(&h.out()).contains("MY_TOKEN=\"new-token-value\""));
+    assert_eq!(
+        h.calls(),
+        ["get item id-exact", "list items", "get item id-new"]
+    );
+    assert_eq!(
+        h.saved_ref("MY_TOKEN"),
+        json!({ "source": "bitwarden", "item": "MY_TOKEN", "id": "id-new" })
+    );
+}
+
+#[test]
+fn e2e_bitwarden_ambiguous_or_inexact_vaults_fail_naming_candidates() {
+    // (vault, error headline, the candidates' "name  (id)" lines)
+    let cases = [
+        (
+            json!([
+                { "id": "id-a", "name": "MY_TOKEN", "login": { "password": "dup-a-value" } },
+                { "id": "id-b", "name": "MY_TOKEN", "login": { "password": "dup-b-value" } }
+            ]),
+            "2 items match 'MY_TOKEN' exactly",
+            vec!["MY_TOKEN  (id-a)", "MY_TOKEN  (id-b)"],
+        ),
+        (
+            json!([
+                { "id": "id-alt", "name": "MY_TOKEN (alt)", "login": { "password": "alt-value" } },
+                { "id": "id-old", "name": "OLD MY_TOKEN", "login": { "password": "old-value" } }
+            ]),
+            "no item is named exactly 'MY_TOKEN'",
+            vec!["MY_TOKEN (alt)  (id-alt)", "OLD MY_TOKEN  (id-old)"],
+        ),
+        (
+            json!([
+                { "id": "id-lower", "name": "my_token", "login": { "password": "lower-value" } }
+            ]),
+            "no item is named exactly 'MY_TOKEN'",
+            vec!["my_token  (id-lower)"],
+        ),
+    ];
+    for (items, headline, candidates) in cases {
+        let h = Harness::new("unlocked");
+        h.patch_state("items", items.clone());
+        let output = h
+            .sync_session(&["--secret", "MY_TOKEN"])
+            .failure()
+            .get_output()
+            .clone();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        for expected in ["fetching 'MY_TOKEN' from Bitwarden", headline]
+            .into_iter()
+            .chain(candidates)
+        {
+            assert!(stderr.contains(expected), "missing {expected:?}: {stderr}");
+        }
+        assert_values_absent(&h, &output, &items);
+        assert_eq!(h.saved_ref("MY_TOKEN"), Value::Null, "{headline}");
+        assert!(!h.out().exists());
+    }
 }
