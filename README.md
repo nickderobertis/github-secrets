@@ -94,10 +94,11 @@ A Bitwarden `item` (the part after `=` in `--secret NAME=ITEM`, defaulting to
 `NAME`) must equal an item's ID or its name *exactly* — case-sensitive, never a
 partial match — so `MY_TOKEN` keeps resolving after `MY_TOKEN (alt)` is added.
 When no item, or more than one, is named exactly that, `sync` fails listing the
-candidate names and IDs; set `item` to the exact name or the ID. `sync` records
-each resolved item ID in `.gh-secrets-state.json` beside its config (gitignore
-it: it holds hashes and IDs, never values) and fetches that ID directly next
-time, re-resolving by name only if the item was deleted or renamed.
+candidate names and IDs; set `item` to the exact name or the ID. `sync`
+remembers which item each secret resolved to and fetches that item directly next
+time, re-resolving by name only if it was deleted or renamed. (That memory lives
+in the gitignored `.gh-secrets-state.json` beside your config, which never holds
+a value.)
 
 The encrypted vault (stored credentials + the `local` store) and the global
 config live under `$XDG_CONFIG_HOME/gh-secrets` (Linux),

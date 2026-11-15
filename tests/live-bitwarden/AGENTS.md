@@ -27,8 +27,8 @@ through the real `bw` CLI.
   extracts (with a per-secret `#field` still overriding it), runs the full
   cold path through gh-secrets itself (login → unlock → sync → fetch),
   resolves an exact item name beside two items whose names contain it (which
-  real `bw get item <name>` refuses) and records that item's id as the state
-  file's `source_ref`, and confirms a wrong master password yields a precise
+  real `bw get item <name>` refuses) and checks the state file saved that
+  item's id, and confirms a wrong master password yields a precise
   unlock error with nothing written. Each test seeds uniquely-prefixed items
   via `bw` directly (the product CLI is write-only-blocked for Bitwarden) and
   deletes them in `Drop`. The hard-won isolation detail: every test points

@@ -82,11 +82,8 @@ What each suite covers:
   `get item <non-id>` as the real CLI does — a case-insensitive substring
   search over names that exits 1 with "More than one result was found…" on
   several matches — so the issue's vault reproduces the original failure if
-  resolution ever hands `bw` a name again. Through `sync` it proves an exact
-  name beside names containing it, an id `item` beside an item *named* that
-  id, the resolved id saved as the state file's `source_ref` (no value) and
-  fetched directly next sync with no `list items` (read from `FAKE_BW_LOG`),
-  a deleted-and-recreated item re-resolved with its ref rewritten, and
-  duplicate / partial / case-only vaults failing with candidate names and
-  ids, no value leaked and no ref saved.
+  resolution ever hands `bw` a name again. The journeys read `bw`'s argv from
+  `FAKE_BW_LOG` to prove which lookups ran (saved id vs. one `list items`),
+  and every failure journey asserts no seeded value reaches the output or
+  the state file.
 <!-- llmlint: ignore-end[agents_md_durable_and_terse] -->
