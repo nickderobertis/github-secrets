@@ -77,4 +77,16 @@ What each suite covers:
   test can confirm the token that *won* (shell env, `.env`, `.env.local`, or
   stored config) is the one that actually reached the API. The dotenv
   parser/precedence planner is also unit-tested in `src/envfile.rs`.
+- The Bitwarden suite (`tests/e2e_bitwarden.rs`, header lists its journeys)
+  includes exact-only item resolution (issue #80). The stand-in `bw` answers
+  `get item <non-id>` as the real CLI does — a case-insensitive substring
+  search over names that exits 1 with "More than one result was found…" on
+  several matches — so the issue's vault reproduces the original failure if
+  resolution ever hands `bw` a name again. Through `sync` it proves an exact
+  name beside names containing it, an id `item` beside an item *named* that
+  id, the resolved id saved as the state file's `source_ref` (no value) and
+  fetched directly next sync with no `list items` (read from `FAKE_BW_LOG`),
+  a deleted-and-recreated item re-resolved with its ref rewritten, and
+  duplicate / partial / case-only vaults failing with candidate names and
+  ids, no value leaked and no ref saved.
 <!-- llmlint: ignore-end[agents_md_durable_and_terse] -->

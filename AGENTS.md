@@ -52,7 +52,22 @@ get the same guard). In argument form, fan-out is expressed as repeated
 
 Sync is idempotent across runs via a `.gh-secrets-state.json` co-located with
 the resolved config (gitignore the project-local one) holding per-(secret,
-destination) SHA-256 hashes — the plaintext value is never persisted there.
+destination) SHA-256 hashes plus each secret's optional `source_ref`
+(`{source, item, id}`: the item a source resolved the identifier to) — the
+plaintext value is never persisted there. The engine owns persistence (`sync`
+records each fetched ref beside the source hash; `check` passes the saved refs
+in and writes nothing); each source owns what a ref means.
+
+A Bitwarden `item` resolves **exactly** (issue #80): a saved `source_ref` for
+the same identifier is tried first (`bw get item <id>`, accepted only if the
+returned item still has that id — and, for a name-resolved ref, still that exact
+name); otherwise one unscoped `bw list items` per fetch, where an item whose id
+equals the identifier wins, else exactly one case-sensitive exact name match.
+`bw get item` is never handed a name (its substring search broke on similarly
+named items), and no path reads `bw`'s error text. None or several exact
+matches fail naming the candidates (name + id, capped at 20; near misses are
+the case-insensitive contains set) and saying to set `item` to the exact name or
+the id.
 `check` is the read-only complement: it fetches current source values and
 reports what a `sync` would push, judging destinations purely from recorded
 state (no GitHub token needed, nothing written — not even the state file).
@@ -273,7 +288,8 @@ Project-local layout and credentials:
 - `gh-secrets.json` lives at the repo root (or wherever the user invokes
   `gh-secrets sync` against). It is checked into source control.
 - `.gh-secrets-state.json` sits next to it and stores per-(secret,
-  destination) SHA-256 hashes that drive the "push only when changed" check.
+  destination) SHA-256 hashes that drive the "push only when changed" check,
+  and each secret's resolved `source_ref` (an item id, never a value).
   **Always gitignore this file** — losing it forces a re-push but leaks
   nothing.
 - Credential resolution (the GitHub token, the Bitwarden login, and the vault
