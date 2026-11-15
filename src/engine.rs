@@ -553,7 +553,7 @@ pub fn list_source_items(paths: &Paths, pipeline: &Pipeline) -> Result<Vec<Sourc
 mod tests {
     use super::*;
     use crate::manifest::{
-        BitwardenSourceConfig, EnvFileDestinationConfig, EnvFileSourceConfig, SourceRef,
+        BitwardenSourceConfig, EnvFileDestinationConfig, EnvFileSourceConfig, SourceKind, SourceRef,
     };
     use tempfile::TempDir;
 
@@ -655,11 +655,7 @@ mod tests {
     }
 
     fn ref_to(id: &str) -> SourceRef {
-        SourceRef {
-            source: "bitwarden".into(),
-            item: "FOO".into(),
-            id: id.into(),
-        }
+        SourceRef::new(SourceKind::Bitwarden, "FOO", id).unwrap()
     }
 
     fn ref_source(next_ref: Option<SourceRef>) -> RefSource {

@@ -14,7 +14,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::manifest::{BitwardenSourceConfig, ManifestSecret, SourceRef};
+use crate::manifest::{BitwardenSourceConfig, ManifestSecret, SourceKind, SourceRef};
 use crate::vault;
 
 /// A plaintext value retrieved from a source. Callers MUST treat this as
@@ -518,12 +518,13 @@ impl<C: BwCli> BitwardenSource<C> {
         saved: Option<&SourceRef>,
         listing: &mut Option<Vec<SourceItem>>,
     ) -> Result<(Value, String)> {
-        if let Some(r) = saved.filter(|r| r.source == BITWARDEN_REF_SOURCE && r.item == identifier)
+        if let Some(r) =
+            saved.filter(|r| r.source() == SourceKind::Bitwarden && r.item() == identifier)
         {
             // Any failure means the ref is stale; the error text is never read.
-            if let Ok(item) = self.cli.get_item(session, &r.id) {
+            if let Ok(item) = self.cli.get_item(session, r.id()) {
                 if saved_ref_still_matches(&item, r) {
-                    return Ok((item, r.id.clone()));
+                    return Ok((item, r.id().to_string()));
                 }
             }
         }
@@ -541,9 +542,6 @@ impl<C: BwCli> BitwardenSource<C> {
     }
 }
 
-/// `SourceRef::source` for refs this source writes.
-const BITWARDEN_REF_SOURCE: &str = "bitwarden";
-
 /// Longest candidate list a resolution error prints before "and N more".
 const MAX_LISTED_CANDIDATES: usize = 20;
 
@@ -553,10 +551,10 @@ const MAX_LISTED_CANDIDATES: usize = 20;
 /// name (a rename, or a hand-edited id pointing elsewhere, makes it stale).
 fn saved_ref_still_matches(item: &Value, saved: &SourceRef) -> bool {
     let field = |k: &str| item.get(k).and_then(Value::as_str);
-    if field("id") != Some(saved.id.as_str()) {
+    if field("id") != Some(saved.id()) {
         return false;
     }
-    saved.id == saved.item || field("name") == Some(saved.item.as_str())
+    saved.id() == saved.item() || field("name") == Some(saved.item())
 }
 
 /// Pick the one listed item `identifier` names exactly: an item whose id equals
@@ -631,11 +629,7 @@ impl<C: BwCli> SecretSource for BitwardenSource<C> {
             out.push(FetchedSecret {
                 name: s.name.clone(),
                 value,
-                source_ref: Some(SourceRef {
-                    source: BITWARDEN_REF_SOURCE.to_string(),
-                    item: identifier.to_string(),
-                    id,
-                }),
+                source_ref: SourceRef::new(SourceKind::Bitwarden, identifier, &id),
             });
         }
         Ok(out)
@@ -840,11 +834,7 @@ mod tests {
     }
 
     fn bw_ref(item: &str, id: &str) -> SourceRef {
-        SourceRef {
-            source: "bitwarden".into(),
-            item: item.into(),
-            id: id.into(),
-        }
+        SourceRef::new(SourceKind::Bitwarden, item, id).unwrap()
     }
 
     fn saved_refs(entries: &[(&str, SourceRef)]) -> HashMap<String, SourceRef> {
@@ -1057,8 +1047,8 @@ mod tests {
     fn stale_saved_refs_fall_back_to_one_listing_and_rewrite_the_ref() {
         // (case, saved ref): an id that no longer fetches; an id whose item is
         // now named differently (a hand-edited id pointing elsewhere); a ref
-        // for an identifier the manifest no longer uses; a ref another source
-        // wrote.
+        // for an identifier the manifest no longer uses. (A ref another source
+        // wrote never reaches a source: it loads as no ref, see `manifest`.)
         let cases = [
             (
                 "deleted",
@@ -1071,14 +1061,6 @@ mod tests {
                 vec!["get_item:id-alt"],
             ),
             ("old identifier", bw_ref("OLD_NAME", "id-alt"), vec![]),
-            (
-                "other source",
-                SourceRef {
-                    source: "env_file".into(),
-                    ..bw_ref("MY_TOKEN", "id-alt")
-                },
-                vec![],
-            ),
         ];
         for (case, stale, first_calls) in cases {
             let src = session_source(issue_80_vault());
