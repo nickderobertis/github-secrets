@@ -11,6 +11,10 @@ const SANDBOX_RUST = "tests/live-github/tests/live_common/mod.rs";
 // tooling's installed packages and telemetry per case blew Windows' 5s timeout.
 const COPY_GITHUB = { recursive: true, filter: (src) => !/[\\/]\.github[\\/](node_modules|\.telemetry)([\\/]|$)/.test(src) };
 
+const NEEDS_PASSED = "!cancelled() && needs.check.result == 'success' && needs.check-macos.result == 'success'";
+const SAME_REPO = "github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository";
+const LIVE_SUPPRESSION = "    # llmlint: ignore[live_tier_compiles_and_requires_credential, external_service_suite_stays_out_of_the_affected_tier] standing AGENTS.md deviation (live tiers stay in the PR workflow); this edge adds only the Mac carrier.\n";
+
 let cleanups = [];
 afterEach(() => {
   for (const c of cleanups) c();
@@ -46,8 +50,26 @@ test("a fixed-context job gaining a needs edge on a non-fixed job is caught", ()
 });
 
 test("a new condition on a fixed-context job is caught", () => {
-  const errors = mutated("ci.yml", "  build:\n    needs: [check, check-macos]\n", "  build:\n    needs: [check, check-macos]\n    if: github.event_name == 'push'\n");
+  const errors = mutated("ci.yml", `    if: \${{ ${NEEDS_PASSED} }}\n`, "    if: github.event_name == 'push'\n");
   expect(errors.join("\n")).toContain("unrecognised condition");
+});
+
+// GitHub's implicit success() fails on any skipped ancestor, and `macos` is skipped
+// whenever the policy needs no Mac (every release-only PR): build then never expands
+// its matrix, so its required contexts never report.
+test("build relying on the implicit success() past the skippable Mac lane is caught", () => {
+  const errors = mutated("ci.yml", `    if: \${{ ${NEEDS_PASSED} }}\n`, "");
+  expect(errors.join("\n")).toContain("ci.yml:build reports a fixed context but relies on the implicit success() while 'macos', among its transitive needs, can be skipped");
+});
+
+test("a live job keeping only its same-repo guard is caught", () => {
+  const errors = mutated("ci.yml", `  live-e2e:\n${LIVE_SUPPRESSION}    needs: [check, check-macos]\n    # As build's: test the direct needs, so a skipped \`macos\` cannot skip this.\n    if: \${{ ${NEEDS_PASSED} && (${SAME_REPO}) }}\n`, `  live-e2e:\n${LIVE_SUPPRESSION}    needs: [check, check-macos]\n    if: \${{ ${SAME_REPO} }}\n`);
+  expect(errors.join("\n")).toContain("ci.yml:live-e2e reports a fixed context but relies on the implicit success()");
+});
+
+test("a condition that tests only some direct needs is caught", () => {
+  const errors = mutated("ci.yml", `    if: \${{ ${NEEDS_PASSED} }}\n`, "    if: ${{ !cancelled() && needs.check.result == 'success' }}\n");
+  expect(errors.join("\n")).toContain("ci.yml:build reports a fixed context but relies on the implicit success()");
 });
 
 test("renaming a fixed-context job is caught", () => {

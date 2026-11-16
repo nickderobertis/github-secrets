@@ -151,6 +151,11 @@ jobs:
 
   build:
     needs: [check, check-macos]
+    # Explicit, not the implicit success(): that also requires every transitive
+    # need to have run, and `macos` is skipped whenever the policy needs no Mac
+    # (release-only PRs, pushes), which skipped this matrix unexpanded and left
+    # its required contexts unreported.
+    if: ${{ !cancelled() && needs.check.result == 'success' && needs.check-macos.result == 'success' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -450,7 +455,8 @@ jobs:
   live-e2e:
     # llmlint: ignore[live_tier_compiles_and_requires_credential, external_service_suite_stays_out_of_the_affected_tier] standing AGENTS.md deviation (live tiers stay in the PR workflow); this edge adds only the Mac carrier.
     needs: [check, check-macos]
-    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    # As build's: test the direct needs, so a skipped `macos` cannot skip this.
+    if: ${{ !cancelled() && needs.check.result == 'success' && needs.check-macos.result == 'success' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -511,7 +517,8 @@ jobs:
   live-e2e-bitwarden:
     # llmlint: ignore[live_tier_compiles_and_requires_credential, external_service_suite_stays_out_of_the_affected_tier] standing AGENTS.md deviation (live tiers stay in the PR workflow); this edge adds only the Mac carrier.
     needs: [check, check-macos]
-    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    # As build's: test the direct needs, so a skipped `macos` cannot skip this.
+    if: ${{ !cancelled() && needs.check.result == 'success' && needs.check-macos.result == 'success' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
