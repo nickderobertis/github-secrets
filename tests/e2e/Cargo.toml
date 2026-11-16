@@ -11,6 +11,7 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+# llmlint: ignore-block[e2e_not_mocked] these declare the suite's two boundary doubles, each already answered at its use site: wiremock is a real local HTTP server the spawned gh-secrets binary makes real requests to, and fake-bw is spawned through bw's real subprocess contract; the genuine GitHub and Bitwarden calls are the gh-secrets-live-github and gh-secrets-live-bitwarden projects. Every release PR's version bump puts this manifest in the judged diff.
 [dev-dependencies]
 assert_cmd.workspace = true
 base64.workspace = true
@@ -26,6 +27,7 @@ wiremock.workspace = true
 name = "fake-bw"
 path = "support/fake_bw.rs"
 test = false
+# llmlint: ignore-end[e2e_not_mocked]
 
 [dependencies]
 serde_json.workspace = true
