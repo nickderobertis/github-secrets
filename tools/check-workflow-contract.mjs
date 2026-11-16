@@ -6,7 +6,10 @@
 //      filter on its `pull_request` trigger); that job's `if:` is one of the
 //      conditions known to keep it reporting on a pull request, and it `needs`
 //      only other fixed-context jobs — so nothing can silently leave a context
-//      unreported. notignored, by contrast, must stay out of that set: its own
+//      unreported. A job whose transitive needs include one an `if:` can skip
+//      (other than `always()`) tests each direct need's result itself: GitHub's
+//      implicit success() also fails on a skipped ancestor, which skips the job
+//      (a matrix unexpanded, so its contexts never report). notignored, by contrast, must stay out of that set: its own
 //      workflow, needed by no fixed-context job.
 //   2. ci.yml defaults the token to `contents: read`, and every ci.yml job
 //      installs `just` at the version .tool-versions pins.
@@ -49,6 +52,10 @@ export const FIXED_CONTEXTS = [
   "lint PR title",
 ];
 
+// ci.yml's gate needs, passed: the explicit form of success() that ignores a
+// skipped ancestor (see 1. above).
+const CI_NEEDS_PASSED = "!cancelled() && needs.check.result == 'success' && needs.check-macos.result == 'success'";
+
 // `if:` conditions under which a job still reports on a same-repo pull request.
 // (The live jobs' condition predates this contract: a skipped job still reports.)
 const PR_SAFE_CONDITIONS = new Set([
@@ -56,6 +63,8 @@ const PR_SAFE_CONDITIONS = new Set([
   "${{ always() }}",
   "github.event_name == 'pull_request'",
   "${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}",
+  `\${{ ${CI_NEEDS_PASSED} }}`,
+  `\${{ ${CI_NEEDS_PASSED} && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}`,
 ]);
 
 const PIN_STEP = "just@${{ steps.pins.outputs.just }}";
@@ -94,6 +103,22 @@ function triggersOnEveryPr(on) {
   const types = pr.types ?? ["opened", "synchronize", "reopened"];
   const defaultsKept = Array.isArray(types) && ["opened", "synchronize", "reopened"].every((t) => types.includes(t));
   return defaultsKept && !pr.branches && !pr["branches-ignore"] && !pr.paths && !pr["paths-ignore"];
+}
+
+/** The first transitive need of `id` an `if:` other than always() can skip, if any. */
+function skippableAncestor(jobs, id) {
+  const seen = new Set();
+  const queue = [[jobs[id]?.needs ?? []].flat()].flat();
+  while (queue.length) {
+    const need = queue.shift();
+    if (seen.has(need)) continue;
+    seen.add(need);
+    const job = jobs[need];
+    if (!isObject(job)) continue;
+    if (job.if !== undefined && job.if !== "${{ always() }}") return need;
+    queue.push(...[job.needs ?? []].flat());
+  }
+  return undefined;
 }
 
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -181,6 +206,13 @@ export function checkContract(root) {
           (usesCheck ? env?.CHECK_RESULT === "${{ needs.check.result }}" : !("CHECK_RESULT" in env)) &&
           env?.MACOS_REQUIRED === "${{ needs.policy.outputs.macosRequired }}";
         if (!neededFixed && !carrier) errors.push(`${file}:${id} reports a fixed context but needs '${need}', which reports none.`);
+      }
+      const skippable = skippableAncestor(wf.jobs, id);
+      const direct = [job.needs ?? []].flat();
+      const testsNeeds = typeof job.if === "string" && job.if.includes("!cancelled()") &&
+        direct.every((n) => job.if.includes(`needs.${n}.result == 'success'`));
+      if (skippable && !testsNeeds && job.if !== "${{ always() }}") {
+        errors.push(`${file}:${id} reports a fixed context but relies on the implicit success() while '${skippable}', among its transitive needs, can be skipped, which skips it too; add \`!cancelled() && needs.<need>.result == 'success'\` for each direct need to its if:.`);
       }
     }
   }
