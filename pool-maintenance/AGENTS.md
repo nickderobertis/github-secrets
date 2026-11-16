@@ -18,6 +18,13 @@ the pool maintenance this repository declares for onevcs (`onevcs.toml` runs
   build follows, and only the last pass is the figure (the pruner's own
   onebudgetspec report; the backlog pass is appended to its detail). It fails
   unless that pass removed only the alternative build's entries. Linux only.
+- The pruner and `measure.sh` read cargo's pre-1.100 target layout
+  (`<profile>/{deps,.fingerprint,build,incremental}`), so `rust-toolchain.toml`
+  pins an exact release before 1.100. `measure.test.mjs` copies that pin and
+  `.cargo/config.toml` into its scratch workspace, and both files are this
+  project's inputs, so a toolchain bump runs it and fails until a pruner release
+  reads the new layout.
 - The recipes it drives (`pool-maintenance`, `install-prune-superseded`) live
   in the root justfile and are tested in `tools/tests/pool-maintenance.test.mjs`,
-  which a justfile change reaches; this project's inputs are its own files.
+  which a justfile change reaches; this project's inputs are its own files
+  and those two pins.

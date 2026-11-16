@@ -44,10 +44,15 @@ beforeAll(() => {
   write("tests/e2e/src/lib.rs", "");
   write("tests/e2e/tests/run.rs", `#[test]\nfn runs() {}\n`);
   mkdirSync(join(ws, "pool-maintenance"));
+  // The repository's toolchain and cargo pins, so the scratch workspace (under the
+  // temp dir, outside this clone) builds with the target layout the clone does,
+  // never with whatever toolchain the host defaults to.
+  mkdirSync(join(ws, ".cargo"));
+  for (const pin of ["rust-toolchain.toml", ".cargo/config.toml"]) copyFileSync(join(REPO, pin), join(ws, pin));
   copyFileSync(join(REPO, "justfile"), join(ws, "justfile"));
   copyFileSync(join(REPO, "pool-maintenance/measure.sh"), join(ws, "pool-maintenance/measure.sh"));
   env = { ...process.env };
-  for (const key of ["CARGO_TARGET_DIR", "ONEBUDGETSPEC_RESULT"]) delete env[key];
+  for (const key of ["CARGO_TARGET_DIR", "ONEBUDGETSPEC_RESULT", "RUSTUP_TOOLCHAIN"]) delete env[key];
   if (linux) ok("cargo", ["generate-lockfile", "--offline"], { cwd: ws, env });
 });
 afterAll(() => rmSync(dir, { recursive: true, force: true }));

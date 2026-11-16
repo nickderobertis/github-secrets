@@ -4,8 +4,16 @@
 # `llvm-tools` backs `cargo llvm-cov`, which the coverage gate runs. `targets`
 # lists the release matrix in .github/workflows/release.yml, so a release build
 # never reaches for a target the pinned toolchain lacks; keep the two in lockstep.
+#
+# `channel` is an exact release, not `stable`: Rust 1.100 moved each unit's build
+# output to `<profile>/build/<pkg>/<hash>/`, which the cargo-prune-superseded
+# release the justfile pins (`just pool-maintenance`) and pool-maintenance/measure.sh
+# do not read, so a floating channel silently turned the pool maintenance into a
+# no-op and failed measure.test.mjs. Move past 1.99 only together with a pruner
+# release (and measure.sh) that read the new layout; that test, which builds with
+# this file, fails until both do.
 [toolchain]
-channel = "stable"
+channel = "1.99.1"
 components = ["rustfmt", "clippy", "llvm-tools"]
 targets = [
     "x86_64-unknown-linux-gnu",
