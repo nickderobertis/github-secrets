@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.0.0](https://github.com/nickderobertis/github-secrets/compare/v1.0.5...v2.0.0) (2026-11-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **bitwarden:** a manifest `item` that relied on a case-insensitive or partial Bitwarden match now fails with an error listing the near-miss item names and IDs; set `item` to the exact item name or its ID.
+
+### Features
+
+* **bitwarden:** resolve manifest items by exact name only and reuse each item's saved ID ([#82](https://github.com/nickderobertis/github-secrets/issues/82)) ([0faf10c](https://github.com/nickderobertis/github-secrets/commit/0faf10c74498dd1f8e2b1264cce937f23d2fcbf7))
+
+
+### Bug Fixes
+
+* **test:** locate the gh-secrets binary under the current cargo layout ([#78](https://github.com/nickderobertis/github-secrets/issues/78)) ([4c31d28](https://github.com/nickderobertis/github-secrets/commit/4c31d2862165a0f42be50a8a4466a5f71811a02d))
+
 ## [1.0.5](https://github.com/nickderobertis/github-secrets/compare/v1.0.4...v1.0.5) (2026-10-13)
 
 
